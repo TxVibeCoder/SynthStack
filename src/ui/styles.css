@@ -71,11 +71,22 @@ body {
   /* Reserve the scrollbar gutter on BOTH sides so the horizontally-centered console
    * stays put whether or not the pad-section scrollbar is showing (pixel-stable 16:9). */
   scrollbar-gutter: stable both-edges;
-  /* Stop iOS pull-to-refresh / rubber-band reveal at the scroll boundary. `contain`
-   * (not `none`) preserves internal scroll; on a non-scrolling 1080p desktop it only
-   * changes boundary chaining, no visual effect. */
-  overscroll-behavior: contain;
+  /* iOS pull-to-refresh / rubber-band suppression (`overscroll-behavior: contain`) is
+   * applied for FINE pointers only — see the @media (pointer: fine) block below. On
+   * COARSE (touch) pointers it MUST stay off: per CSSWG issue #12919 (Mar 2026),
+   * `contain` on a pinch-zoomed scroller blocks visual-viewport panning, which is what
+   * snapped the zoom back to 1.0 when panning to the top edge on iOS. */
   background: var(--color-bg);
+}
+
+/* Desktop only: keep the original pull-to-refresh / rubber-band suppression. Coarse
+ * pointers intentionally OMIT this so a pinch-zoomed top-edge pan moves the iOS visual
+ * viewport instead of resetting the zoom (CSSWG #12919). A non-scrolling 1080p desktop
+ * saw no visual effect from `contain` anyway, so desktop is byte-identical. */
+@media (pointer: fine) {
+  .stage-viewport {
+    overscroll-behavior: contain;
+  }
 }
 
 /*
