@@ -1,0 +1,328 @@
+import { describe, expect, it } from 'vitest';
+import {
+  coalesceKeyboardState,
+  coalesceSamplerState,
+  defaultKeyboardState,
+  defaultPattern,
+  defaultStudioState,
+  DRUM_STEPS,
+  DRUM_TRACKS,
+  QUANTIZE_DIVISIONS,
+  StudioStore,
+} from '../../src/state/studioState';
+import { QUANT_CYCLE } from '../../src/engine/quantGrid';
+import { FACTORY_KIT } from '../../src/engine/factorySamples';
+import monarch from '../../data/monarch.json';
+import anvil from '../../data/anvil.json';
+import cascade from '../../data/cascade.json';
+import sampler from '../../data/sampler.json';
+import type { ModuleDef } from '../../data/schema';
+
+describe('studio state round-trip (work order §3.6)', () => {
+  it('JSON round-trips the default state', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    expect(JSON.parse(JSON.stringify(s))).toEqual(s);
+  });
+
+  it('setState(getState()) is idempotent', () => {
+    const store = new StudioStore();
+    const before = store.getState();
+    store.setState(before);
+    expect(store.getState()).toEqual(before);
+  });
+
+  it('round-trips with every control of every module set to its default', () => {
+    const store = new StudioStore();
+    for (const def of [monarch, anvil, cascade] as unknown as ModuleDef[]) {
+      for (const c of def.controls) {
+        if (c.default !== undefined) store.setControl(def.id, c.id, c.default);
+        else if (c.type === 'button') store.setControl(def.id, c.id, 'IDLE');
+      }
+    }
+    const s = store.getState();
+    const restored = new StudioStore(JSON.parse(JSON.stringify(s)));
+    expect(restored.getState()).toEqual(s);
+    // mutating the store after getState must not affect the snapshot (deep copy)
+    store.setControl('monarch', 'MON_VOLUME', 0.123);
+    expect(s.controls['monarch']!['MON_VOLUME']).not.toBe(0.123);
+  });
+
+  it('preserves cables and sequencer contents', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.cables.push({ id: 'c1', from: 'MON_LFO_TRI_OUT', to: 'MON_VCF_CUTOFF_IN', color: '#d4a017' });
+    s.transport.monarch.steps[0]!.noteVv = 0.25;
+    s.transport.monarch.steps[3]!.ratchet = 3;
+    s.transport.anvil.steps[7]!.pitchVv = -2.5;
+    store.setState(s);
+    expect(store.getState()).toEqual(s);
+  });
+
+  it('default state matches work order step defaults', () => {
+    const s = defaultStudioState();
+    expect(s.transport.monarch.steps).toHaveLength(32);
+    expect(s.transport.monarch.steps[0]).toEqual({
+      noteVv: -1,
+      gateLength: 0.5,
+      accent: false,
+      rest: false,
+      glide: false,
+      ratchet: 1,
+    });
+    expect(s.transport.anvil.steps).toHaveLength(8);
+    expect(s.transport.anvil.steps[0]).toEqual({ pitchVv: 0, velocityVv: 4 });
+  });
+
+  it('default state pre-loads the 8-piece factory kit and keeps an open spare mixer channel', () => {
+    const s = defaultStudioState();
+    expect(s.mixer.channelLevels[3]).toBe(0.8); // SAMP_MIX_OUT audible un-patched
+    expect(s.sampler.pads).toHaveLength(8);
+    expect(s.sampler.pads[0]).toEqual({
+      sampleId: 'factory-kick',
+      sampleName: 'Kick',
+      level: 0.8,
+      tuneSemis: 0,
+      loop: false,
+    });
+    // every default pad now references a factory sound (playable on first power-on)
+    expect(
+      s.sampler.pads.every((p) => p.sampleId !== null && p.sampleId.startsWith('factory-')),
+    ).toBe(true);
+    // pad t === FACTORY_KIT[t]: the manifest order is the single contract (pad = render = picker order)
+    expect(s.sampler.pads.map((p) => p.sampleId)).toEqual(FACTORY_KIT.map((e) => e.id));
+    expect(s.sampler.pads.map((p) => p.sampleName)).toEqual(FACTORY_KIT.map((e) => e.name));
+  });
+
+  it('round-trips the sampler slice (sample references only, bytes-free)', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.sampler.pads[0] = {
+      sampleId: 'samp-abc',
+      sampleName: 'kick.wav',
+      level: 0.5,
+      tuneSemis: -12,
+      loop: true,
+    };
+    s.sampler.pads[7]!.tuneSemis = 7;
+    store.setState(s);
+    expect(store.getState()).toEqual(s);
+  });
+
+  it('default sampler quantize is 1 BAR', () => {
+    expect(defaultStudioState().sampler.quantize).toBe('1 BAR');
+  });
+
+  it('coalesceSamplerState(undefined) yields 8 default pads and quantize 1 BAR', () => {
+    const s = coalesceSamplerState(undefined);
+    expect(s.pads).toHaveLength(8);
+    expect(s.pads.every((p) => p.loop === false)).toBe(true);
+    expect(s.quantize).toBe('1 BAR');
+  });
+
+  it('coalesceSamplerState fills loop/quantize defaults for an older-shape tree', () => {
+    const oldTree = {
+      pads: [{ sampleId: 'x', sampleName: 'y', level: 0.5, tuneSemis: 0 }],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    const s = coalesceSamplerState(oldTree);
+    expect(s.pads).toHaveLength(8);
+    expect(s.pads[0]).toEqual({
+      sampleId: 'x',
+      sampleName: 'y',
+      level: 0.5,
+      tuneSemis: 0,
+      loop: false,
+    });
+    expect(s.pads[1]).toEqual({
+      sampleId: null,
+      sampleName: null,
+      level: 0.8,
+      tuneSemis: 0,
+      loop: false,
+    });
+    expect(s.quantize).toBe('1 BAR');
+  });
+
+  it('default sampler drum pattern is 8x16 all-false with seqRunning false', () => {
+    const s = defaultStudioState();
+    expect(s.sampler.pattern).toHaveLength(DRUM_TRACKS);
+    expect(s.sampler.pattern.every((row) => row.length === DRUM_STEPS)).toBe(true);
+    expect(s.sampler.pattern.every((row) => row.every((cell) => cell === false))).toBe(true);
+    expect(s.sampler.seqRunning).toBe(false);
+  });
+
+  it('defaultPattern() is a fresh 8x16 all-false grid', () => {
+    const p = defaultPattern();
+    expect(p).toHaveLength(DRUM_TRACKS);
+    expect(p.every((row) => row.length === DRUM_STEPS)).toBe(true);
+    expect(p.every((row) => row.every((cell) => cell === false))).toBe(true);
+  });
+
+  it('round-trips a drum pattern with set cells and seqRunning', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.sampler.pattern[0]![0] = true;
+    s.sampler.pattern[3]![7] = true;
+    s.sampler.seqRunning = true;
+    store.setState(s);
+    expect(store.getState()).toEqual(s);
+  });
+
+  it('coalesceSamplerState(undefined) yields an all-false 8x16 pattern and seqRunning false', () => {
+    const s = coalesceSamplerState(undefined);
+    expect(s.pattern).toHaveLength(DRUM_TRACKS);
+    expect(s.pattern.every((row) => row.length === DRUM_STEPS)).toBe(true);
+    expect(s.pattern.every((row) => row.every((cell) => cell === false))).toBe(true);
+    expect(s.seqRunning).toBe(false);
+  });
+
+  it('coalesceSamplerState fills an all-false pattern + seqRunning false for an older tree lacking them', () => {
+    const oldTree = {
+      pads: [{ sampleId: 'x', sampleName: 'y', level: 0.5, tuneSemis: 0 }],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    const s = coalesceSamplerState(oldTree);
+    expect(s.pattern).toHaveLength(DRUM_TRACKS);
+    expect(s.pattern.every((row) => row.length === DRUM_STEPS)).toBe(true);
+    expect(s.pattern.every((row) => row.every((cell) => cell === false))).toBe(true);
+    expect(s.seqRunning).toBe(false);
+  });
+
+  it('coalesceSamplerState normalizes a ragged/non-boolean pattern to a strict 8x16 grid', () => {
+    const ragged = {
+      pattern: [[true], [], [false, 1, null, true]],
+      seqRunning: true,
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    const s = coalesceSamplerState(ragged);
+    const expected = Array.from({ length: DRUM_TRACKS }, () =>
+      new Array(DRUM_STEPS).fill(false),
+    ) as boolean[][];
+    expected[0]![0] = true; // [0][0] truthy boolean -> true
+    expected[2]![3] = true; // [2][3] === true; [2][1]===1 and [2][2]===null both coerce to false
+    expect(s.pattern).toEqual(expected);
+    expect(s.pattern.every((row) => row.length === DRUM_STEPS)).toBe(true);
+    expect(s.pattern.every((row) => row.every((cell) => typeof cell === 'boolean'))).toBe(true);
+    expect(s.seqRunning).toBe(true);
+  });
+
+  it('coalesceSamplerState coerces a non-boolean seqRunning to a strict boolean (=== true)', () => {
+    // The pinned coalesce body is `raw.seqRunning === true`, so any non-`true` value
+    // (including the integer 1) normalizes to false — guaranteeing JSON round-trip safety.
+    const one = { seqRunning: 1 } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    expect(coalesceSamplerState(one).seqRunning).toBe(false);
+    const lit = { seqRunning: true } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    expect(coalesceSamplerState(lit).seqRunning).toBe(true);
+  });
+
+  it('coalesceSamplerState clamps/guards a garbage pad (level / tuneSemis / sampleId / sampleName)', () => {
+    // A hand-edited bundle could inject junk per pad. Before the field-level guards, `...p`
+    // spread these through verbatim: tuneSemis: 1e308 would reach setPadTune -> playbackRate
+    // = Infinity, and a numeric sampleId would break the factory-/user predicate downstream.
+    const garbage = {
+      pads: [
+        {
+          level: 'loud', // non-number -> default 0.8
+          tuneSemis: 1e308, // huge -> clamp to +24
+          sampleId: 42, // numeric -> null
+          sampleName: 99, // numeric -> null
+          loop: 'yes', // non-boolean -> false
+        },
+        {
+          level: 5, // over 1 -> clamp to 1
+          tuneSemis: -100, // under -24 -> clamp to -24
+          sampleId: 'samp-real', // string kept
+          sampleName: 'kick.wav', // string kept
+        },
+        {
+          level: -2, // under 0 -> clamp to 0
+          tuneSemis: 3.7, // non-integer -> rounded to 4
+        },
+        {
+          tuneSemis: NaN, // not finite -> default 0
+          level: Infinity, // not finite -> default 0.8
+        },
+      ],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    const s = coalesceSamplerState(garbage);
+    expect(s.pads[0]).toEqual({
+      sampleId: null,
+      sampleName: null,
+      level: 0.8,
+      tuneSemis: 24,
+      loop: false,
+    });
+    expect(s.pads[1]).toEqual({
+      sampleId: 'samp-real',
+      sampleName: 'kick.wav',
+      level: 1,
+      tuneSemis: -24,
+      loop: false,
+    });
+    expect(s.pads[2]!.level).toBe(0);
+    expect(s.pads[2]!.tuneSemis).toBe(4);
+    expect(s.pads[3]!.level).toBe(0.8);
+    expect(s.pads[3]!.tuneSemis).toBe(0);
+    // every pad field is now type-correct + finite (JSON round-trips, no Infinity sneaks through)
+    for (const p of s.pads) {
+      expect(Number.isFinite(p.level)).toBe(true);
+      expect(Number.isFinite(p.tuneSemis)).toBe(true);
+      expect(Number.isInteger(p.tuneSemis)).toBe(true);
+      expect(p.sampleId === null || typeof p.sampleId === 'string').toBe(true);
+      expect(p.sampleName === null || typeof p.sampleName === 'string').toBe(true);
+    }
+    expect(JSON.parse(JSON.stringify(s))).toEqual(s);
+  });
+
+  it('lockstep: QUANTIZE_DIVISIONS === sampler.json SAMP_QUANTIZE.positions === quantGrid QUANT_CYCLE', () => {
+    const def = sampler as unknown as ModuleDef;
+    const quantizeCtl = def.controls.find((c) => c.id === 'SAMP_QUANTIZE');
+    expect(quantizeCtl?.positions).toEqual(QUANTIZE_DIVISIONS);
+    expect(QUANT_CYCLE).toEqual(QUANTIZE_DIVISIONS);
+  });
+
+  it('default state carries keyboard:{octave:0} and version stays 1', () => {
+    const s = defaultStudioState();
+    expect(s.keyboard).toEqual({ octave: 0 });
+    expect(s.version).toBe(1); // additive slice — no version bump (mirrors the sampler slice)
+  });
+
+  it('JSON round-trips the keyboard octave across the store', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.keyboard.octave = 2;
+    store.setState(s);
+    expect(store.getState().keyboard).toEqual({ octave: 2 });
+    expect(store.getState()).toEqual(s);
+  });
+
+  it('defaultKeyboardState() is {octave:0}', () => {
+    expect(defaultKeyboardState()).toEqual({ octave: 0 });
+  });
+
+  it('coalesceKeyboardState(undefined) yields {octave:0}', () => {
+    expect(coalesceKeyboardState(undefined)).toEqual({ octave: 0 });
+  });
+
+  it('coalesceKeyboardState coalesces a pre-feature tree missing keyboard to {octave:0}', () => {
+    // A whole studio tree built before the keyboard slice existed has no `keyboard` field.
+    const preFeatureTree = defaultStudioState() as Partial<ReturnType<typeof defaultStudioState>>;
+    delete preFeatureTree.keyboard;
+    expect(coalesceKeyboardState(preFeatureTree.keyboard)).toEqual({ octave: 0 });
+  });
+
+  it('coalesceKeyboardState clamps/defaults a corrupt octave', () => {
+    const bad = (octave: unknown) =>
+      coalesceKeyboardState({ octave } as Partial<{ octave: number }>).octave;
+    expect(bad(3.5)).toBe(0); // non-integer -> default 0
+    expect(bad('x')).toBe(0); // wrong type -> default 0
+    expect(bad(99)).toBe(3); // above range -> clamp +3
+    expect(bad(-99)).toBe(-3); // below range -> clamp -3
+    expect(bad(NaN)).toBe(0); // NaN is not an integer -> default 0
+    expect(bad(undefined)).toBe(0); // missing -> default 0
+  });
+
+  it('coalesceKeyboardState passes the full -3..+3 range through unchanged', () => {
+    for (const octave of [-3, -2, -1, 0, 1, 2, 3]) {
+      expect(coalesceKeyboardState({ octave })).toEqual({ octave });
+    }
+  });
+});

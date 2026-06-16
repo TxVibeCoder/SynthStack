@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+test-results/
+tsconfig.tsbuildinfo
+
+# Local-only — never committed:
+#   manuals, design notes, and export tooling/outputs.
+docs/
+exports/
+scripts/
+
+# Local-only root docs: only README + CLAUDE live in the repo.
+/*.md
+!README.md
+!CLAUDE.md

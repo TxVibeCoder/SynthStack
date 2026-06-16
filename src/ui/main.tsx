@@ -1,0 +1,19 @@
+/**
+ * UI entry point. No StrictMode: the engine is a singleton with intervals and an
+ * AudioContext; dev double-invocation buys nothing here and risks double pumps.
+ */
+
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+const root = document.getElementById('root');
+if (!root) throw new Error('missing #root');
+const reactRoot = createRoot(root);
+
+// dev harness routes — dynamically imported so the battery (and its
+// test-only fft.js dependency) stays out of the normal startup path
+if (window.location.hash.startsWith('#/dev/audio-tests')) {
+  void import('./devharness/AudioTests').then(({ AudioTests }) => reactRoot.render(<AudioTests />));
+} else {
+  reactRoot.render(<App />);
+}

@@ -1,0 +1,429 @@
+/*
+ * synthstack global stylesheet — the ONLY global CSS file.
+ * :root custom properties mirror src/ui/theme.ts; change both together or neither
+ * (design-agent owned — see src/ui/CONVENTIONS.md).
+ */
+
+:root {
+  --color-bg: #101012;
+  --color-panel: #1b1b1d;
+  --color-panel-raised: #232326;
+  --color-panel-edge: #2e2e33;
+  --color-panel-shadow: #0a0a0b;
+  --color-legend: #e8e0cf;
+  --color-legend-dim: #a89f8c;
+  --color-knob: #c89b3c;
+  --color-knob-hi: #e0b95f;
+  --color-knob-lo: #8a6a24;
+  --color-knob-pointer: #141210;
+  --color-led-red: #e23b2e;
+  --color-led-amber: #f0a030;
+  --color-led-green: #43b05c;
+  --color-led-off: #473530;
+  --color-jack-ring: #9aa0a6;
+  --color-jack-ring-dark: #5f6469;
+  --color-jack-hole: #0a0a0b;
+  --color-focus: #f0a030;
+  /* group borders (16:9 redesign — theme.ts GROUP_BORDER) */
+  --color-group-cascade: #e0c341;
+  --color-group-anvil: #4caf5f;
+  --color-group-monarch: #4f8fd9;
+  --color-group-mixer: #9d6fd6;
+  --font-stack: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --font-condensed: 'Arial Narrow', 'Roboto Condensed', 'Helvetica Neue', 'Segoe UI', Arial,
+    sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-legend);
+  font-family: var(--font-stack);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * 16:9 stage: one fixed 1805.19 × 1015.42 console
+ * (src/ui/stage16x9.ts STAGE), uniformly scaled by App.tsx to fit the window —
+ * a 1080p Chrome viewport is exactly scale 1. The viewport wrapper
+ * is fixed and centers the stage horizontally; the 16:9 console pins to the TOP
+ * and the SAMPLER pad section below the fold scrolls (feature-sampler-pads).
+ */
+.stage-viewport {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start; /* was center — top-align so the 16:9 pins to the top */
+  justify-content: center;
+  overflow-y: auto; /* was overflow:hidden — vertical scroll for the pad section */
+  overflow-x: hidden;
+  /* Reserve the scrollbar gutter on BOTH sides so the horizontally-centered console
+   * stays put whether or not the pad-section scrollbar is showing (pixel-stable 16:9). */
+  scrollbar-gutter: stable both-edges;
+  background: var(--color-bg);
+}
+
+/*
+ * Reserves the REAL unscaled height of the scaled console + pad section so the
+ * viewport shows a scrollbar (transform:scale on .stage never contributes to
+ * layout height). width/height come inline from App.tsx (STAGE.w*scale ×
+ * (STAGE.h + PAD_SECTION_H)*scale).
+ */
+.stage-sizer {
+  flex: none;
+}
+
+.stage {
+  position: relative; /* regions + the CableLayer/GroupBorders overlays anchor here */
+  flex: none;
+  width: 1805.19px;
+  /* height set inline by App.tsx (STAGE.h + PAD_SECTION_H) — the pre-scale box
+   * spans the console + pad section. transform-origin pins the top-left so the
+   * 16:9 view stays pixel-identical. */
+  transform-origin: top left;
+}
+
+/* One absolutely-positioned stage region per stage region (stage16x9.REGIONS). */
+.region {
+  position: absolute;
+}
+
+.region > .panel {
+  width: 100%;
+  height: 100%;
+}
+
+/* Group-border overlay (under cables, over panels) — never intercepts input.
+ * Pinned to the CONSOLE height (STAGE.h), NOT the full .stage box: the box now
+ * also spans the pad section (STAGE.h + PAD_SECTION_H), but this SVG's viewBox is
+ * the 1015.42-tall console. Stretching it to 100% height would (via the default
+ * preserveAspectRatio) vertically center the outlines ~160px below their panels. */
+.group-borders {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 1015.42px; /* = STAGE.h (stage16x9.ts) */
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* Full-stage cable overlay — never intercepts panel interaction; only the
+ * cables' own fat hit strokes opt back in (pointer-events: stroke inline). */
+.cable-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 5;
+}
+
+/* Remaining-cable chip (D5) — bottom-right of the CONSOLE band (the 88-jack patch
+ * field), NOT the bottom of the scroll. The .cable-layer is inset:0 of .stage, which
+ * now spans STAGE.h + the sampler+drum sections; a `bottom:10px` would sink the chip
+ * to the very bottom of the scroll, far below the jacks. Pin it to the console height
+ * (STAGE.h = 1015.42px) minus the chip's own ~22px box so it reads against the patch
+ * field as intended. The 16:9 console stays pixel-identical (this is overlay-only). */
+.cable-chip {
+  position: absolute;
+  top: calc(1015.42px - 32px); /* STAGE.h − chip height: pins to the console patch field */
+  right: 12px;
+  z-index: 6;
+  pointer-events: none;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--color-legend-dim);
+  background: var(--color-panel-raised);
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 10px;
+  padding: 3px 10px;
+}
+
+/* Module/strip panel SVG roots. */
+.panel {
+  display: block;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The jack field's region box overlaps the seq strip's bottom band in the
+ * stepped notch (right of x 1117.56 above y 668.78 — nothing is painted
+ * there). Let events fall through the empty notch to the strip below while
+ * every painted element (jacks!) still hit-tests normally. */
+.panel--field {
+  pointer-events: none;
+}
+
+.panel--field * {
+  pointer-events: visiblePainted;
+}
+
+/* Interactive panel elements (knobs, switches, buttons, jacks). touch-action lives
+ * here — NOT on .panel — so touch scrolling still works over panel artwork. */
+.control {
+  touch-action: none;
+  cursor: pointer;
+}
+
+.control--knob {
+  cursor: ns-resize;
+}
+
+/*
+ * D4 / §12.4: un-powered = suspended AudioContext + dimmed regions. Applied to
+ * each stage region EXCEPT the utility strip (the POWER button stays bright).
+ * Controls remain interactive — editing state with power off is allowed; the
+ * engine just isn't running.
+ */
+.unpowered {
+  filter: brightness(0.55) saturate(0.55);
+  transition: filter 250ms ease;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/*
+ * Preset-picker overlay (PresetPicker.tsx — BACKLOG #1/#4). Plain HTML chrome
+ * rendered OUTSIDE the transform:scale stage, so it is screen-pixel sized. z-index
+ * 50 clears the cable-layer (5) / cable-chip (6) / group-borders (4) overlays.
+ * All colors come from the same :root tokens that mirror theme.ts.
+ */
+.preset-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.preset-card {
+  box-sizing: border-box;
+  width: min(520px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 20px 22px 22px;
+  background: var(--color-panel-raised);
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 12px;
+  color: var(--color-legend);
+  font-family: var(--font-stack);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.preset-card:focus {
+  outline: none;
+}
+
+.preset-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.preset-title {
+  margin: 0;
+  font-family: var(--font-condensed);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  color: var(--color-legend);
+}
+
+.preset-x {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--color-legend-dim);
+  background: var(--color-panel-shadow);
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.preset-x:hover {
+  color: var(--color-legend);
+  border-color: var(--color-focus);
+}
+
+.preset-section {
+  margin-top: 16px;
+}
+
+.preset-section-title {
+  margin: 0 0 8px;
+  font-family: var(--font-condensed);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--color-legend-dim);
+}
+
+.preset-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preset-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.preset-row-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
+  text-align: left;
+  background: var(--color-panel);
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 6px;
+  color: var(--color-legend);
+  cursor: pointer;
+}
+
+.preset-row-main:hover {
+  border-color: var(--color-focus);
+}
+
+.preset-row-name {
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+
+.preset-row-desc {
+  font-size: 11px;
+  color: var(--color-legend-dim);
+}
+
+.preset-del {
+  flex: 0 0 auto;
+  padding: 0 12px;
+  font-family: var(--font-condensed);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--color-legend-dim);
+  background: var(--color-panel);
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.preset-del:hover {
+  color: var(--color-led-red);
+  border-color: var(--color-led-red);
+}
+
+.preset-del--armed {
+  color: var(--color-led-red);
+  border-color: var(--color-led-red);
+  background: var(--color-panel-shadow);
+}
+
+.preset-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-legend-dim);
+}
+
+.preset-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.preset-input {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 8px 10px;
+  font-family: var(--font-stack);
+  font-size: 13px;
+  color: var(--color-legend);
+  background: var(--color-panel);
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 6px;
+}
+
+.preset-input::placeholder {
+  color: var(--color-legend-dim);
+}
+
+.preset-btn {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-family: var(--font-condensed);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--color-legend);
+  background: var(--color-panel-shadow);
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.preset-btn:hover {
+  border-color: var(--color-focus);
+}
+
+.preset-status {
+  min-height: 16px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: var(--color-legend-dim);
+}
+
+/* Factory-sound picker menu (SamplerPanel KitMenu, portaled to <body>). Rows carry an inline
+ * color only (no inline background), so this hover rule gives unselected rows a pointer
+ * affordance, matching the .preset-row hover polish. */
+.kit-menu li:hover {
+  background: var(--color-panel-edge);
+}
+
+/* POWER lamp (SVG circle in the utility strip — UtilityStrip.tsx). */
+.power-lamp {
+  fill: var(--color-led-off);
+}
+
+.power-lamp--on {
+  fill: var(--color-led-red);
+  filter: drop-shadow(0 0 4px var(--color-led-red));
+}
+
+.power-lamp--off {
+  animation: power-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes power-pulse {
+  0%,
+  100% {
+    fill: var(--color-led-off);
+    filter: none;
+  }
+  50% {
+    fill: var(--color-led-amber);
+    filter: drop-shadow(0 0 4px var(--color-led-amber));
+  }
+}
