@@ -50,6 +50,7 @@ export class StudioContext {
 
   /** Must be called from a user gesture (autoplay policy). */
   async powerOn(): Promise<AudioContext> {
+    const firstBuild = !this.ctx;
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
       this._masterIn = this.ctx.createGain();
@@ -68,13 +69,35 @@ export class StudioContext {
         this.onStateChange?.(this.ctx?.state === 'running');
       });
     }
+    // iOS Safari unlocks audio ONLY when resume() runs synchronously inside the POWER
+    // user-gesture, before any `await` yields the call stack. loadWorklets() awaits
+    // addModule(), so kick resume() (and a one-shot silent buffer some iOS versions still
+    // need) FIRST, then await the worklet load and the resume. The POWER click chain
+    // reaches here synchronously, so these calls are in-gesture. Without this, iOS leaves
+    // the context 'suspended': no sound AND a frozen sequencer (currentTime never advances).
+    const resuming = this.ctx.resume();
+    if (firstBuild) this.kickSilentBuffer(this.ctx);
     if (!this.workletsLoaded) {
       await loadWorklets(this.ctx);
       this.workletsLoaded = true;
     }
-    await this.ctx.resume();
+    await resuming;
     this.powered = true;
     return this.ctx;
+  }
+
+  /** iOS first-unlock kick: play one frame of silence within the gesture. Harmless on
+   *  other platforms; some iOS Safari versions require an actual BufferSource.start() to
+   *  unlock output, beyond resume(). */
+  private kickSilentBuffer(ctx: AudioContext): void {
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch {
+      /* non-fatal */
+    }
   }
 
   async powerOff(): Promise<void> {
