@@ -85,6 +85,10 @@ import { SamplerJacks } from './panels/SamplerJacks';
 import { DrumMachinePanel } from './panels/DrumMachinePanel';
 import { SAMPLER_REGION, DRUM_REGION } from './panels/samplerLayout';
 import { KeyboardPanel } from './keyboard/KeyboardPanel';
+import { KB_W, KB_H } from './keyboard/keyboardLayout';
+import { cascadeLayout } from './panels/cascadeLayout';
+import { anvilLayout } from './panels/anvilLayout';
+import { monarchLayout } from './panels/monarchLayout';
 import { PresetPicker } from './PresetPicker';
 import { OrientationHint } from './OrientationHint';
 import { TabBar } from './TabBar';
@@ -158,34 +162,48 @@ function union(...bs: RegionBox[]): RegionBox {
  * sampler bboxes keep w === STAGE.w; only the voice tabs (no cables) are narrower.
  */
 /**
- * The on-screen keyboard's render box ON THE MONARCH TAB. The keyboard belongs to the
- * Monarch voice (it plays the Monarch voice through the bridge), so this Wave-1 split
- * docks it under the Monarch controls + seq strip rather than across the full stage.
- *
- * It is placed directly BELOW the seq strip (y = seqStrip bottom 668.78) at the seq
- * strip's WIDTH/X — NOT the full-stage futureStrip width — so the Monarch bbox (its
- * union, below) stays the Monarch column's width instead of ballooning to the full
- * 1805.19 stage. The keyboard is therefore a bit compressed here.
- *
- * TODO (later WIDENING visual pass): give Monarch a proper full-width keyboard strip
- * (and re-flow the Monarch controls/seq for the wider column). This pass is the TAB
- * RESTRUCTURE ONLY — control coords + REGIONS geometry are untouched (stage16x9.test.ts
- * stays green); this is a per-tab RENDER position only.
+ * VOICE-TAB CANVASES — the per-voice re-flow (hardware-panel match). Each voice tab now
+ * frames its OWN landscape panel canvas, decoupled from the tiled stage16x9 REGIONS: the
+ * canvas size IS the panel layout's own width/height (panels/{cascade,anvil,monarch}
+ * Layout.ts), so widening a voice is a layout-file change with NO geometry move in
+ * stage16x9.ts (its snap test stays green). The voice JACKS are unaffected — they live on
+ * the PATCHBAY tab via the separate jackFieldLayout, which still uses the REGIONS tiling.
+ * Patchbay + sampler bboxes keep w === STAGE.w (the CableLayer scale anchor); the voice
+ * tabs carry no cables, so a narrower-than-STAGE bbox is safe (same as before).
  */
-const MONARCH_KEYBOARD_BOX: RegionBox = {
-  x: REGIONS.seqStrip.x,
-  y: REGIONS.seqStrip.y + REGIONS.seqStrip.h, // 668.78 — directly under the seq strip
-  w: REGIONS.seqStrip.w,
-  h: REGIONS.futureStrip.h,
+const CASCADE_BOX: RegionBox = { x: 0, y: 0, w: cascadeLayout.width, h: cascadeLayout.height };
+const ANVIL_BOX: RegionBox = { x: 0, y: 0, w: anvilLayout.width, h: anvilLayout.height };
+
+/**
+ * Monarch tab = three stacked, full-width-ish bands composed into one landscape canvas
+ * (hardware spirit): the knob controls on top, the 32-step editor centered below, and a
+ * FULL-WIDTH keyboard strip along the bottom. The step editor keeps its native seqStrip
+ * aspect (centered, not stretched); the keyboard keeps its native 1805×141 aspect, so a
+ * full-canvas-width box renders it with NO letterbox — the wide keyboard the hardware has.
+ */
+const MON_GAP = 16;
+const MON_CONTROLS_BOX: RegionBox = { x: 0, y: 0, w: monarchLayout.width, h: monarchLayout.height };
+const MON_SEQ_W = Math.min(monarchLayout.width, 880);
+const MON_SEQ_H = (MON_SEQ_W * REGIONS.seqStrip.h) / REGIONS.seqStrip.w;
+const MON_SEQ_BOX: RegionBox = {
+  x: (monarchLayout.width - MON_SEQ_W) / 2,
+  y: monarchLayout.height + MON_GAP,
+  w: MON_SEQ_W,
+  h: MON_SEQ_H,
+};
+const MON_KB_H = (monarchLayout.width * KB_H) / KB_W;
+const MON_KB_BOX: RegionBox = {
+  x: 0,
+  y: MON_SEQ_BOX.y + MON_SEQ_BOX.h + MON_GAP,
+  w: monarchLayout.width,
+  h: MON_KB_H,
 };
 
 const BBOX: Record<ModuleTabId, RegionBox> = {
-  // Each voice now fill-zooms to its OWN controls (computed FROM the existing REGIONS
-  // boxes — no geometry moves). Cascade/Anvil are just their controls; Monarch adds the
-  // seq strip + the docked keyboard (so it spans down to y≈809.92, Monarch-column width).
-  cascade: REGIONS.cascadeControls,
-  anvil: REGIONS.anvilControls,
-  monarch: union(REGIONS.monarchControls, REGIONS.seqStrip, MONARCH_KEYBOARD_BOX),
+  // Each voice fill-zooms to its OWN landscape canvas (the panel layout's width/height).
+  cascade: CASCADE_BOX,
+  anvil: ANVIL_BOX,
+  monarch: union(MON_CONTROLS_BOX, MON_SEQ_BOX, MON_KB_BOX),
   patchbay: union(REGIONS.jackField, SAMPLER_REGION),
   sampler: union(SAMPLER_REGION, DRUM_REGION),
 };
@@ -293,16 +311,16 @@ export function App() {
             }}
             aria-label="Semi-modular studio console"
           >
-            {/* ===== CASCADE TAB: the Cascade voice controls only. ===== */}
+            {/* ===== CASCADE TAB: the Cascade voice controls only (landscape canvas). ===== */}
             {isCascade && (
-              <Region box={REGIONS.cascadeControls} testId="tier-cascade" dimmed={dim}>
+              <Region box={CASCADE_BOX} testId="tier-cascade" dimmed={dim}>
                 <CascadePanel />
               </Region>
             )}
 
-            {/* ===== ANVIL TAB: the Anvil voice controls only. ===== */}
+            {/* ===== ANVIL TAB: the Anvil voice controls only (landscape canvas). ===== */}
             {isAnvil && (
-              <Region box={REGIONS.anvilControls} testId="tier-anvil" dimmed={dim}>
+              <Region box={ANVIL_BOX} testId="tier-anvil" dimmed={dim}>
                 <AnvilPanel />
               </Region>
             )}
@@ -315,13 +333,13 @@ export function App() {
              * Monarch a full-width keyboard strip). ===== */}
             {isMonarch && (
               <>
-                <Region box={REGIONS.monarchControls} testId="tier-monarch" dimmed={dim}>
+                <Region box={MON_CONTROLS_BOX} testId="tier-monarch" dimmed={dim}>
                   <MonarchPanel />
                 </Region>
-                <Region box={REGIONS.seqStrip} testId="seq-strip" dimmed={dim}>
+                <Region box={MON_SEQ_BOX} testId="seq-strip" dimmed={dim}>
                   <MonarchStepEditor />
                 </Region>
-                <Region box={MONARCH_KEYBOARD_BOX} testId="future-strip" dimmed={dim}>
+                <Region box={MON_KB_BOX} testId="future-strip" dimmed={dim}>
                   <KeyboardPanel />
                 </Region>
               </>

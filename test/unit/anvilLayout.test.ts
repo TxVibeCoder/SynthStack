@@ -3,12 +3,12 @@
  * placement is jackFieldLayout's job, tested in jackFieldLayout.test.ts).
  * Every control id in data/anvil.json must be placed, nothing may collide
  * (controls ≥ 40 units apart), and everything must sit inside the panel
- * viewBox, which equals the stage region (stage16x9.REGIONS.anvilControls).
+ * viewBox, which is the panel's OWN landscape canvas (ANVIL_W × ANVIL_H) — the
+ * voice tab is decoupled from the stage16x9 regions (App.tsx frames it directly).
  */
 
 import { describe, expect, it } from 'vitest';
-import { anvilLayout } from '../../src/ui/panels/anvilLayout';
-import { REGIONS } from '../../src/ui/stage16x9';
+import { anvilLayout, ANVIL_W, ANVIL_H } from '../../src/ui/panels/anvilLayout';
 import anvil from '../../data/anvil.json';
 import type { ModuleDef } from '../../data/schema';
 import type { Pt } from '../../src/ui/types';
@@ -32,9 +32,10 @@ function assertMinPitch(entries: [string, Pt][], minUnits: number): void {
 }
 
 describe('anvilLayout', () => {
-  it('matches the anvilControls stage region (16:9 redesign)', () => {
-    expect(anvilLayout.width).toBe(REGIONS.anvilControls.w);
-    expect(anvilLayout.height).toBe(REGIONS.anvilControls.h);
+  it('uses its own landscape canvas dims (decoupled from stage regions)', () => {
+    expect(anvilLayout.width).toBe(ANVIL_W);
+    expect(anvilLayout.height).toBe(ANVIL_H);
+    expect(anvilLayout.width).toBeGreaterThan(anvilLayout.height); // landscape
   });
 
   it('places every control id from data/anvil.json', () => {

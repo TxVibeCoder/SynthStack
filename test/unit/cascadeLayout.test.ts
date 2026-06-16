@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ModuleDef } from '../../data/schema';
 import cascadeJson from '../../data/cascade.json';
-import { cascadeLayout } from '../../src/ui/panels/cascadeLayout';
-import { REGIONS } from '../../src/ui/stage16x9';
+import { cascadeLayout, CASCADE_W, CASCADE_H } from '../../src/ui/panels/cascadeLayout';
 
 const cascade = cascadeJson as unknown as ModuleDef;
 
@@ -37,6 +36,12 @@ function pairs(items: Placed[]): Array<[Placed, Placed]> {
 }
 
 describe('cascadeLayout (Cascade panel layout)', () => {
+  it('uses its own landscape canvas dims (decoupled from stage regions)', () => {
+    expect(cascadeLayout.width).toBe(CASCADE_W);
+    expect(cascadeLayout.height).toBe(CASCADE_H);
+    expect(cascadeLayout.width).toBeGreaterThan(cascadeLayout.height); // landscape
+  });
+
   it('places every control id from data/cascade.json', () => {
     for (const c of cascade.controls) {
       expect(cascadeLayout.controls[c.id], `control ${c.id} missing a position`).toBeDefined();
@@ -65,9 +70,7 @@ describe('cascadeLayout (Cascade panel layout)', () => {
     }
   });
 
-  it('keeps all control and jack positions inside the cascadeControls region viewBox', () => {
-    expect(cascadeLayout.width).toBe(REGIONS.cascadeControls.w);
-    expect(cascadeLayout.height).toBe(REGIONS.cascadeControls.h);
+  it('keeps all control and jack positions inside the viewBox', () => {
     for (const p of [...placedControls, ...placedJacks]) {
       expect(p.x, `${p.id} x`).toBeGreaterThanOrEqual(0);
       expect(p.x, `${p.id} x`).toBeLessThanOrEqual(cascadeLayout.width);

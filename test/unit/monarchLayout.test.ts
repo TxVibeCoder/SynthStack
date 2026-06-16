@@ -3,12 +3,12 @@
  * jack placement is jackFieldLayout's job, tested in jackFieldLayout.test.ts).
  * Every control id in data/monarch.json must be placed, nothing may collide
  * (controls ≥ 40 units apart), and everything must sit inside the panel
- * viewBox, which equals the stage region (stage16x9.REGIONS.monarchControls).
+ * viewBox, which is the panel's OWN landscape canvas (MONARCH_W × MONARCH_H) —
+ * the voice tab is decoupled from the stage16x9 regions (App.tsx frames it directly).
  */
 
 import { describe, expect, it } from 'vitest';
-import { monarchLayout } from '../../src/ui/panels/monarchLayout';
-import { REGIONS } from '../../src/ui/stage16x9';
+import { monarchLayout, MONARCH_W, MONARCH_H } from '../../src/ui/panels/monarchLayout';
 import monarch from '../../data/monarch.json';
 import type { ModuleDef } from '../../data/schema';
 import type { Pt } from '../../src/ui/types';
@@ -32,9 +32,10 @@ function assertMinPitch(entries: [string, Pt][], minUnits: number): void {
 }
 
 describe('monarchLayout', () => {
-  it('matches the monarchControls stage region (16:9 redesign)', () => {
-    expect(monarchLayout.width).toBe(REGIONS.monarchControls.w);
-    expect(monarchLayout.height).toBe(REGIONS.monarchControls.h);
+  it('uses its own landscape canvas dims (decoupled from stage regions)', () => {
+    expect(monarchLayout.width).toBe(MONARCH_W);
+    expect(monarchLayout.height).toBe(MONARCH_H);
+    expect(monarchLayout.width).toBeGreaterThan(monarchLayout.height); // landscape
   });
 
   it('places every control id from data/monarch.json', () => {
