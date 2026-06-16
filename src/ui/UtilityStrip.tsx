@@ -69,14 +69,27 @@ function subscribeStore(onChange: () => void): () => void {
 
 // ---- POWER (custom cap spanning both rows; pulse animation lives in styles.css) ---------
 
-const PowerButton = memo(function PowerButton({
+/**
+ * POWER — AudioContext user-gesture unlock; keeps its data-testid="power"
+ * contract. Self-contained apart from the powered/busy/onToggle props App owns (App
+ * drives panel dimming off the same usePower state). Exported so the master ribbon
+ * can render it as a leaf; `x`/`y` are the top-left of the 72×40 cap and default to
+ * the in-strip position (16, 26) so UtilityStrip renders pixel-identically. Renders
+ * an SVG <g> — mount inside an <svg>. NOTE: data-testid="power" must appear exactly
+ * ONCE in the DOM, so render this in either the strip OR the ribbon, never both.
+ */
+export const PowerButton = memo(function PowerButton({
   powered,
   busy,
   onToggle,
+  x = 16,
+  y = 26,
 }: {
   powered: boolean;
   busy: boolean;
   onToggle: () => void;
+  x?: number;
+  y?: number;
 }) {
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<SVGGElement>) => {
@@ -101,8 +114,8 @@ const PowerButton = memo(function PowerButton({
     >
       <title>{powered ? 'Power the studio off' : 'Power the studio on (unlocks audio)'}</title>
       <rect
-        x={16}
-        y={26}
+        x={x}
+        y={y}
         width={72}
         height={40}
         rx={6}
@@ -111,16 +124,16 @@ const PowerButton = memo(function PowerButton({
         strokeWidth={1.5}
       />
       <circle
-        cx={32}
-        cy={46}
+        cx={x + 16}
+        cy={y + 20}
         r={5}
         className={powered ? 'power-lamp power-lamp--on' : 'power-lamp power-lamp--off'}
         stroke={COLORS.panelShadow}
         strokeWidth={1}
       />
       <text
-        x={44}
-        y={50}
+        x={x + 28}
+        y={y + 24}
         fontFamily={FONT_CONDENSED}
         fontSize={12}
         letterSpacing={2}
@@ -134,8 +147,24 @@ const PowerButton = memo(function PowerButton({
 
 // ---- live row-1 controls -----------------------------------------------------------------
 
-/** Convenience transports — momentary caps, bridge action on the down edge. */
-const RunStopAll = memo(function RunStopAll() {
+/**
+ * Convenience transports — momentary caps, bridge action on the down edge.
+ * Exported so the master ribbon can render the pair as a leaf (its engine wiring,
+ * `engineBridge.runAll`/`stopAll`, is unchanged). Button x's locate the cap CENTERS
+ * and default to the in-strip positions so UtilityStrip is pixel-identical. The
+ * ribbon will be tab-aware (studio→runAll/stopAll, sampler→drumRun/drumStop per
+ * REFACTOR_DESIGN §2) — that branching belongs to the ribbon, NOT this leaf; this
+ * leaf is the studio-tab variant. Renders an SVG <g> — mount inside an <svg>.
+ */
+export const RunStopAll = memo(function RunStopAll({
+  runX = 132,
+  stopX = 212,
+  y = ROW1_Y,
+}: {
+  runX?: number;
+  stopX?: number;
+  y?: number;
+} = {}) {
   const onRun = useCallback((pos: string) => {
     if (pos === 'ON') engineBridge.runAll();
   }, []);
@@ -144,15 +173,27 @@ const RunStopAll = memo(function RunStopAll() {
   }, []);
   return (
     <g>
-      <Button def={RUN_ALL_DEF} value="OFF" onChange={onRun} momentary x={132} y={ROW1_Y} />
-      <Button def={STOP_ALL_DEF} value="OFF" onChange={onStop} momentary x={212} y={ROW1_Y} />
+      <Button def={RUN_ALL_DEF} value="OFF" onChange={onRun} momentary x={runX} y={y} />
+      <Button def={STOP_ALL_DEF} value="OFF" onChange={onStop} momentary x={stopX} y={y} />
     </g>
   );
 });
 
-/** TEMPO LINK — now a lit latch button (was a 2-pos switch in the old
- *  mixer column; a 46-px-tall switch lever does not fit the 102-px strip). */
-const TempoLinkButton = memo(function TempoLinkButton() {
+/**
+ * TEMPO LINK — a lit latch button (was a 2-pos switch in the old mixer
+ * column; a 46-px-tall switch lever does not fit the 102-px strip). Self-subscribes
+ * to `mixer.tempoLink` and writes via `engineBridge.setTempoLink` (unchanged), so it
+ * updates on tab switch with no new wiring. Exported for the master ribbon; x/y
+ * locate the cap center and default to the in-strip position so UtilityStrip is
+ * pixel-identical. Renders an SVG <g> — mount inside an <svg>.
+ */
+export const TempoLinkButton = memo(function TempoLinkButton({
+  x = 296,
+  y = ROW1_Y,
+}: {
+  x?: number;
+  y?: number;
+} = {}) {
   const getSnapshot = useCallback(() => engineBridge.store.getState().mixer.tempoLink, []);
   const linked = useSyncExternalStore(subscribeStore, getSnapshot);
   const onChange = useCallback((pos: string) => engineBridge.setTempoLink(pos === 'ON'), []);
@@ -162,8 +203,8 @@ const TempoLinkButton = memo(function TempoLinkButton() {
       value={linked ? 'ON' : 'OFF'}
       onChange={onChange}
       lit={linked}
-      x={296}
-      y={ROW1_Y}
+      x={x}
+      y={y}
     />
   );
 });
@@ -322,8 +363,20 @@ function FeatureCap({
  * so the UI is never a second owner of stop; the next poll clears the lamp + timer.
  * Elapsed m:ss renders ONLY while recording, to the RIGHT of the cap (inside the gap to
  * FULL SCREEN — below the cap would overflow the 102.78-tall viewBox and be clipped).
+ * Exported for the master ribbon; x/y locate the cap center (the elapsed readout tracks
+ * x+21, y+3) and default to the in-strip position so UtilityStrip is pixel-identical.
+ * Carries data-testid="record" (and "record-elapsed" while recording) — recording.spec.ts
+ * scopes `record` under the utility-strip AND also queries it unscoped, so it must render
+ * in EXACTLY ONE place. In Wave 1 that home stays the strip; if the ribbon adopts it, drop
+ * the strip's instance in the same change. Renders an SVG <g> — mount inside an <svg>.
  */
-const RecordButton = memo(function RecordButton() {
+export const RecordButton = memo(function RecordButton({
+  x = 272,
+  y = ROW2_Y,
+}: {
+  x?: number;
+  y?: number;
+} = {}) {
   const { recording, elapsedMs } = useRecordingState();
   const onChange = useCallback(() => {
     if (recording) engineBridge.stopRecording();
@@ -341,14 +394,14 @@ const RecordButton = memo(function RecordButton() {
         value={recording ? 'ON' : 'OFF'}
         onChange={onChange}
         lit={recording}
-        x={272}
-        y={ROW2_Y}
+        x={x}
+        y={y}
       />
       {recording && (
         <text
           data-testid="record-elapsed"
-          x={293}
-          y={ROW2_Y + 3}
+          x={x + 21}
+          y={y + 3}
           textAnchor="start"
           fontFamily={FONT_CONDENSED}
           fontSize={9}
@@ -362,8 +415,20 @@ const RecordButton = memo(function RecordButton() {
   );
 });
 
-/** FULL SCREEN (live): the stage targets the full 1080p viewport. */
-const FullScreenButton = memo(function FullScreenButton() {
+/**
+ * FULL SCREEN (live): the stage targets the full 1080p viewport. Self-contained
+ * (tracks `document.fullscreenElement` via the fullscreenchange event; no engine
+ * wiring). Exported for the master ribbon; x/y locate the cap center and default to
+ * the in-strip position so UtilityStrip is pixel-identical. Renders an SVG <g> —
+ * mount inside an <svg>.
+ */
+export const FullScreenButton = memo(function FullScreenButton({
+  x = 352,
+  y = ROW2_Y,
+}: {
+  x?: number;
+  y?: number;
+} = {}) {
   const [isFs, setIsFs] = useState(() => document.fullscreenElement != null);
   useEffect(() => {
     const sync = () => setIsFs(document.fullscreenElement != null);
@@ -380,8 +445,8 @@ const FullScreenButton = memo(function FullScreenButton() {
       value={isFs ? 'ON' : 'OFF'}
       onChange={onChange}
       lit={isFs}
-      x={352}
-      y={ROW2_Y}
+      x={x}
+      y={y}
     />
   );
 });

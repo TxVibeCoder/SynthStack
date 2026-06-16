@@ -85,11 +85,7 @@ import {
 } from '../state/presets';
 import { getFactoryPreset } from '../state/factoryPresets';
 import { FACTORY_KIT } from '../engine/factorySamples';
-import type { ModuleDef } from '../../data/schema';
-import monarchDef from '../../data/monarch.json';
-import anvilDef from '../../data/anvil.json';
-import cascadeDef from '../../data/cascade.json';
-import samplerDef from '../../data/sampler.json';
+import { MODULES, controlDefaultModules } from '../engine/modules/moduleConfig';
 
 /**
  * Module-level sample backend singleton (created once, audio-free). Bytes for user
@@ -779,9 +775,9 @@ class EngineBridge {
    *  cache is separate from the engine's router index built in studio.ts. */
   private get jackIndex(): JackIndex {
     if (!this.jackIndexCache) {
-      this.jackIndexCache = buildJackIndex(
-        [monarchDef, anvilDef, cascadeDef, samplerDef] as unknown as ModuleDef[],
-      );
+      // ALL four defs (incl. sampler) — derived from the MODULES registry so this stays in
+      // lockstep with the build. The sampler def is required so CableLayer accepts SAMP_* jacks.
+      this.jackIndexCache = buildJackIndex(MODULES.map((m) => m.def));
     }
     return this.jackIndexCache;
   }
@@ -1108,9 +1104,12 @@ class EngineBridge {
       .filter((id): id is string => !!id && !id.startsWith('factory-'));
     const state = defaultStudioState();
     state.power = this._powered;
-    for (const def of [monarchDef, anvilDef, cascadeDef] as unknown as ModuleDef[]) {
-      const mod = (state.controls[def.id] ??= {});
-      for (const c of def.controls) {
+    // Seed control defaults for the control-bearing modules ONLY (monarch/anvil/cascade) —
+    // derived from the registry via controlDefaultModules. The sampler is excluded
+    // (ownsControlDefaults:false) because its pad params live in state.sampler, not state.controls.
+    for (const m of controlDefaultModules) {
+      const mod = (state.controls[m.def.id] ??= {});
+      for (const c of m.def.controls) {
         if (c.default !== undefined) mod[c.id] = c.default as number | string;
       }
     }

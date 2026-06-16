@@ -6,13 +6,12 @@
  *
  * The drum machine is an 8-track × 16-step grid (track t triggers sample pad t),
  * stepped one column per master 16th by the 5th scheduler citizen samplerSeq. It
- * lives in the SAME scroll-down section as the pads, directly BELOW them
- * (DRUM_REGION tiles under SAMPLER_REGION), rendered inside the same scaled
- * <main>. This spec proves the g1→g5 wiring end-to-end:
- *   a. the 16:9 console testids stay ABOVE the fold (pixel-stable at 1920×1080) —
- *      growing the scroll section for the drum grid does NOT disturb the console
- *   b. the DRUM MACHINE panel lives BELOW the fold and is reached by scrolling the
- *      .stage-viewport (scrollIntoViewIfNeeded)
+ * lives on the SAMPLER tab directly BELOW the pads (DRUM_REGION tiles under
+ * SAMPLER_REGION), rendered inside the same scaled <main>. This spec proves the
+ * g1→g5 wiring end-to-end:
+ *   a. the STUDIO console tiers render on the default STUDIO tab at load
+ *   b. on the SAMPLER tab the DRUM MACHINE panel fill-zooms into view (per-tab fill,
+ *      not a scroll fold)
  *   c. toggling drum-cell-0-0 round-trips into state.sampler.pattern[0][0] (the
  *      bridge toggleStep → coalesced store commit)
  *   d. with a tiny WAV on pad-0 + the master RUNNING (RUN ALL) then drum RUN
@@ -61,11 +60,11 @@ function tinyWav(): Buffer {
 const pattern = (page: Page) =>
   page.evaluate(() => window.__synthstackStudio!.store.getState().sampler.pattern as boolean[][]);
 
-test('drum machine: below the fold, cell round-trips, RUN plays, CLEAR zeroes', async ({
+test('drum machine: on the sampler tab, cell round-trips, RUN plays, CLEAR zeroes', async ({
   page,
 }) => {
-  // the 16:9 stage's design target — the console fills the viewport, the sampler
-  // section (pads + drum grid) scrolls.
+  // the 16:9 stage's design target — the sampler section (pads + drum grid) lives on
+  // the SAMPLER tab and fill-zooms into view when that tab is active.
   await page.setViewportSize({ width: 1920, height: 1080 });
   const errors: string[] = [];
   page.on('console', (msg) => {
@@ -76,20 +75,23 @@ test('drum machine: below the fold, cell round-trips, RUN plays, CLEAR zeroes', 
   await page.goto('/');
   await page.getByTestId('power').click();
 
-  // ---- a. the 16:9 console sits above the fold (pixel-stable, no scroll) -----------
-  // growing the scroll section for the drum grid must not push the console tiers.
+  // ---- a. the STUDIO console tiers render on the default STUDIO tab ----------------
+  // the app boots on the STUDIO tab, so the voice tiers are visible immediately.
   for (const tier of ['tier-cascade', 'tier-anvil', 'tier-monarch', 'tier-mixer']) {
     await expect(page.getByTestId(tier)).toBeVisible();
   }
-  // the drum section is laid out BELOW the pad section, so well past the fold.
-  const drumBoxBefore = await page.getByTestId('drum-section').boundingBox();
-  expect(drumBoxBefore, 'drum-section is laid out (below the fold)').not.toBeNull();
-  expect(drumBoxBefore!.y, 'drum-section starts below the fold').toBeGreaterThanOrEqual(1000);
 
-  // ---- b. scroll the viewport down → the DRUM MACHINE panel comes into view --------
-  await page.getByTestId('drum-section').scrollIntoViewIfNeeded();
+  // ---- b. switch to the SAMPLER tab → the DRUM MACHINE panel fill-zooms into view ---
+  // In the 3-tab layout the drum grid lives on the SAMPLER tab (below the pads) and is
+  // scaled to FILL the viewport, so it is on screen once the tab is active — this
+  // asserts the NEW per-tab-fill behavior (replacing the old below-the-fold scroll).
+  await page.getByTestId('tab-sampler').click();
   await expect(page.getByTestId('drum-machine-panel')).toBeVisible();
   await expect(page.getByTestId('drum-cell-0-0')).toBeVisible();
+  const drumBox = await page.getByTestId('drum-section').boundingBox();
+  expect(drumBox, 'drum-section is laid out on the sampler tab').not.toBeNull();
+  expect(drumBox!.y, 'drum-section top is within the viewport (fill-zoom)').toBeLessThan(1080);
+  expect(drumBox!.y + drumBox!.height, 'drum-section is on screen, not below a fold').toBeGreaterThan(0);
 
   // ---- c. toggle cell (0,0) → it round-trips into state.sampler.pattern[0][0] ------
   expect((await pattern(page))[0]![0], 'pattern[0][0] starts OFF').toBe(false);
@@ -101,7 +103,8 @@ test('drum machine: below the fold, cell round-trips, RUN plays, CLEAR zeroes', 
 
   // ---- d. arm pad-0 with a tiny WAV, set a couple of cells, RUN ALL + drum RUN -----
   // load a real (tiny) buffer into pad 0 so the track-0 hits aren't silent no-ops.
-  await page.getByTestId('sampler-section').scrollIntoViewIfNeeded();
+  // The sampler panel and the drum grid share the SAMPLER tab (we are already on it),
+  // both fill-zoomed into view — no scroll fold to clear.
   await expect(page.getByTestId('sampler-panel')).toBeVisible();
   const fileInput = page.locator('input[type="file"]').first();
   await fileInput.setInputFiles({ name: 'kick.wav', mimeType: 'audio/wav', buffer: tinyWav() });
@@ -112,8 +115,8 @@ test('drum machine: below the fold, cell round-trips, RUN plays, CLEAR zeroes', 
     })
     .toBe(true);
 
-  // light up a few steps on track 0 (the armed pad) — back in the drum section.
-  await page.getByTestId('drum-section').scrollIntoViewIfNeeded();
+  // light up a few steps on track 0 (the armed pad) — the drum grid is in view.
+  await expect(page.getByTestId('drum-machine-panel')).toBeVisible();
   for (const step of [0, 4, 8, 12]) {
     await page.getByTestId(`drum-cell-0-${step}`).click();
   }

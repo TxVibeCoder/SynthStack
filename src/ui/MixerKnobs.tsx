@@ -21,12 +21,15 @@ import type { ControlDef } from '../../data/schema';
 import { COLORS, FONT_CONDENSED } from './theme';
 import { REGIONS } from './stage16x9';
 import { Knob } from './controls/Knob';
+import type { KnobSize } from './types';
 import { engineBridge } from './engineBridge';
 
 const W = REGIONS.mixerKnobs.w;
 const H = REGIONS.mixerKnobs.h;
 /** Knob row center. */
 const KNOB_Y = 64;
+/** MASTER knob x in the mixer-panel layout (right of the channel/master divider). */
+const MASTER_X_DEFAULT = 424;
 
 type MixChannel = 0 | 1 | 2 | 3;
 
@@ -65,7 +68,6 @@ const MASTER_DEF: ControlDef = {
   max: 1,
   default: 0.8,
 };
-const MASTER_X = 424;
 
 // ---- store plumbing ---------------------------------------------------------------------
 
@@ -112,7 +114,25 @@ const ChannelKnob = memo(function ChannelKnob({
   return <Knob def={def} value={value} onInput={onLevel} onCommit={onLevel} x={x} y={KNOB_Y} />;
 });
 
-const MasterKnob = memo(function MasterKnob() {
+/**
+ * MASTER volume knob — self-contained: subscribes to its own
+ * `mixer.masterVolume` store snapshot and writes via `engineBridge.setMasterVolume`
+ * on both onInput and onCommit (zero engine change; identical wiring wherever it
+ * mounts). Exported so the master ribbon can render it as a leaf without dragging in
+ * the whole mixer panel. Position/size default to the in-panel mixer coordinates
+ * (size "l", x 424, y KNOB_Y) so MixerKnobs renders pixel-identically; the ribbon
+ * passes its own x/y/size. Like every Knob, it renders an SVG <g> positioned by
+ * translate(x y) and MUST be mounted inside an <svg>.
+ */
+export const MasterKnob = memo(function MasterKnob({
+  x = MASTER_X_DEFAULT,
+  y = KNOB_Y,
+  size = 'l',
+}: {
+  x?: number;
+  y?: number;
+  size?: KnobSize;
+} = {}) {
   const getSnapshot = useCallback(() => engineBridge.store.getState().mixer.masterVolume, []);
   const value = useSyncExternalStore(subscribeStore, getSnapshot);
   const onLevel = useCallback((v: number) => engineBridge.setMasterVolume(v), []);
@@ -122,9 +142,9 @@ const MasterKnob = memo(function MasterKnob() {
       value={value}
       onInput={onLevel}
       onCommit={onLevel}
-      size="l"
-      x={MASTER_X}
-      y={KNOB_Y}
+      size={size}
+      x={x}
+      y={y}
     />
   );
 });
@@ -219,10 +239,12 @@ export const MixerKnobs = memo(function MixerKnobs() {
         <ChannelKnob key={spec.def.id} channel={spec.channel} def={spec.def} x={spec.x} />
       ))}
 
-      {/* channel/master divider */}
-      <line x1={344} x2={344} y1={28} y2={104} stroke={COLORS.panelEdge} strokeWidth={1} />
-
-      <MasterKnob />
+      {/* MASTER now lives in the MasterRibbon (out-of-stage chrome) — the ribbon owns
+       * the single MasterKnob instance so MIX_MASTER appears exactly once in the DOM.
+       * The in-panel divider + <MasterKnob /> that used to sit here were removed when
+       * g-ui-app relocated MASTER to the ribbon (Wave 1). The MasterKnob export at the
+       * top of this file is what the ribbon renders; the mixer panel keeps only the 4
+       * channel faders. */}
 
       <DebugFooter />
     </svg>

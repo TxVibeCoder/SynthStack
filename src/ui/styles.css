@@ -32,6 +32,12 @@
   --font-stack: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
   --font-condensed: 'Arial Narrow', 'Roboto Condensed', 'Helvetica Neue', 'Segoe UI', Arial,
     sans-serif;
+  /* Out-of-stage chrome heights (Wave 1 tab/ribbon refactor). MUST stay in lockstep with
+   * src/ui/App.tsx RIBBON_H / TABBAR_H / CHROME_H — App subtracts CHROME_H from the
+   * window height before scaling the stage, and these vars size + offset the chrome. */
+  --ribbon-h: 96px;
+  --tabbar-h: 40px;
+  --chrome-h: 136px; /* = ribbon-h + tabbar-h */
 }
 
 html,
@@ -54,19 +60,23 @@ body {
 }
 
 /*
- * 16:9 stage: one fixed 1805.19 × 1015.42 console
- * (src/ui/stage16x9.ts STAGE), uniformly scaled by App.tsx to fit the window —
- * a 1080p Chrome viewport is exactly scale 1. The viewport wrapper
- * is fixed and centers the stage horizontally; the 16:9 console pins to the TOP
- * and the SAMPLER pad section below the fold scrolls (feature-sampler-pads).
+ * Per-tab fill-zoom viewport. The stage is the always-1805.19-wide <main>, but each tab
+ * scales+translates to FILL the window with that tab's content bbox (App.tsx). The
+ * .stage-sizer (overflow:hidden, sized to box.w*scale × box.h*scale) is the per-tab
+ * window; this wrapper is fixed and centers that sizer horizontally. computeScale fits
+ * each bbox beneath the chrome, so there is normally NO vertical scroll — overflow-y:auto
+ * is retained only as a fallback (and so the mobile pinch-zoom panning model still works).
  */
 .stage-viewport {
   position: fixed;
-  inset: 0;
+  /* Out-of-stage chrome (master ribbon + tab bar) occupies the top --chrome-h band; the
+   * viewport starts BELOW it and fills the rest of the window. App.tsx subtracts the same
+   * CHROME_H from computeScale so the scaled bbox fits this reduced height. */
+  inset: var(--chrome-h) 0 0 0;
   display: flex;
-  align-items: flex-start; /* was center — top-align so the 16:9 pins to the top */
+  align-items: flex-start; /* top-align the per-tab sizer */
   justify-content: center;
-  overflow-y: auto; /* was overflow:hidden — vertical scroll for the pad section */
+  overflow-y: auto; /* fallback only — per-tab fill-zoom normally fits; mobile pinch-pan keeps it */
   overflow-x: hidden;
   /* Reserve the scrollbar gutter on BOTH sides so the horizontally-centered console
    * stays put whether or not the pad-section scrollbar is showing (pixel-stable 16:9). */
@@ -90,23 +100,104 @@ body {
 }
 
 /*
- * Reserves the REAL unscaled height of the scaled console + pad section so the
- * viewport shows a scrollbar (transform:scale on .stage never contributes to
- * layout height). width/height come inline from App.tsx (STAGE.w*scale ×
- * (STAGE.h + PAD_SECTION_H)*scale).
+ * Per-tab content WINDOW. App.tsx sizes it inline to the ACTIVE tab's content bbox at
+ * scale (box.w*scale × box.h*scale) and sets overflow:hidden, so it clips the always-
+ * STAGE.w-wide scaled <main> down to just that bbox (transform:scale never contributes
+ * to layout height, hence the explicit box). overflow:hidden is duplicated here as a
+ * safety net; the .stage-viewport flex centers this sizer horizontally.
  */
 .stage-sizer {
   flex: none;
+  overflow: hidden;
 }
 
 .stage {
   position: relative; /* regions + the CableLayer/GroupBorders overlays anchor here */
   flex: none;
-  width: 1805.19px;
-  /* height set inline by App.tsx (STAGE.h + PAD_SECTION_H) — the pre-scale box
-   * spans the console + pad section. transform-origin pins the top-left so the
-   * 16:9 view stays pixel-identical. */
+  width: 1805.19px; /* always STAGE.w — every tab's bbox is STAGE.w wide (CableLayer anchor) */
+  /* height set inline by App.tsx = the active tab's bbox BOTTOM (box.y+box.h): studio
+   * 1015.42, patchbay 1335.42, sampler 1635.42 — so every region/jack that mounts on the
+   * tab is inside <main>'s box and measurable. transform-origin top-left anchors the
+   * translate(-box.x*s,-box.y*s) scale(s) that maps the bbox top-left to the sizer origin. */
   transform-origin: top left;
+}
+
+/*
+ * OUT-OF-STAGE CHROME (Wave 1 tab/ribbon refactor) — the master ribbon + tab bar are
+ * fixed, full-width, screen-pixel-sized bars pinned to the TOP of the window, ABOVE the
+ * .stage-viewport (which starts at --chrome-h). They are NOT inside the transform:scale
+ * <main>, so they never inherit the stage scale and never touch the stage16x9 geometry.
+ * z-index sits above the stage overlays but below the rotate-hint (40) / preset overlay
+ * (50) so those modals still win.
+ */
+.master-ribbon {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--ribbon-h);
+  z-index: 30;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-panel-edge);
+}
+
+/* The ribbon's SVG fills the bar width and scales its 1805.19 × 90 viewBox to the
+ * screen-pixel height (preserveAspectRatio="xMidYMid meet" on the element keeps the
+ * controls' aspect; the bar is wide enough on desktop that height is the binding edge). */
+.master-ribbon__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tab-bar {
+  position: fixed;
+  top: var(--ribbon-h);
+  left: 0;
+  right: 0;
+  height: var(--tabbar-h);
+  z-index: 30;
+  box-sizing: border-box;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 10px;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-panel-edge);
+}
+
+.tab-bar__tab {
+  appearance: none;
+  margin: 6px 0;
+  padding: 0 22px;
+  font-family: var(--font-condensed);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 2.5px;
+  color: var(--color-legend-dim);
+  background: var(--color-panel-raised);
+  border: 1px solid var(--color-panel-edge);
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.tab-bar__tab:hover {
+  color: var(--color-legend);
+  border-color: var(--color-focus);
+}
+
+.tab-bar__tab--active {
+  color: var(--color-bg);
+  background: var(--color-knob);
+  border-color: var(--color-knob-hi);
 }
 
 /* One absolutely-positioned stage region per stage region (stage16x9.REGIONS). */
@@ -119,11 +210,13 @@ body {
   height: 100%;
 }
 
-/* Group-border overlay (under cables, over panels) — never intercepts input.
- * Pinned to the CONSOLE height (STAGE.h), NOT the full .stage box: the box now
- * also spans the pad section (STAGE.h + PAD_SECTION_H), but this SVG's viewBox is
- * the 1015.42-tall console. Stretching it to 100% height would (via the default
- * preserveAspectRatio) vertically center the outlines ~160px below their panels. */
+/* Group-border overlay (under cables, over panels) — never intercepts input. Mounts on
+ * the PATCHBAY tab only. Pinned to the CONSOLE height (STAGE.h = 1015.42), NOT the full
+ * .stage box (whose inline height on patchbay is the bbox bottom 1335.42): this SVG's
+ * viewBox is the 1015.42-tall console, so a 100%-height stretch would (via the default
+ * preserveAspectRatio) vertically center the outlines below their panels. The outlines
+ * are in stage units and translate WITH the frame; the .stage-sizer's overflow:hidden
+ * clips the control-half strokes that fall above the patchbay bbox (y < 644.78). */
 .group-borders {
   position: absolute;
   top: 0;
@@ -146,15 +239,16 @@ body {
   z-index: 5;
 }
 
-/* Remaining-cable chip (D5) — bottom-right of the CONSOLE band (the 88-jack patch
- * field), NOT the bottom of the scroll. The .cable-layer is inset:0 of .stage, which
- * now spans STAGE.h + the sampler+drum sections; a `bottom:10px` would sink the chip
- * to the very bottom of the scroll, far below the jacks. Pin it to the console height
- * (STAGE.h = 1015.42px) minus the chip's own ~22px box so it reads against the patch
- * field as intended. The 16:9 console stays pixel-identical (this is overlay-only). */
+/* Remaining-cable chip (D5) — rendered by CableLayer, so it appears on the PATCHBAY tab
+ * ONLY. The .cable-layer is inset:0 of .stage, whose inline height on patchbay is the
+ * bbox bottom (1335.42). top: calc(1015.42px − 32px) = 983.42 falls BETWEEN the jack
+ * field top (644.78) and the sampler-jacks zone (y ≥ 1015.42), i.e. INSIDE the patchbay
+ * window's jack band — so the chip reads against the patch field as intended (mid-field).
+ * If it ever reads too high, switch to calc(1335.42px − 32px) (patchbay bbox bottom);
+ * the canonical default is 1015.42 (lands within the jack band). Overlay-only. */
 .cable-chip {
   position: absolute;
-  top: calc(1015.42px - 32px); /* STAGE.h − chip height: pins to the console patch field */
+  top: calc(1015.42px - 32px); /* 983.42 — inside the patchbay jack band (mid-field) */
   right: 12px;
   z-index: 6;
   pointer-events: none;

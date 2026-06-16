@@ -21,14 +21,15 @@ import {
   type StudioState,
 } from './studioState';
 import type { ModuleDef } from '../../data/schema';
-import monarchDef from '../../data/monarch.json';
-import anvilDef from '../../data/anvil.json';
-import cascadeDef from '../../data/cascade.json';
+import { controlDefaultModules } from '../engine/modules/moduleConfig';
 import type { SampleBlob } from '../engine/sampleStore';
 
-/** The three control-bearing module defs, in the EXACT order resetAll seeds them
- *  (engineBridge.ts:963). The completeness test pins coalesce's seed set == resetAll's. */
-const MODULE_DEFS: ModuleDef[] = [monarchDef, anvilDef, cascadeDef] as unknown as ModuleDef[];
+/** The control-bearing module defs, in the EXACT order resetAll seeds them
+ *  (engineBridge.ts:963), DERIVED from the single-source-of-truth MODULES registry
+ *  (controlDefaultModules = MODULES.filter(m => m.ownsControlDefaults) = monarch/anvil/cascade;
+ *  the sampler is excluded — its pad params live in state.sampler, not state.controls).
+ *  The completeness test pins coalesce's seed set == resetAll's; both now derive from this. */
+const MODULE_DEFS: ModuleDef[] = controlDefaultModules.map((m) => m.def);
 
 /** moduleId -> controlId -> ControlDef, built once from the JSONs (for the knob min/max clamp). */
 const CONTROL_INDEX: Record<string, Record<string, ModuleDef['controls'][number]>> = (() => {
@@ -41,8 +42,10 @@ const CONTROL_INDEX: Record<string, Record<string, ModuleDef['controls'][number]
   return index;
 })();
 
-/** The module ids whose controls coalesce overlays (applyState skips 'sampler' — studio.ts:701). */
-const CONTROL_MODULE_IDS = ['monarch', 'anvil', 'cascade'] as const;
+/** The module ids whose controls coalesce overlays (applyState skips 'sampler' — studio.ts:701).
+ *  DERIVED from controlDefaultModules so it stays lockstep with MODULE_DEFS / the registry
+ *  (== ['monarch','anvil','cascade'], sampler excluded via ownsControlDefaults:false). */
+const CONTROL_MODULE_IDS: readonly string[] = controlDefaultModules.map((m) => m.id);
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;

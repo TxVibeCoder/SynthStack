@@ -9,17 +9,14 @@
  * other patched signal goes through the edge-detector worklet (≤1 block latency).
  */
 
-import type { ModuleDef } from '../../data/schema';
-import monarchDef from '../../data/monarch.json';
-import anvilDef from '../../data/anvil.json';
-import cascadeDef from '../../data/cascade.json';
-import samplerDef from '../../data/sampler.json';
 import { StudioContext } from './context';
 import { MonarchModule } from './modules/monarch';
 import { AnvilModule } from './modules/anvil';
 import { CascadeModule } from './modules/cascade';
 import { MixerModule } from './modules/mixer';
 import { SamplerModule } from './modules/sampler';
+import type { ModuleBase } from './modules/moduleBase';
+import { MODULES, mixedModules, moduleConfig } from './modules/moduleConfig';
 import { StudioEndpointRegistry } from './modules/registry';
 import { buildJackIndex, RouterBinding, type Cable, type PatchState } from './router';
 import { Scheduler, type TransportEvent } from './scheduler';
@@ -97,21 +94,29 @@ export class Studio {
     if (this.built) return;
     this.built = true;
 
-    const defs = [monarchDef, anvilDef, cascadeDef, samplerDef] as unknown as ModuleDef[];
-    this.monarch = new MonarchModule(ctx, defs[0]!);
-    this.anvil = new AnvilModule(ctx, defs[1]!);
-    this.cascade = new CascadeModule(ctx, defs[2]!);
-    this.sampler = new SamplerModule(ctx, defs[3]!);
+    // Build every module from the MODULES registry (single source of truth). Construction
+    // order == registry order [monarch, anvil, cascade, sampler]; each entry's factory is
+    // exactly the old `new *Module(ctx, def)`. Keep the typed named fields the rest of the
+    // class + binders read — each factory returns the concrete subclass, so the downcast is
+    // sound (every module id is a registry entry).
+    const instances = new Map<string, ModuleBase>();
+    for (const m of MODULES) instances.set(m.id, m.factory(ctx, m.def));
+    this.monarch = instances.get('monarch') as MonarchModule;
+    this.anvil = instances.get('anvil') as AnvilModule;
+    this.cascade = instances.get('cascade') as CascadeModule;
+    this.sampler = instances.get('sampler') as SamplerModule;
     this.mixer = new MixerModule(ctx, this.context.masterIn);
-    // bundle arrangement: ch1 Cascade, ch2 Anvil, ch3 Monarch, ch4 sampler mix
-    this.mixer.connectInput(this.cascade.outputTap('CAS_VCA_OUT'), 0);
-    this.mixer.connectInput(this.anvil.outputTap('ANV_VCA_OUT'), 1);
-    this.mixer.connectInput(this.monarch.outputTap('MON_VCA_OUT'), 2);
-    this.mixer.connectInput(this.sampler.outputTap('SAMP_MIX_OUT'), 3); // ch4 spare
+    // bundle arrangement: ch1 Cascade, ch2 Anvil, ch3 Monarch, ch4 sampler mix — each
+    // (mainOutJack, mixerChannel) is read per-entry, reproducing the explicit connectInput
+    // calls: (CAS_VCA_OUT,0) (ANV_VCA_OUT,1) (MON_VCA_OUT,2) (SAMP_MIX_OUT,3).
+    for (const m of mixedModules) {
+      this.mixer.connectInput(instances.get(m.id)!.outputTap(m.mainOutJack!), m.mixerChannel!);
+    }
 
-    this.registry = new StudioEndpointRegistry([this.monarch, this.anvil, this.cascade, this.sampler]);
-    // defs now includes samplerDef, so all 17 SAMP_* jacks are patchable for free.
-    this.router = new RouterBinding(buildJackIndex(defs), this.registry);
+    // Registry membership == registry order; the def list (incl. samplerDef) makes all 17
+    // SAMP_* jacks patchable for free.
+    this.registry = new StudioEndpointRegistry(MODULES.map((m) => instances.get(m.id)!));
+    this.router = new RouterBinding(buildJackIndex(MODULES.map((m) => m.def)), this.registry);
     this.router.applyAllNormals();
 
     this.scheduler = new Scheduler(() => ctx.currentTime);
@@ -703,15 +708,24 @@ export class Studio {
     this.anvilSeq.steps = s.transport.anvil.steps.map((st) => ({ ...st }));
   }
 
+  /** Resolve a control-bearing module instance by id (the named voice fields). Mirrors the
+   *  old monarch/anvil/cascade ternary; called only after an ownsControlDefaults gate, so the
+   *  three control modules are the only inputs (sampler never reaches here). */
+  private controlModule(id: string): MonarchModule | AnvilModule | CascadeModule {
+    return id === 'monarch' ? this.monarch : id === 'anvil' ? this.anvil : this.cascade;
+  }
+
   /** Apply a full state tree to the engine (setState path). */
   applyState(state: StudioState): void {
     this.store.setState(state);
     for (const [moduleId, controls] of Object.entries(state.controls)) {
-      // Sampler pad params live in state.sampler (NOT state.controls); state.controls.sampler
-      // is always {} so this loop body would be empty anyway, but the guard is defense
-      // against a stray future write reaching cascade.setControl with a SAMP_* id.
-      if (moduleId === 'sampler') continue;
-      const mod = moduleId === 'monarch' ? this.monarch : moduleId === 'anvil' ? this.anvil : this.cascade;
+      // Only control-bearing modules apply here. Sampler is excluded via its registry flag
+      // (ownsControlDefaults:false) — its pad params live in state.sampler (NOT state.controls),
+      // so state.controls.sampler is always {} and is skipped, exactly as the old
+      // `if (moduleId === 'sampler') continue;` did. This also guards a stray future write to a
+      // non-control module reaching the wrong setControl.
+      if (!moduleConfig(moduleId)?.ownsControlDefaults) continue;
+      const mod = this.controlModule(moduleId);
       for (const [controlId, value] of Object.entries(controls)) {
         mod.setControl(controlId, value);
         if (controlId === 'MON_TEMPO' && typeof value === 'number') {

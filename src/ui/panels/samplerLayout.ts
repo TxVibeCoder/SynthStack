@@ -25,6 +25,12 @@
 // loads layouts straight in Node, whose ESM resolver wants explicit extensions).
 import type { PanelLayout } from '../types.ts';
 import { STAGE } from '../stage16x9.ts';
+// Shared sampler control/jack defs (single source — SamplerPanel + SamplerJacks both
+// import padDefs/quantizeDef from here). schema is .ts type-only and sampler.json is a
+// static, side-effect-free JSON import, so export-geometry.ts (which loads this module
+// in Node for geometry) still resolves them with NO extension changes.
+import type { ControlDef, JackDef, ModuleDef } from '../../../data/schema';
+import samplerJson from '../../../data/sampler.json';
 
 /** Height (stage units) of the scrollable pad section below the 16:9 fold. */
 export const PAD_SECTION_H = 320;
@@ -156,6 +162,45 @@ export const samplerLayout: PanelLayout = {
   controls: {},
   jacks: {},
 };
+
+// =========================================================================================
+// Shared sampler control / jack defs (from data/sampler.json, by id).
+//
+// SINGLE SOURCE: moved out of SamplerPanel (was module-private) so SamplerPanel (the sampler
+// tab's controls) AND SamplerJacks (the patchbay tab's 16 OUT/TRIG jacks) read identical defs.
+// Both import padDefs/quantizeDef from here. Throws at module load if sampler.json drifts.
+// =========================================================================================
+
+const samplerDef = samplerJson as unknown as ModuleDef;
+const controlById = new Map<string, ControlDef>(samplerDef.controls.map((c) => [c.id, c]));
+const jackById = new Map<string, JackDef>(samplerDef.jacks.map((j) => [j.id, j]));
+
+/** Defs for pad n (1-based id suffix). Throws at module load if the JSON drifts. */
+export function padDefs(padIndex: number): {
+  level: ControlDef;
+  tune: ControlDef;
+  loop: ControlDef;
+  out: JackDef;
+  trig: JackDef;
+} {
+  const n = padIndex + 1;
+  const level = controlById.get(`SAMP_PAD${n}_LEVEL`);
+  const tune = controlById.get(`SAMP_PAD${n}_TUNE`);
+  const loop = controlById.get(`SAMP_PAD${n}_LOOP`);
+  const out = jackById.get(`SAMP_PAD${n}_OUT`);
+  const trig = jackById.get(`SAMP_PAD${n}_TRIG_IN`);
+  if (!level || !tune || !loop || !out || !trig) {
+    throw new Error(`sampler.json missing defs for pad ${n}`);
+  }
+  return { level, tune, loop, out, trig };
+}
+
+/** The single global QUANTIZE selector def. Throws at module load if the JSON drifts. */
+export const quantizeDef = (() => {
+  const def = controlById.get('SAMP_QUANTIZE');
+  if (!def) throw new Error('sampler.json missing SAMP_QUANTIZE def');
+  return def;
+})();
 
 // =========================================================================================
 // DRUM MACHINE section (feature drum-machine) — an 8-track × 16-step TR-808-style toggle

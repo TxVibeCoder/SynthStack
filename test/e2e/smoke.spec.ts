@@ -8,9 +8,13 @@
  *   a. / loads with zero console errors
  *   b. POWER is visible; clicking it un-dims the rack and the AudioContext
  *      reaches 'running' within 5 s
- *   c. all three panels render — 88 jacks (Monarch 32 + Anvil 24 + Cascade 32)
- *   d. dragging the Monarch CUTOFF knob 40 px commits a changed store value
- *   e. RUN ALL plays 500 ms with no console errors, then STOP ALL
+ *   c. on the PATCHBAY tab all 104 jacks co-mount (Monarch 32 + Anvil 24 +
+ *      Cascade 32 voice jacks + 16 SAMPLER pad jacks) — the patchbay is the
+ *      single tab that hosts every patchable jack in the 3-tab layout
+ *   d. on the STUDIO tab, dragging the Monarch CUTOFF knob 40 px commits a
+ *      changed store value
+ *   e. RUN ALL plays 500 ms with no console errors, then STOP ALL (the
+ *      RUN/STOP ALL caps live on the master ribbon — chrome on every tab)
  *
  * The engine is reached through window.__synthstackStudio — the EngineBridge
  * singleton, globally typed in src/ui/engineBridge.ts. The AudioContext sits
@@ -26,7 +30,9 @@ import { expect, test } from '@playwright/test';
  * the SAMPLER section's 16 rendered pad jacks (8 SAMP_PAD{n}_OUT + 8
  * SAMP_PAD{n}_TRIG_IN). The sampler def also carries SAMP_MIX_OUT, but the panel
  * wires that to mixer ch3 internally and does NOT render a jack circle for it,
- * so only 16 of the 17 SAMP_* jacks appear in the DOM.
+ * so only 16 of the 17 SAMP_* jacks appear in the DOM. In the 3-tab layout all 104
+ * co-mount on the PATCHBAY tab (the 88 voice jacks in the jack-field zone + the 16
+ * sampler jacks in the sampler-jacks zone), so the count is read there.
  */
 const JACK_COUNT = 32 + 24 + 32 + 16;
 
@@ -86,10 +92,14 @@ test('studio smoke: load, power, panels, knob drag, run/stop all', async ({ page
     })
     .toBe('running');
 
-  // ---- c. all panels render their jacks: 104 (88 console + 16 sampler) -------------
+  // ---- c. all jacks co-mount on the PATCHBAY tab: 104 (88 voice + 16 sampler) ------
+  // In the 3-tab layout the patchbay is the ONLY tab that mounts jacks — the 88
+  // voice jacks + the 16 SAMPLER pad jacks render together there (so cross-machine
+  // and voice↔sampler patches are all reachable). Activate it before counting.
   // Jack.tsx intentionally carries data-jack-id on BOTH the <g> and its hit
   // circle (stage-2 CableLayer contract), so "[data-jack-id] elements" are
   // counted as one hit circle per jack plus one distinct id per jack.
+  await page.getByTestId('tab-patchbay').click();
   await expect(page.locator('circle[data-jack-id]')).toHaveCount(JACK_COUNT);
   const uniqueJackIds = await page.evaluate(
     () =>
@@ -102,14 +112,16 @@ test('studio smoke: load, power, panels, knob drag, run/stop all', async ({ page
   expect(uniqueJackIds, 'distinct data-jack-id values across all panels').toBe(JACK_COUNT);
 
   // ---- d. drag the Monarch CUTOFF knob 40 px up; the store value must change ----------
+  // The Monarch tier lives on the STUDIO tab in the 3-tab layout, so activate it
+  // before locating the knob (the patchbay tab from step c has no voice controls).
+  await page.getByTestId('tab-studio').click();
   const before = await page.evaluate(
     () => window.__synthstackStudio?.store.getControl('monarch', 'MON_VCF_CUTOFF') ?? null,
   );
   const knob = page.getByTestId('tier-monarch').locator('[role="slider"][aria-label="CUTOFF"]');
   await expect(knob).toBeVisible();
-  // The Monarch tier sits below the fold at the default viewport; raw page.mouse
-  // calls do NOT auto-scroll the way locator.click does, so bring it on screen
-  // first (boundingBox is viewport-relative — read it after the scroll).
+  // The studio tab's per-tab fill-zoom keeps the Monarch tier in view, so the scroll
+  // may be unnecessary, but it is harmless (boundingBox is read after it regardless).
   await knob.scrollIntoViewIfNeeded();
   const box = await knob.boundingBox();
   if (!box) throw new Error('Monarch CUTOFF knob has no bounding box');

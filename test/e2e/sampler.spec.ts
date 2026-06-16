@@ -3,17 +3,17 @@
  * installed Chrome (playwright.config.ts `channel: 'chrome'`; no downloaded
  * browsers) against the Vite dev server.
  *
- * Proves the g5 scroll model + the cross-group wiring end-to-end:
- *   a. the 16:9 console testids sit ABOVE the fold (pixel-stable at 1920×1080)
- *      — they're visible the instant the page loads, before any scroll
- *   b. the SAMPLER section lives BELOW the fold and is reached by scrolling the
- *      .stage-viewport; the pads come PRE-LOADED with the factory kit (no pad reads
- *      'EMPTY'), and loading a tiny WAV via the hidden pad-0 file input OVERRIDES
- *      the factory Kick on that pad (g4 SamplerPanel + g3 loadPadSample)
+ * Proves the 3-tab layout + the cross-group wiring end-to-end:
+ *   a. the STUDIO console tiers render on the default STUDIO tab at load
+ *   b. the SAMPLER section lives on the SAMPLER tab (per-tab fill-zoom, in view —
+ *      not below a scroll fold); the pads come PRE-LOADED with the factory kit (no
+ *      pad reads 'EMPTY'), and loading a tiny WAV via the hidden pad-0 file input
+ *      OVERRIDES the factory Kick on that pad (g4 SamplerPanel + g3 loadPadSample)
  *   c. clicking pad-0 auditions it without throwing
- *   d. a cable dragged SAMP_PAD1_OUT → an Monarch input renders + commits (the pad
- *      jack, rendered inside the same scaled <main>, is patchable for free — the
- *      single most load-bearing cross-group claim of the scroll model)
+ *   d. on the PATCHBAY tab a cable dragged SAMP_PAD1_OUT → a Monarch input renders
+ *      + commits — the sampler pad jack and the voice jack co-mount on the patchbay
+ *      tab, so this voice↔sampler patch finally works (the single most load-bearing
+ *      cross-group claim of the 3-tab layout)
  *   e. RUN ALL plays with zero console errors
  *
  * A second test covers the loop-quantize ADD (per-pad LOOP switch + one global
@@ -22,7 +22,7 @@
  * HELD loop (tap-again stops it) — again with zero console errors.
  *
  * jackCenter/dragCable mirror patch.spec.ts (jackCenter calls
- * scrollIntoViewIfNeeded so pad jacks below the fold work under page.mouse).
+ * scrollIntoViewIfNeeded, harmless under the per-tab fill-zoom).
  */
 
 import { expect, test, type Page } from '@playwright/test';
@@ -77,8 +77,8 @@ function tinyWav(): Buffer {
   return buf;
 }
 
-test('sampler: 16:9 pins to top, pad load below the fold, cable to the SynthStack', async ({ page }) => {
-  // the 16:9 stage's design target — the console fills the viewport, pads scroll
+test('sampler: studio tiers on load, pad load on the sampler tab, voice↔sampler cable on the patchbay', async ({ page }) => {
+  // the 16:9 stage's design target; each tab fill-zooms its own content
   await page.setViewportSize({ width: 1920, height: 1080 });
   const errors: string[] = [];
   page.on('console', (msg) => {
@@ -89,21 +89,24 @@ test('sampler: 16:9 pins to top, pad load below the fold, cable to the SynthStac
   await page.goto('/');
   await page.getByTestId('power').click();
 
-  // ---- a. the 16:9 console sits above the fold (pixel-stable, no scroll) -----------
-  // top-aligned at exact 16:9, scale==1 — these tiers are visible immediately.
+  // ---- a. the STUDIO console tiers render on the default STUDIO tab ----------------
+  // the app boots on the STUDIO tab, so the voice tiers are visible immediately.
   for (const tier of ['tier-cascade', 'tier-anvil', 'tier-monarch', 'tier-mixer']) {
     await expect(page.getByTestId(tier)).toBeVisible();
   }
-  // the console's bottom edge (STAGE.h = 1015.42) is at the very bottom of the
-  // 1080 viewport, so the SAMPLER section is below the fold: not yet in view.
-  const samplerBoxBefore = await page.getByTestId('sampler-section').boundingBox();
-  expect(samplerBoxBefore, 'sampler-section is laid out (below the fold)').not.toBeNull();
-  expect(samplerBoxBefore!.y, 'sampler-section starts at/below the fold').toBeGreaterThanOrEqual(1000);
 
-  // ---- b. scroll the viewport down → the SAMPLER section comes into view ------------
-  await page.getByTestId('sampler-section').scrollIntoViewIfNeeded();
+  // ---- b. switch to the SAMPLER tab → the SAMPLER section fill-zooms into view ------
+  // In the 3-tab layout the SAMPLER section lives on its own tab and is scaled to FILL
+  // the viewport (no scroll fold), so it is visible and within the viewport once the
+  // tab is active — this asserts the NEW per-tab-fill behavior (replacing the old
+  // below-the-fold scroll model).
+  await page.getByTestId('tab-sampler').click();
   await expect(page.getByTestId('sampler-panel')).toBeVisible();
   await expect(page.getByTestId('pad-0')).toBeVisible();
+  const samplerBox = await page.getByTestId('sampler-section').boundingBox();
+  expect(samplerBox, 'sampler-section is laid out on the sampler tab').not.toBeNull();
+  expect(samplerBox!.y, 'sampler-section top is within the viewport (fill-zoom)').toBeLessThan(1080);
+  expect(samplerBox!.y + samplerBox!.height, 'sampler-section is on screen, not below a fold').toBeGreaterThan(0);
 
   // the pads come PRE-LOADED with the factory kit, so pad-0 shows the factory Kick
   // (no pad reads EMPTY); loading a WAV below OVERRIDES that factory sound.
@@ -133,8 +136,12 @@ test('sampler: 16:9 pins to top, pad load below the fold, cable to the SynthStac
   // ---- c. click pad-0 to audition (must not throw) ---------------------------------
   await page.getByTestId('pad-0').click();
 
-  // ---- d. cable SAMP_PAD1_OUT → an Monarch input commits + renders ---------------------
+  // ---- d. cable SAMP_PAD1_OUT → a Monarch input commits + renders ----------------------
   // (pad-1 jack == PAD index 0; jacks are 1-based in the def, 0-based in state)
+  // Both the sampler pad jacks AND the Monarch voice jacks co-mount on the PATCHBAY
+  // tab in the 3-tab layout, so this voice↔sampler patch is reachable for the first
+  // time — switch to the patchbay before the drag.
+  await page.getByTestId('tab-patchbay').click();
   const before = (await cables(page)).length;
   await dragCable(page, 'SAMP_PAD1_OUT', 'MON_VCF_CUTOFF_IN');
   await expect.poll(() => cables(page).then((c) => c.length)).toBe(before + 1);
@@ -178,9 +185,10 @@ test('sampler: per-pad LOOP toggle + global QUANTIZE launch a held loop on the g
   await page.goto('/');
   await page.getByTestId('power').click();
 
-  // bring the SAMPLER section into view and load a real (tiny) buffer into pad 0 —
-  // a loop with no sample is a silent no-op, so it must hold an AudioBuffer first.
-  await page.getByTestId('sampler-section').scrollIntoViewIfNeeded();
+  // switch to the SAMPLER tab (the pad + LOOP + QUANTIZE controls live there) and load
+  // a real (tiny) buffer into pad 0 — a loop with no sample is a silent no-op, so it
+  // must hold an AudioBuffer first.
+  await page.getByTestId('tab-sampler').click();
   await expect(page.getByTestId('sampler-panel')).toBeVisible();
   const fileInput = page.locator('input[type="file"]');
   await fileInput.setInputFiles({ name: 'loop.wav', mimeType: 'audio/wav', buffer: tinyWav() });

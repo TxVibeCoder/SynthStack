@@ -28,51 +28,14 @@
 
 import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import type { ControlDef, JackDef, ModuleDef } from '../../../data/schema';
-import samplerJson from '../../../data/sampler.json';
 import { COLORS, FONT_CONDENSED } from '../theme';
 import { Knob } from '../controls/Knob';
-import { Jack } from '../controls/Jack';
 import { Switch } from '../controls/Switch';
 import { engineBridge } from '../engineBridge';
 import { SampleTooLargeError } from '../../engine/sampleStore';
 import { FACTORY_KIT } from '../../engine/factorySamples';
 import type { PadState, QuantizeDivision } from '../../state/studioState';
-import { PADS, QUANT, samplerLayout, type PadCell } from './samplerLayout';
-
-const samplerDef = samplerJson as unknown as ModuleDef;
-
-// ---- per-pad control / jack defs (from sampler.json, by id) ----------------------------
-
-const controlById = new Map<string, ControlDef>(samplerDef.controls.map((c) => [c.id, c]));
-const jackById = new Map<string, JackDef>(samplerDef.jacks.map((j) => [j.id, j]));
-
-/** Defs for pad n (1-based id suffix). Throws at module load if the JSON drifts. */
-function padDefs(padIndex: number): {
-  level: ControlDef;
-  tune: ControlDef;
-  loop: ControlDef;
-  out: JackDef;
-  trig: JackDef;
-} {
-  const n = padIndex + 1;
-  const level = controlById.get(`SAMP_PAD${n}_LEVEL`);
-  const tune = controlById.get(`SAMP_PAD${n}_TUNE`);
-  const loop = controlById.get(`SAMP_PAD${n}_LOOP`);
-  const out = jackById.get(`SAMP_PAD${n}_OUT`);
-  const trig = jackById.get(`SAMP_PAD${n}_TRIG_IN`);
-  if (!level || !tune || !loop || !out || !trig) {
-    throw new Error(`sampler.json missing defs for pad ${n}`);
-  }
-  return { level, tune, loop, out, trig };
-}
-
-/** The single global QUANTIZE selector def. Throws at module load if the JSON drifts. */
-const quantizeDef = (() => {
-  const def = controlById.get('SAMP_QUANTIZE');
-  if (!def) throw new Error('sampler.json missing SAMP_QUANTIZE def');
-  return def;
-})();
+import { PADS, QUANT, padDefs, quantizeDef, samplerLayout, type PadCell } from './samplerLayout';
 
 // ---- pad-meta subscription -------------------------------------------------------------
 // useSyncExternalStore needs a STABLE snapshot when nothing changed (the store
@@ -138,7 +101,7 @@ const NAME_MAX_W = 92;
 const Pad = memo(function Pad({ cell, onLoadClick, onKitClick, onError }: PadProps) {
   const { index } = cell;
   const pad = usePad(index);
-  const { level, tune, loop, out, trig } = padDefs(index);
+  const { level, tune, loop } = padDefs(index);
 
   const onDrop = (e: React.DragEvent<SVGRectElement>) => {
     const file = e.dataTransfer?.files?.[0];
@@ -305,9 +268,8 @@ const Pad = memo(function Pad({ cell, onLoadClick, onKitClick, onError }: PadPro
         y={cell.tuneY}
       />
 
-      {/* OUT + TRIG jacks — Jack renders circle[data-jack-id], patchable for free */}
-      <Jack def={out} x={cell.outX} y={cell.outY} />
-      <Jack def={trig} x={cell.trigX} y={cell.trigY} />
+      {/* OUT + TRIG jacks now live in SamplerJacks (the patchbay tab's 4th zone) — the
+          pad cell renders controls only on the sampler tab, so no duplicate data-jack-id. */}
 
       {/* per-pad LOOP toggle — Switch emits no data-testid of its own, so wrap it
           for the e2e click target. Declarative: setPadLoop only changes which path

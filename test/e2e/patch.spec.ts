@@ -35,6 +35,9 @@ test('patching: drag, fan-in rejection, removal, INIT reset', async ({ page }) =
 
   await page.goto('/');
   await page.getByTestId('power').click();
+  // All patching happens on the PATCHBAY tab: it is the only tab that mounts the
+  // voice + sampler jacks AND the cable-chip / cable overlay in the 3-tab layout.
+  await page.getByTestId('tab-patchbay').click();
   await expect(page.getByTestId('cable-chip')).toHaveText(/12\/12/);
 
   // 1. same-panel patch: LFO TRI out -> VCF CUTOFF in (the §8.3 wobble patch)
@@ -75,19 +78,31 @@ test('patching: drag, fan-in rejection, removal, INIT reset', async ({ page }) =
 
   // 7. Esc abandons an armed cable
   const noiseOut = await jackCenter(page, 'MON_NOISE_OUT');
+  // A patchbay point on no jack: the empty band BETWEEN the voice jack-field (its
+  // bottom row) and the sampler jacks below it. (The old (960,1000) coord was empty
+  // future-strip space in the 2-tab layout; under the 3-tab patchbay fill-zoom that
+  // screen coord is no longer guaranteed empty, so derive a verified-empty point from
+  // two real jack boxes — both are on screen, and their midpoint sits in the gap that
+  // separates the voice patchbay zone from the sampler zone.)
+  const monGate = await jackCenter(page, 'MON_GATE_OUT'); // bottom voice-jack row
+  const sampOut = await jackCenter(page, 'SAMP_PAD1_OUT'); // first sampler jack, below
+  const emptyGap = { x: monGate.x, y: (monGate.y + sampOut.y) / 2 };
   await page.mouse.click(noiseOut.x, noiseOut.y);
   await page.keyboard.press('Escape');
-  await page.mouse.click(960, 1000); // empty space (future strip) — must not connect anything
+  await page.mouse.click(emptyGap.x, emptyGap.y); // empty space — must not connect anything
   await expect.poll(() => cables(page)).toHaveLength(2);
 
   // 8. clicking empty space cancels an armed cable
   await page.mouse.click(noiseOut.x, noiseOut.y);
-  await page.mouse.click(960, 1000);
+  await page.mouse.click(emptyGap.x, emptyGap.y);
   await expect.poll(() => cables(page)).toHaveLength(2);
 
-  // 9. INIT: turn a knob away from default, then double-click INIT
-  const cutoff = await jackCenter(page, 'MON_VCF_CUTOFF_IN'); // scrolls Monarch into view
-  void cutoff;
+  // 9. INIT: turn a knob away from default, then double-click INIT.
+  // The Monarch CUTOFF knob is a STUDIO-tab control in the 3-tab layout, so switch to
+  // studio to reach it (the cables/chip still live on patchbay and persist across the
+  // tab switch — the store is the single source of truth, unaffected by which tab is
+  // mounted).
+  await page.getByTestId('tab-studio').click();
   const knob = page.locator('[aria-label="CUTOFF"]').first();
   await knob.scrollIntoViewIfNeeded();
   const kb = (await knob.boundingBox())!;
@@ -100,8 +115,12 @@ test('patching: drag, fan-in rejection, removal, INIT reset', async ({ page }) =
   );
   expect(turned).not.toBe(800);
 
+  // INIT lives on the master ribbon (chrome on every tab), so the double-click works
+  // from the studio tab. The cable count drops in the store immediately.
   await page.getByTestId('init').dblclick();
   await expect.poll(() => cables(page)).toHaveLength(0);
+  // The cable-chip only mounts on the patchbay tab, so switch back to read the 12/12.
+  await page.getByTestId('tab-patchbay').click();
   await expect(page.getByTestId('cable-chip')).toHaveText(/12\/12/);
   const reset = await page.evaluate(
     () => window.__synthstackStudio!.store.getState().controls['monarch']!['MON_VCF_CUTOFF'],

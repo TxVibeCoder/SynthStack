@@ -15,16 +15,20 @@
 
 import { test } from '@playwright/test';
 
-const REGION_TEST_IDS = [
+// Region testids grouped by the tab they mount on (3-tab refactor). 'utility-strip' is
+// the master ribbon (present on every tab); the studio control regions live on the
+// 'studio' tab; the consolidated jack field (88 voice + 16 sampler jacks) lives on the
+// 'patchbay' tab.
+const STUDIO_TEST_IDS = [
   'tier-cascade',
   'tier-anvil',
   'tier-monarch',
   'tier-mixer',
   'seq-strip',
-  'jack-field',
-  'utility-strip',
   'future-strip',
+  'utility-strip',
 ];
+const PATCHBAY_TEST_IDS = ['jack-field'];
 
 test('capture stage + region screenshots', async ({ page }) => {
   // the 16:9 stage's design target (a 1080p viewport ≈ scale 1)
@@ -33,7 +37,13 @@ test('capture stage + region screenshots', async ({ page }) => {
   await page.getByTestId('power').click();
   await page.waitForTimeout(400);
   await page.screenshot({ path: 'test-results/panels/stage-16x9.png' });
-  for (const id of REGION_TEST_IDS) {
+  for (const id of STUDIO_TEST_IDS) {
+    await page.getByTestId(id).screenshot({ path: `test-results/panels/${id}.png` });
+  }
+  // switch to the Patchbay tab for the jack field
+  await page.getByTestId('tab-patchbay').click();
+  await page.waitForTimeout(300);
+  for (const id of PATCHBAY_TEST_IDS) {
     await page.getByTestId(id).screenshot({ path: `test-results/panels/${id}.png` });
   }
 });

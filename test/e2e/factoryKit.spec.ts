@@ -15,7 +15,8 @@
  * lets any pad be re-pointed at any factory sound; a drag-drop / LOAD user file still
  * overrides it (last-action-wins).
  *
- * This spec proves the g1->g5 wiring end-to-end:
+ * This spec proves the g1->g5 wiring end-to-end (on the SAMPLER tab, where the pads
+ * live in the 3-tab layout):
  *   a. power on -> the 8 pads come PRE-LOADED with the factory kit names on first
  *      load (no pad reads EMPTY); each pad-i meta carries its FACTORY_KIT[i] id/name
  *   b. open pad-0's KIT picker and pick a DIFFERENT factory sound (Snare) -> the pad
@@ -24,10 +25,9 @@
  *   c. INIT (double-click) RESTORES the whole kit -> pad-0 returns to the factory Kick
  *   d. ZERO console errors across the session; the picker menu is unmounted at rest
  *
- * The 16:9 console above the fold is pixel-IDENTICAL (the KIT pixels + the pre-load
- * are below the fold; the menu portals to document.body only when open). The existing
- * smoke/patch/clock/sampler/drum/keyboard/recording/presets/screenshots e2e + the
- * audio battery still pass unchanged — the factory kit is purely additive.
+ * The pads + KIT pixels live on the SAMPLER tab (the menu portals to document.body
+ * only when open). The existing smoke/patch/clock/sampler/drum/keyboard/recording/
+ * presets/screenshots e2e + the audio battery still pass — the factory kit is additive.
  */
 
 import { expect, test, type Page } from '@playwright/test';
@@ -59,8 +59,8 @@ const padMeta = (page: Page, padIndex: number) =>
 test('factory kit: pads pre-load on power-on, the KIT picker re-points a pad, INIT restores the kit', async ({
   page,
 }) => {
-  // the 16:9 stage's design target — the console fills the viewport; the sampler
-  // section (the pre-loaded pads + KIT buttons) scrolls into view below the fold.
+  // the 16:9 stage's design target — the sampler section (the pre-loaded pads + KIT
+  // buttons) lives on the SAMPLER tab and fill-zooms into view when that tab is active.
   await page.setViewportSize({ width: 1920, height: 1080 });
   const errors: string[] = [];
   page.on('console', (msg) => {
@@ -72,9 +72,9 @@ test('factory kit: pads pre-load on power-on, the KIT picker re-points a pad, IN
   await page.getByTestId('power').click();
 
   // ---- a. the 8 pads come PRE-LOADED with the factory kit on first power-on --------
-  // bring the SAMPLER section into view (it lives below the fold, same as the other
-  // sampler specs); the pads resolve their factory buffers on the first power-on.
-  await page.getByTestId('sampler-section').scrollIntoViewIfNeeded();
+  // switch to the SAMPLER tab (the pads + KIT pickers live there in the 3-tab layout,
+  // fill-zoomed into view); the pads resolve their factory buffers on first power-on.
+  await page.getByTestId('tab-sampler').click();
   await expect(page.getByTestId('sampler-panel')).toBeVisible();
   await expect(page.getByTestId('pad-0')).toBeVisible();
 
