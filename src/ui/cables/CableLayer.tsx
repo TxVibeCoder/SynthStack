@@ -117,6 +117,7 @@ export function CableLayer({ container }: { container: React.RefObject<HTMLEleme
 
     const onDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      if (e.pointerType === 'touch' && !e.isPrimary) return; // 2nd+ finger: allow pinch-zoom, don't start a patch drag
       suppressCableClickRef.current = false;
       // armed cable: this press is the COMPLETING click — onUp decides; never
       // start a second pending (or unplug anything) underneath it

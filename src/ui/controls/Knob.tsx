@@ -101,6 +101,7 @@ export function Knob({ def, value, onInput, onCommit, size = 'm', x, y }: KnobPr
 
   const onPointerDown = (e: ReactPointerEvent<SVGGElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.pointerType === 'touch' && !e.isPrimary) return; // 2nd+ finger: let the browser pinch-zoom, don't grab a knob drag
     const s = drag.current;
     e.currentTarget.setPointerCapture(e.pointerId);
     e.currentTarget.focus();

@@ -390,7 +390,7 @@ function KitMenu({ padIndex, anchorRect, onAssign, onClose }: KitMenuProps) {
           borderRadius: 6,
           boxShadow: '0 8px 28px rgba(0, 0, 0, 0.55)',
           fontFamily: 'var(--font-condensed)',
-          maxHeight: '60vh',
+          maxHeight: '60dvh',
           overflowY: 'auto',
         }}
         onClick={(e) => e.stopPropagation()}

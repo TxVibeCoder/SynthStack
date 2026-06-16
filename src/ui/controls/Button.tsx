@@ -47,6 +47,7 @@ export function Button({ def, value, onChange, lit, momentary, x, y }: ButtonPro
 
   const onPointerDown = (e: ReactPointerEvent<SVGGElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.pointerType === 'touch' && !e.isPrimary) return; // 2nd+ finger: let the browser pinch-zoom, don't latch the button
     e.currentTarget.setPointerCapture(e.pointerId); // momentary release fires even off-cap
     e.currentTarget.focus();
     press();

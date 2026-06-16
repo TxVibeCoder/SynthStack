@@ -53,6 +53,7 @@ import { DrumMachinePanel } from './panels/DrumMachinePanel';
 import { SAMPLER_REGION, DRUM_REGION, SAMPLER_TOTAL_H } from './panels/samplerLayout';
 import { KeyboardPanel } from './keyboard/KeyboardPanel';
 import { PresetPicker } from './PresetPicker';
+import { OrientationHint } from './OrientationHint';
 
 /** Absolutely-positioned stage region (sizes in stage px — the stage scales). */
 function Region({
@@ -184,6 +185,14 @@ export function App() {
         </main>
       </div>
       </div>
+      {/* ORIENTATION HINT — a "rotate to landscape" steer, rendered as a SIBLING
+       * of .stage-viewport (NOT inside it) so the stylesheet can pin it at
+       * fixed/inset:0 over the void/scroll region. It is ALWAYS mounted; the
+       * stylesheet keeps `.rotate-hint` display:none and reveals it ONLY for
+       * portrait + coarse-pointer + narrow (max-width:900px), so a 1080p desktop
+       * render is unchanged. Its z-index (set in styles.css) sits above the stage
+       * but below the preset overlay's 50, so the picker still wins when open. */}
+      <OrientationHint />
       {/* PRESET PICKER overlay — rendered as a SIBLING of .stage-viewport, OUTSIDE
        * the transform:scale <main>, so it is sized in SCREEN pixels (fixed,
        * full-viewport modal chrome) and never inherits the console's scale. It is
