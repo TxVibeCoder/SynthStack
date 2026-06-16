@@ -66,6 +66,9 @@ test('monarch arrow keys: note ±semitone, Shift=octave, Left/Right nav + page-f
 
   await page.goto('/');
   await page.getByTestId('power').click();
+  // The Monarch 32-step editor (seq strip) lives on the MONARCH tab in the per-voice tab
+  // layout, so activate it before reaching the cells (the app boots on the CASCADE tab).
+  await page.getByTestId('tab-monarch').click();
 
   // ---- a. clicking a step CELL focuses the editor SVG --------------------------------
   // page 0 shows cells 0..7; cell 0 is on screen at the default 16:9 viewport.

@@ -89,11 +89,17 @@ test('sampler: studio tiers on load, pad load on the sampler tab, voice↔sample
   await page.goto('/');
   await page.getByTestId('power').click();
 
-  // ---- a. the STUDIO console tiers render on the default STUDIO tab ----------------
-  // the app boots on the STUDIO tab, so the voice tiers are visible immediately.
-  for (const tier of ['tier-cascade', 'tier-anvil', 'tier-monarch', 'tier-mixer']) {
+  // ---- a. the console tiers render — each voice on its own tab ----------------------
+  // The app boots on the CASCADE voice tab. tier-mixer (the ribbon's 4 channel faders) is
+  // chrome on every tab; the other two voice tiers each live on their own tab now, so
+  // switch to each to assert it renders.
+  for (const tier of ['tier-cascade', 'tier-mixer']) {
     await expect(page.getByTestId(tier)).toBeVisible();
   }
+  await page.getByTestId('tab-anvil').click();
+  await expect(page.getByTestId('tier-anvil')).toBeVisible();
+  await page.getByTestId('tab-monarch').click();
+  await expect(page.getByTestId('tier-monarch')).toBeVisible();
 
   // ---- b. switch to the SAMPLER tab → the SAMPLER section fill-zooms into view ------
   // In the 3-tab layout the SAMPLER section lives on its own tab and is scaled to FILL

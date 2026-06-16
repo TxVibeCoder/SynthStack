@@ -5,11 +5,11 @@
  * touches the stage16x9 geometry.
  *
  * Tabs are an EXPLICIT UI list (src/ui/tabs.ts UI_TABS), NOT registry-derived. The bar
- * shows STUDIO · PATCHBAY · SAMPLER. 'patchbay' is a UI-only tab with no MODULES entry,
- * so a registry-derived list cannot produce it — hence the explicit list. The 3 voices
- * (Monarch/Anvil/Cascade) share the single 'studio' tab — splitting them would unmount
- * voice jacks and delete cross-machine cables; the jack field + sampler jacks co-mount
- * on 'patchbay' where cross-machine patching happens.
+ * shows CASCADE · ANVIL · MONARCH · PATCHBAY · SAMPLER. 'patchbay' is a UI-only tab with
+ * no MODULES entry, so a registry-derived list cannot produce it — hence the explicit
+ * list. Each of the 3 voices (Cascade/Anvil/Monarch) now has its OWN control tab;
+ * splitting their CONTROLS is safe because all 88 voice jacks still co-mount together on
+ * the 'patchbay' tab (where cross-machine patching happens), so no cable is unmounted.
  *
  * Accessibility: a WAI-ARIA tablist. Each tab is role="tab" with aria-selected; the
  * active tab is the only one in the focus order (roving tabindex), and ArrowLeft/Right
@@ -24,11 +24,11 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { modulesForTab, type ModuleTabId } from '../engine/modules/moduleConfig';
 import { UI_TABS } from './tabs';
 
-/** Human label for a tab. 'studio' is a tab-level title (3 voices, no single module);
- *  every other tab labels itself with its single module's displayName from the registry
- *  (e.g. 'sampler' -> 'SAMPLER'). Never hard-code names — read them from the registry. */
+/** Human label for a tab. Each per-voice tab labels itself with its single module's
+ *  displayName from the registry (cascade -> CASCADE, anvil -> ANVIL, monarch -> MONARCH,
+ *  sampler -> SAMPLER); 'patchbay' is the UI-only tab with no module. Never hard-code the
+ *  voice names — read them from the registry. */
 function tabLabel(tabId: ModuleTabId): string {
-  if (tabId === 'studio') return 'STUDIO';
   // patchbay is a UI-only tab (no module) — guard BEFORE modulesForTab, which would
   // return [] and join to an empty label.
   if (tabId === 'patchbay') return 'PATCHBAY';

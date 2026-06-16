@@ -14,7 +14,8 @@
  * This spec proves the g1->g5 wiring end-to-end, WITHOUT real MIDI hardware
  * (which cannot be auto-tested headlessly — that is a manual hardware
  * checkpoint):
- *   a. power on -> the keyboard-panel + all 25 keys render in the future-strip region
+ *   a. power on -> open the MONARCH tab (the keyboard's home) -> the keyboard-panel +
+ *      all 25 keys render in the future-strip region
  *   b. pressing a key drives the Monarch with ZERO console errors (the pointer
  *      down/up routes through engineBridge.noteOn/noteOff -> studio.monarchNoteOn/Off)
  *   c. OCT+ / OCT- change the octave readout (and the bridge's keyboardOctave),
@@ -52,6 +53,10 @@ test('keyboard: renders 25 keys, a press plays the Monarch, octave shifts, MIDI 
 
   await page.goto('/');
   await page.getByTestId('power').click();
+  // The on-screen keyboard plays the Monarch voice, so in the per-voice tab layout it is
+  // docked on the MONARCH tab (future-strip Region). Activate it before asserting the
+  // keyboard renders (the app boots on the CASCADE voice tab).
+  await page.getByTestId('tab-monarch').click();
 
   // ---- a. the keyboard panel + all 25 keys render inside the future-strip region ----
   const region = page.getByTestId('future-strip');

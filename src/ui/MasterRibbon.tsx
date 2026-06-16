@@ -8,16 +8,19 @@
  * Why a single ribbon: per REFACTOR_DESIGN §2 the master controls are global and must
  * read correctly on every tab. POWER (audio unlock), TEMPO LINK, RECORD, MASTER all
  * self-subscribe to the store, so they update on a tab switch with no new wiring. The
- * only tab-AWARE control is START/STOP ALL: on the 'studio' tab it drives the three
- * voice transports (engineBridge.runAll/stopAll); on the 'sampler' tab it drives the
- * drum grid (engineBridge.drumRun/drumStop). That branch lives HERE, not in the leaf.
+ * only tab-AWARE control is START/STOP ALL: on the 'sampler' tab it drives the drum grid
+ * (engineBridge.drumRun/drumStop); on every other tab (the 3 voice tabs + patchbay) it
+ * drives the three voice transports (engineBridge.runAll/stopAll). That branch lives
+ * HERE, not in the leaf.
  *
  * testid contract: the ribbon root carries data-testid="utility-strip" (e2e still finds
  * the master cluster there). POWER keeps data-testid="power"; RECORD keeps
- * "record"/"record-elapsed"; INIT keeps "init"; PRESETS/SAVE keep "presets"/"save".
- * These leaves are now rendered ONLY here — App.tsx no longer renders the in-stage
- * UtilityStrip Region and MixerKnobs no longer renders the in-panel MasterKnob — so
- * each testid still appears EXACTLY ONCE in the DOM.
+ * "record"/"record-elapsed"; INIT keeps "init"; PRESETS/SAVE keep "presets"/"save". The
+ * ribbon also now hosts the four mixer CHANNEL FADERS (ChannelFaders, data-testid=
+ * "tier-mixer", relocated from the in-stage mixer Region App no longer mounts) and the
+ * MASTER knob. These leaves are now rendered ONLY here — App.tsx no longer renders the
+ * in-stage UtilityStrip / mixer Regions and MixerKnobs is no longer mounted — so each
+ * testid still appears EXACTLY ONCE in the DOM.
  *
  * Layout: one horizontal SVG row. The leaf components (PowerButton, RunStopAll,
  * TempoLinkButton, RecordButton, FullScreenButton, MasterKnob) render SVG <g>s
@@ -39,7 +42,7 @@ import {
   RecordButton,
   FullScreenButton,
 } from './UtilityStrip';
-import { MasterKnob } from './MixerKnobs';
+import { MasterKnob, ChannelFaders } from './MixerKnobs';
 import { displayNameOf, modulesForTab, type ModuleTabId } from '../engine/modules/moduleConfig';
 
 /** Ribbon viewBox: a single 1805.19-wide × 90-tall row (stage width so the chrome reads
@@ -57,13 +60,12 @@ const RUN_ALL_DEF: ControlDef = { id: 'MIX_RUN_ALL', panelLabel: 'RUN ALL', type
 const STOP_ALL_DEF: ControlDef = { id: 'MIX_STOP_ALL', panelLabel: 'STOP ALL', type: 'button' };
 
 /**
- * Tab-aware START ALL / STOP ALL. On 'studio' the pair drives the three voice
- * transports (runAll/stopAll); on 'sampler' it drives the drum grid (drumRun/drumStop)
- * per REFACTOR_DESIGN §2. 'patchbay' is not special-cased — it falls through to the
- * voices branch (runAll/stopAll), the acceptable default for the patching tab.
- * Both caps are momentary (fire on the down edge), matching the
- * studio-tab UtilityStrip variant; the shared aria-label prefixes ("RUN ALL"/"STOP
- * ALL") are preserved so existing e2e `aria-label^="RUN ALL"` queries still match. */
+ * Tab-aware START ALL / STOP ALL. On the 'sampler' tab the pair drives the drum grid
+ * (drumRun/drumStop) per REFACTOR_DESIGN §2; on EVERY other tab (the 3 voice tabs +
+ * patchbay) it drives the three voice transports (runAll/stopAll) — these are global
+ * voice transports, so they read the same on each voice tab. Both caps are momentary
+ * (fire on the down edge); the shared aria-label prefixes ("RUN ALL"/"STOP ALL") are
+ * preserved so existing e2e `aria-label^="RUN ALL"` queries still match. */
 const TabTransport = memo(function TabTransport({
   tab,
   runX,
@@ -79,7 +81,7 @@ const TabTransport = memo(function TabTransport({
     (pos: string) => {
       if (pos !== 'ON') return;
       if (tab === 'sampler') engineBridge.drumRun();
-      else engineBridge.runAll(); // studio + patchbay share the voices transport
+      else engineBridge.runAll(); // the 3 voice tabs + patchbay share the voices transport
     },
     [tab],
   );
@@ -213,10 +215,9 @@ function FeatureCap({
 }
 
 /** The ACTIVE MODULE NAME for the current tab — the one new datum the ribbon needs,
- *  sourced from the registry. 'studio' is the 3-voice tab with no single module, so it
- *  shows a tab-level label; single-module tabs (e.g. sampler) show displayNameOf(id). */
+ *  sourced from the registry. Each per-voice tab (cascade/anvil/monarch) and the sampler
+ *  tab show their single module's displayNameOf(id); 'patchbay' is the UI-only tab. */
 function activeTabName(tab: ModuleTabId): string {
-  if (tab === 'studio') return 'STUDIO';
   // patchbay is a UI-only tab (no module) — guard BEFORE modulesForTab (which is []).
   if (tab === 'patchbay') return 'PATCHBAY';
   const mods = modulesForTab(tab);
@@ -328,6 +329,13 @@ export const MasterRibbon = memo(function MasterRibbon({
 
         {/* FULL SCREEN — target the full viewport. */}
         <FullScreenButton x={1100} y={28} />
+
+        {/* MIXER CHANNEL FADERS — relocated from the in-stage mixer Region (which App no
+         * longer mounts) onto the ribbon. The row carries data-testid="tier-mixer" so the
+         * existing mixer e2e finds the faders here. Origin places the 4 knobs (Cascade /
+         * Anvil / Monarch / AUX) left of the MASTER divider, dials at y≈42 with labels
+         * below inside the 90-tall ribbon box. */}
+        <ChannelFaders x={1300} y={-22} />
 
         {/* divider before MASTER */}
         <line x1={1640} x2={1640} y1={14} y2={76} stroke={COLORS.panelEdge} strokeWidth={1} />

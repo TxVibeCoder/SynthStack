@@ -27,16 +27,17 @@ import { AnvilModule } from './anvil';
 import { CascadeModule } from './cascade';
 import { SamplerModule } from './sampler';
 
-/** Which UI tab a module's panels live under. The 3 voices share the ONE 'studio' tab
- *  (cross-machine cables require all 88 voice jacks to stay mounted together); the
- *  sampler/drum machine lives on 'sampler'.
+/** Which UI tab a module's panels live under. Each of the 3 voices now has its OWN tab
+ *  ('cascade' / 'anvil' / 'monarch') — there is no longer a shared 'studio' tab; the
+ *  sampler/drum machine lives on 'sampler'. (Voice jacks all still co-mount on the
+ *  'patchbay' tab, so cross-machine cables stay whole despite the per-voice control tabs.)
  *
  *  'patchbay' is a UI-ONLY tab: NO module has tabId 'patchbay' and none ever should
  *  (modulesForTab('patchbay') therefore returns [] — harmless). It exists only as a
  *  destination in the UI tab set (src/ui/tabs.ts) where the jack field + sampler jacks
  *  co-mount for cross-machine patching; the engine/presets/studio.ts never reference it.
  *  The literal lives in this union so the UI's ModuleTabId-typed tab state can hold it. */
-export type ModuleTabId = 'studio' | 'patchbay' | 'sampler';
+export type ModuleTabId = 'cascade' | 'anvil' | 'monarch' | 'patchbay' | 'sampler';
 
 /**
  * Everything the build, persistence, validation and (future) teardown paths need to
@@ -80,7 +81,7 @@ export const MODULES: ModuleConfig[] = [
     id: 'monarch',
     displayName: (monarchDef as unknown as ModuleDef).displayName, // 'Monarch'
     def: monarchDef as unknown as ModuleDef,
-    tabId: 'studio',
+    tabId: 'monarch',
     factory: (ctx, def) => new MonarchModule(ctx, def),
     mainOutJack: 'MON_VCA_OUT',
     mixerChannel: 2, // mixer.connectInput(monarch.outputTap('MON_VCA_OUT'), 2)
@@ -91,7 +92,7 @@ export const MODULES: ModuleConfig[] = [
     id: 'anvil',
     displayName: (anvilDef as unknown as ModuleDef).displayName, // 'Anvil'
     def: anvilDef as unknown as ModuleDef,
-    tabId: 'studio',
+    tabId: 'anvil',
     factory: (ctx, def) => new AnvilModule(ctx, def),
     mainOutJack: 'ANV_VCA_OUT',
     mixerChannel: 1, // mixer.connectInput(anvil.outputTap('ANV_VCA_OUT'), 1)
@@ -102,7 +103,7 @@ export const MODULES: ModuleConfig[] = [
     id: 'cascade',
     displayName: (cascadeDef as unknown as ModuleDef).displayName, // 'Cascade'
     def: cascadeDef as unknown as ModuleDef,
-    tabId: 'studio',
+    tabId: 'cascade',
     factory: (ctx, def) => new CascadeModule(ctx, def),
     mainOutJack: 'CAS_VCA_OUT',
     mixerChannel: 0, // mixer.connectInput(cascade.outputTap('CAS_VCA_OUT'), 0)
@@ -145,7 +146,11 @@ export function displayNameOf(id: string): string {
   return moduleConfig(id)?.displayName ?? '';
 }
 
-/** The module configs whose panels mount under a given tab (UI mount-gating helper). */
+/** The module configs whose panels mount under a given tab (UI mount-gating helper).
+ *  Each voice now owns its own tab, so modulesForTab('monarch') === [monarch],
+ *  modulesForTab('anvil') === [anvil], modulesForTab('cascade') === [cascade], and
+ *  modulesForTab('sampler') === [sampler]; modulesForTab('patchbay') === [] (UI-only).
+ *  Used for the tab label + the ribbon active-name. */
 export function modulesForTab(tabId: ModuleTabId): ModuleConfig[] {
   return MODULES.filter((m) => m.tabId === tabId);
 }

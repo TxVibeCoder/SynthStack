@@ -8,32 +8,40 @@
  *   ──────────── keyboard strip (on-screen piano + Web MIDI) ──────────────
  *   ──────────── SAMPLER pad section · DRUM MACHINE grid (below the fold) ──────
  *
- * 3-TAB PER-TAB FILL-ZOOM MODEL (Wave-1 split). A <TabBar> + a dynamic <MasterRibbon>
- * render as OUT-OF-STAGE chrome — siblings ABOVE .stage-viewport, sized in SCREEN pixels
- * (NOT inside the transform:scale <main>) — so they never touch the stage16x9 geometry.
- * `tab` (studio | patchbay | sampler — UI_TABS) gates which stage Regions mount AND
- * picks the per-tab CONTENT BBOX the stage zooms to fill:
- *   - 'studio'  : Cascade/Anvil/Monarch controls + mixer + seq strip + keyboard.
+ * PER-TAB FILL-ZOOM MODEL (Wave-1 split → per-voice tabs). A <TabBar> + a dynamic
+ * <MasterRibbon> render as OUT-OF-STAGE chrome — siblings ABOVE .stage-viewport, sized
+ * in SCREEN pixels (NOT inside the transform:scale <main>) — so they never touch the
+ * stage16x9 geometry. `tab` (cascade | anvil | monarch | patchbay | sampler — UI_TABS)
+ * gates which stage Regions mount AND picks the per-tab CONTENT BBOX the stage zooms to
+ * fill:
+ *   - 'cascade' : the Cascade voice controls.
+ *   - 'anvil'   : the Anvil voice controls.
+ *   - 'monarch' : the Monarch controls + the 32-step seq strip + the docked keyboard.
  *   - 'patchbay': the consolidated 88-jack field + the 16 sampler pad jacks + the group
  *                 borders + the CableLayer. This is the ONLY tab cables render on.
  *   - 'sampler' : the SAMPLER pad-control section + the DRUM MACHINE grid (no jacks).
- * The 3 voices share the ONE 'studio' tab AND all 104 jacks (88 voice + 16 sampler)
- * co-mount on 'patchbay' (HARD CONSTRAINT: every jack a cable touches must be in the DOM
- * together or the cable vanishes — CableLayer renders null for an unmounted jack). The
- * cable ROUTING persists across tabs (it lives in the engine store, not the DOM); only
- * the visible cable OVERLAY is patchbay-only.
+ * The 3 voices each get their OWN control tab, but all 104 jacks (88 voice + 16 sampler)
+ * still co-mount together on 'patchbay' (HARD CONSTRAINT: every jack a cable touches must
+ * be in the DOM together or the cable vanishes — CableLayer renders null for an unmounted
+ * jack), so splitting the CONTROLS into per-voice tabs is safe. The cable ROUTING
+ * persists across tabs (it lives in the engine store, not the DOM); only the visible
+ * cable OVERLAY is patchbay-only. The four mixer channel faders + the MASTER knob live on
+ * the MasterRibbon chrome (visible on every tab), not in a stage Region.
  *
  * PER-TAB BBOX (computed FROM the existing region boxes — NO geometry constant moves):
  * each tab's content bounding box is the union of the region boxes that mount on it
  * (see BBOX below). The stage is then translated so that bbox's top-left maps to the
  * viewport origin and uniformly scaled so the bbox fills the window beneath the chrome
- * (computeScale(box)). Because EVERY tab's bbox width === STAGE.w, the rendered <main>
- * width is always STAGE.w·scale and the CableLayer's width÷STAGE.w scale anchor still
- * recovers exactly `scale` — so cables land on their jacks on the patchbay tab. The
- * translate is composed OUTSIDE the scale (`translate(-bx·s,-by·s) scale(s)`) and is
- * cancelled by CableLayer's crect.left/top subtraction, so jacks still measure in pure
- * stage units. The full-size <main> is clipped to the bbox window by the
- * overflow:hidden .stage-sizer (which also handles horizontal centering via flex).
+ * (computeScale(box)). The PATCHBAY + SAMPLER bboxes keep width === STAGE.w, so on the
+ * patchbay tab the rendered <main> width is STAGE.w·scale and the CableLayer's
+ * width÷STAGE.w scale anchor recovers exactly `scale` — so cables land on their jacks.
+ * The three VOICE bboxes are narrower than STAGE.w (a single control column), which is
+ * fine: no cables render on a voice tab (CableLayer mounts on patchbay only), so the
+ * width anchor is irrelevant there. The translate is composed OUTSIDE the scale
+ * (`translate(-bx·s,-by·s) scale(s)`) and is cancelled by CableLayer's crect.left/top
+ * subtraction, so jacks still measure in pure stage units. The full-size <main> is
+ * clipped to the bbox window by the overflow:hidden .stage-sizer (which also handles
+ * horizontal centering via flex).
  *
  * The master ribbon (POWER, START/STOP ALL, TEMPO LINK, RECORD, FULL SCREEN, INIT,
  * PRESETS/SAVE, MASTER, + the active-tab name) replaces the old in-stage utility strip;
@@ -52,24 +60,24 @@
  * (styles.css .cable-chip top).
  *
  * data-testid contract (e2e): power · init · presets · save · record · record-elapsed ·
- * utility-strip (now the ribbon) on EVERY tab; tier-cascade/anvil/monarch/mixer +
- * seq-strip + future-strip on STUDIO; jack-field + sampler-jacks + group-borders +
- * cable-chip on PATCHBAY ONLY; sampler-section + drum-section on SAMPLER; plus the tab
- * testids (tab-studio · tab-patchbay · tab-sampler). Elements moved under a tab keep
- * their testids.
+ * utility-strip (now the ribbon) + tier-mixer (the ribbon's 4 channel faders) on EVERY
+ * tab; tier-cascade on CASCADE; tier-anvil on ANVIL; tier-monarch + seq-strip +
+ * future-strip on MONARCH; jack-field + sampler-jacks + group-borders + cable-chip on
+ * PATCHBAY ONLY; sampler-section + drum-section on SAMPLER; plus the tab testids
+ * (tab-cascade · tab-anvil · tab-monarch · tab-patchbay · tab-sampler). Elements moved
+ * under a tab keep their testids.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import './styles.css';
 import { usePower } from './useStudio';
-import { REGIONS, STAGE, type RegionBox } from './stage16x9';
+import { REGIONS, type RegionBox } from './stage16x9';
 import { MonarchPanel } from './panels/MonarchPanel';
 import { AnvilPanel } from './panels/AnvilPanel';
 import { CascadePanel } from './panels/CascadePanel';
 import { JackFieldPanel } from './panels/JackFieldPanel';
 import { MonarchStepEditor } from './sequencer/MonarchStepEditor';
-import { MixerKnobs } from './MixerKnobs';
 import { GroupBorders } from './GroupBorders';
 import { CableLayer } from './cables/CableLayer';
 import { SamplerPanel } from './panels/SamplerPanel';
@@ -133,32 +141,51 @@ function union(...bs: RegionBox[]): RegionBox {
 /**
  * Per-tab content bounding box — the stage zooms to FILL this box on each tab. Computed
  * FROM the existing region boxes (no geometry moves):
- *   - studio   = the full STAGE box {0,0,STAGE.w,STAGE.h}. (The controls + keyboard
- *                already span it; the empty jack band y 644.78..874.28 is left honest
- *                this wave rather than collapsed — see the SHARED CONTRACT §B.)
+ *   - cascade  = REGIONS.cascadeControls — just the Cascade controls.
+ *   - anvil    = REGIONS.anvilControls   — just the Anvil controls.
+ *   - monarch  = union(monarchControls, seqStrip, MONARCH_KEYBOARD_BOX) — the Monarch
+ *                controls + the 32-step seq strip + the docked keyboard (Monarch-column
+ *                width, NOT full stage).
  *   - patchbay = union(jackField, SAMPLER_REGION) = {0, 644.78, 1805.19, 690.64}: the
  *                88-jack field + the 16 sampler pad jacks (which sit at y ≥ STAGE.h).
  *   - sampler  = union(SAMPLER_REGION, DRUM_REGION) = {0, 1015.42, 1805.19, 620}: the
  *                pad-control section + the drum grid.
- * EVERY bbox has w === STAGE.w (load-bearing: keeps the CableLayer width÷STAGE.w scale
- * anchor exact, so cables land on their jacks — SHARED CONTRACT Group-3 invariant).
+ *
+ * The three voice bboxes have width < STAGE.w (they're a single column, not the full
+ * stage). That is SAFE for the CableLayer width÷STAGE.w scale anchor: CableLayer only
+ * mounts on the PATCHBAY tab, whose bbox is still the full-width union(jackField,
+ * SAMPLER_REGION) (w === STAGE.w) — so cables still land on their jacks. The patchbay +
+ * sampler bboxes keep w === STAGE.w; only the voice tabs (no cables) are narrower.
  */
 /**
- * On the STUDIO tab the jacks live on the Patchbay tab, so the empty jack-field band
- * (y 644.78..874.28) is COLLAPSED by docking the keyboard directly beneath the voice/seq
- * cluster (the seqStrip seam bottom, y 668.78) instead of its default y 874.28. This
- * shrinks the studio bbox from the full 1015.42-tall stage to ~810, so the fill-zoom
- * makes the voices noticeably bigger (~0.75 → ~0.89 at 1080p — width-bound max — and a
- * larger gain on a height-constrained landscape phone). The shared REGIONS constant is
- * NOT moved (stage16x9.test.ts stays green); this is a per-tab RENDER position only.
+ * The on-screen keyboard's render box ON THE MONARCH TAB. The keyboard belongs to the
+ * Monarch voice (it plays the Monarch voice through the bridge), so this Wave-1 split
+ * docks it under the Monarch controls + seq strip rather than across the full stage.
+ *
+ * It is placed directly BELOW the seq strip (y = seqStrip bottom 668.78) at the seq
+ * strip's WIDTH/X — NOT the full-stage futureStrip width — so the Monarch bbox (its
+ * union, below) stays the Monarch column's width instead of ballooning to the full
+ * 1805.19 stage. The keyboard is therefore a bit compressed here.
+ *
+ * TODO (later WIDENING visual pass): give Monarch a proper full-width keyboard strip
+ * (and re-flow the Monarch controls/seq for the wider column). This pass is the TAB
+ * RESTRUCTURE ONLY — control coords + REGIONS geometry are untouched (stage16x9.test.ts
+ * stays green); this is a per-tab RENDER position only.
  */
-const STUDIO_KEYBOARD_BOX: RegionBox = {
-  ...REGIONS.futureStrip,
+const MONARCH_KEYBOARD_BOX: RegionBox = {
+  x: REGIONS.seqStrip.x,
   y: REGIONS.seqStrip.y + REGIONS.seqStrip.h, // 668.78 — directly under the seq strip
+  w: REGIONS.seqStrip.w,
+  h: REGIONS.futureStrip.h,
 };
 
 const BBOX: Record<ModuleTabId, RegionBox> = {
-  studio: { x: 0, y: 0, w: STAGE.w, h: STUDIO_KEYBOARD_BOX.y + STUDIO_KEYBOARD_BOX.h },
+  // Each voice now fill-zooms to its OWN controls (computed FROM the existing REGIONS
+  // boxes — no geometry moves). Cascade/Anvil are just their controls; Monarch adds the
+  // seq strip + the docked keyboard (so it spans down to y≈809.92, Monarch-column width).
+  cascade: REGIONS.cascadeControls,
+  anvil: REGIONS.anvilControls,
+  monarch: union(REGIONS.monarchControls, REGIONS.seqStrip, MONARCH_KEYBOARD_BOX),
   patchbay: union(REGIONS.jackField, SAMPLER_REGION),
   sampler: union(SAMPLER_REGION, DRUM_REGION),
 };
@@ -179,11 +206,12 @@ function computeScale(box: RegionBox): number {
 export function App() {
   const { powered, powerOn, powerOff } = usePower();
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<ModuleTabId>('studio');
+  // Default to the leftmost voice tab (cascade) so the console opens on a voice.
+  const [tab, setTab] = useState<ModuleTabId>('cascade');
   // The active tab's content bbox + the scale that fills the window with it. `scale`
   // recomputes on resize AND on tab change (the bbox changes), so each tab fill-zooms.
   const box = BBOX[tab];
-  const [scale, setScale] = useState(() => computeScale(BBOX.studio));
+  const [scale, setScale] = useState(() => computeScale(BBOX.cascade));
   const stageRef = useRef<HTMLElement | null>(null);
   // Preset picker open-state: null = closed; 'browse' opens on the factory/slots
   // list (the PRESETS cap), 'save' opens with the name input focused (the SAVE cap).
@@ -212,15 +240,18 @@ export function App() {
   useEffect(() => setScale(computeScale(box)), [box]);
 
   const dim = !powered;
-  const isStudio = tab === 'studio';
+  const isCascade = tab === 'cascade';
+  const isAnvil = tab === 'anvil';
+  const isMonarch = tab === 'monarch';
   const isPatchbay = tab === 'patchbay';
   const isSampler = tab === 'sampler';
 
   // <main>'s inline (pre-scale) height = the BOTTOM of the active tab's bbox, so every
   // region/jack that mounts on this tab lies inside <main>'s box and is measurable by the
-  // CableLayer (which insets to <main>): studio 1015.42, patchbay 1335.42 (so the sampler
-  // pad jacks at y up to 1335.42 are inside), sampler 1635.42. transform:scale never
-  // contributes to layout height — the .stage-sizer reserves the real scaled box instead.
+  // CableLayer (which insets to <main>): the voice tabs end at their bbox bottom (cascade
+  // 644.78, anvil 509.98, monarch ~809.92), patchbay 1335.42 (so the sampler pad jacks at
+  // y up to 1335.42 are inside), sampler 1635.42. transform:scale never contributes to
+  // layout height — the .stage-sizer reserves the real scaled box instead.
   const mainH = box.y + box.h;
 
   return (
@@ -262,36 +293,46 @@ export function App() {
             }}
             aria-label="Semi-modular studio console"
           >
-            {/* ===== STUDIO TAB: the 3 voices + mixer + seq strip + keyboard ===== */}
-            {isStudio && (
+            {/* ===== CASCADE TAB: the Cascade voice controls only. ===== */}
+            {isCascade && (
+              <Region box={REGIONS.cascadeControls} testId="tier-cascade" dimmed={dim}>
+                <CascadePanel />
+              </Region>
+            )}
+
+            {/* ===== ANVIL TAB: the Anvil voice controls only. ===== */}
+            {isAnvil && (
+              <Region box={REGIONS.anvilControls} testId="tier-anvil" dimmed={dim}>
+                <AnvilPanel />
+              </Region>
+            )}
+
+            {/* ===== MONARCH TAB: the Monarch controls + the 32-step seq strip + the
+             * docked on-screen keyboard (the keyboard plays the Monarch voice, so it
+             * lives here). seqStrip keeps testId "seq-strip"; the keyboard keeps
+             * "future-strip" (e2e contract). The keyboard box is the seq-strip width
+             * under the seq strip — see MONARCH_KEYBOARD_BOX (a later widening pass gives
+             * Monarch a full-width keyboard strip). ===== */}
+            {isMonarch && (
               <>
-                <Region box={REGIONS.cascadeControls} testId="tier-cascade" dimmed={dim}>
-                  <CascadePanel />
-                </Region>
-                <Region box={REGIONS.anvilControls} testId="tier-anvil" dimmed={dim}>
-                  <AnvilPanel />
-                </Region>
                 <Region box={REGIONS.monarchControls} testId="tier-monarch" dimmed={dim}>
                   <MonarchPanel />
-                </Region>
-                <Region box={REGIONS.mixerKnobs} testId="tier-mixer" dimmed={dim}>
-                  <MixerKnobs />
                 </Region>
                 <Region box={REGIONS.seqStrip} testId="seq-strip" dimmed={dim}>
                   <MonarchStepEditor />
                 </Region>
-                {/* The reserved bottom band is the keyboard's home: the on-screen virtual
-                 * piano + Web MIDI controls. testId stays "future-strip" (e2e contract). */}
-                <Region box={STUDIO_KEYBOARD_BOX} testId="future-strip" dimmed={dim}>
+                <Region box={MONARCH_KEYBOARD_BOX} testId="future-strip" dimmed={dim}>
                   <KeyboardPanel />
                 </Region>
               </>
             )}
 
-            {/* The old in-stage utility strip Region (REGIONS.utilityStrip) is no longer
-             * rendered — its controls moved to the MasterRibbon chrome (which now carries
-             * data-testid="utility-strip"). The REGIONS.utilityStrip constant is left
-             * untouched (stage16x9.ts unchanged). */}
+            {/* The old in-stage utility strip Region (REGIONS.utilityStrip) and the in-
+             * stage mixer Region (REGIONS.mixerKnobs / tier-mixer) are no longer rendered:
+             * the utility controls moved to the MasterRibbon chrome (which now carries
+             * data-testid="utility-strip") and the four channel faders moved to the ribbon
+             * too (ChannelFaders carries data-testid="tier-mixer"). The REGIONS constants
+             * are left untouched (stage16x9.ts unchanged). */}
 
             {/* ===== PATCHBAY TAB: ALL the jacks + the group borders + the cable overlay.
              * The consolidated 88-jack field AND the 16 sampler pad jacks co-mount here so

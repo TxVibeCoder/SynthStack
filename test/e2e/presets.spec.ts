@@ -95,7 +95,10 @@ test('presets: save a slot, tweak + restore it, load a factory preset, delete th
   await page.getByTestId('power').click();
 
   // ---- a. console present, overlay unmounted at rest, the two caps render ------------
-  for (const tier of ['tier-cascade', 'tier-anvil', 'tier-monarch', 'tier-mixer']) {
+  // The app boots on the CASCADE voice tab; tier-mixer (the ribbon's 4 channel faders) is
+  // chrome on every tab. (The other voice tiers each live on their own tab now — the
+  // presets/save caps below are tab-independent ribbon chrome, which is what this asserts.)
+  for (const tier of ['tier-cascade', 'tier-mixer']) {
     await expect(page.getByTestId(tier)).toBeVisible();
   }
   const strip = page.getByTestId('utility-strip');

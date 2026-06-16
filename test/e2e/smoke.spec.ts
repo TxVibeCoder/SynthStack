@@ -82,7 +82,10 @@ test('studio smoke: load, power, panels, knob drag, run/stop all', async ({ page
   const power = page.getByTestId('power');
   await expect(power).toBeVisible();
   await power.click();
-  for (const tier of ['tier-cascade', 'tier-anvil', 'tier-monarch', 'tier-mixer']) {
+  // The default tab is now the CASCADE voice tab, so only its tier-cascade Region mounts
+  // here (each voice has its own tab); tier-mixer (the 4 channel faders) lives on the
+  // master-ribbon chrome, mounted on every tab. Both must un-dim on power-on.
+  for (const tier of ['tier-cascade', 'tier-mixer']) {
     await expect(page.getByTestId(tier)).not.toHaveClass(/\bunpowered\b/);
   }
   await expect
@@ -112,9 +115,10 @@ test('studio smoke: load, power, panels, knob drag, run/stop all', async ({ page
   expect(uniqueJackIds, 'distinct data-jack-id values across all panels').toBe(JACK_COUNT);
 
   // ---- d. drag the Monarch CUTOFF knob 40 px up; the store value must change ----------
-  // The Monarch tier lives on the STUDIO tab in the 3-tab layout, so activate it
-  // before locating the knob (the patchbay tab from step c has no voice controls).
-  await page.getByTestId('tab-studio').click();
+  // Each voice now has its OWN tab; the Monarch tier lives on the MONARCH tab, so
+  // activate it before locating the knob (the patchbay tab from step c has no voice
+  // controls).
+  await page.getByTestId('tab-monarch').click();
   const before = await page.evaluate(
     () => window.__synthstackStudio?.store.getControl('monarch', 'MON_VCF_CUTOFF') ?? null,
   );

@@ -98,11 +98,11 @@ test('patching: drag, fan-in rejection, removal, INIT reset', async ({ page }) =
   await expect.poll(() => cables(page)).toHaveLength(2);
 
   // 9. INIT: turn a knob away from default, then double-click INIT.
-  // The Monarch CUTOFF knob is a STUDIO-tab control in the 3-tab layout, so switch to
-  // studio to reach it (the cables/chip still live on patchbay and persist across the
-  // tab switch — the store is the single source of truth, unaffected by which tab is
-  // mounted).
-  await page.getByTestId('tab-studio').click();
+  // The Monarch CUTOFF knob is a MONARCH-tab control (each voice has its own tab), so
+  // switch to monarch to reach it (the cables/chip still live on patchbay and persist
+  // across the tab switch — the store is the single source of truth, unaffected by which
+  // tab is mounted).
+  await page.getByTestId('tab-monarch').click();
   const knob = page.locator('[aria-label="CUTOFF"]').first();
   await knob.scrollIntoViewIfNeeded();
   const kb = (await knob.boundingBox())!;
@@ -116,7 +116,7 @@ test('patching: drag, fan-in rejection, removal, INIT reset', async ({ page }) =
   expect(turned).not.toBe(800);
 
   // INIT lives on the master ribbon (chrome on every tab), so the double-click works
-  // from the studio tab. The cable count drops in the store immediately.
+  // from the monarch tab. The cable count drops in the store immediately.
   await page.getByTestId('init').dblclick();
   await expect.poll(() => cables(page)).toHaveLength(0);
   // The cable-chip only mounts on the patchbay tab, so switch back to read the 12/12.

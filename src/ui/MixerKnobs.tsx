@@ -115,6 +115,37 @@ const ChannelKnob = memo(function ChannelKnob({
 });
 
 /**
+ * The four mixer CHANNEL faders (Cascade / Anvil / Monarch / AUX) as a standalone row,
+ * exported so the MasterRibbon can render them as chrome (out-of-stage) without dragging
+ * in the whole MixerKnobs panel. Same store wiring as the in-panel knobs — each ChannelKnob
+ * self-subscribes to its own mixer.channelLevels[ch] snapshot and writes via
+ * engineBridge.setMixerLevel — so MIX_CH{1..4}_LEVEL appear EXACTLY ONCE in the DOM (App no
+ * longer mounts the in-stage MixerKnobs Region).
+ *
+ * The group root carries data-testid="tier-mixer" (relocated from the old in-stage mixer
+ * Region) so the existing mixer e2e still finds the fader cluster on the ribbon.
+ *
+ * x/y position the WHOLE row's origin in the parent <svg>'s units; the 4 knobs are then laid
+ * out at x + CHANNEL_SPECS[i].x relative to that origin (default x/y reproduce the in-panel
+ * positions). Like every Knob this renders SVG <g>s and MUST be mounted inside an <svg>.
+ */
+export const ChannelFaders = memo(function ChannelFaders({
+  x = 0,
+  y = 0,
+}: {
+  x?: number;
+  y?: number;
+} = {}) {
+  return (
+    <g data-testid="tier-mixer" transform={`translate(${x} ${y})`}>
+      {CHANNEL_SPECS.map((spec) => (
+        <ChannelKnob key={spec.def.id} channel={spec.channel} def={spec.def} x={spec.x} />
+      ))}
+    </g>
+  );
+});
+
+/**
  * MASTER volume knob — self-contained: subscribes to its own
  * `mixer.masterVolume` store snapshot and writes via `engineBridge.setMasterVolume`
  * on both onInput and onCommit (zero engine change; identical wiring wherever it
@@ -235,9 +266,12 @@ export const MixerKnobs = memo(function MixerKnobs() {
         MIXER
       </text>
 
-      {CHANNEL_SPECS.map((spec) => (
-        <ChannelKnob key={spec.def.id} channel={spec.channel} def={spec.def} x={spec.x} />
-      ))}
+      {/* The 4 channel faders are the shared ChannelFaders row (also rendered by the
+       * MasterRibbon). NOTE: App no longer mounts this MixerKnobs panel — the faders live
+       * on the ribbon now (Wave-1 tab restructure) — so this in-panel copy is kept only
+       * for parity/future use and is NOT in the live DOM; the ribbon's ChannelFaders is the
+       * single mounted instance (one tier-mixer / MIX_CH*_LEVEL each). */}
+      <ChannelFaders />
 
       {/* MASTER now lives in the MasterRibbon (out-of-stage chrome) — the ribbon owns
        * the single MasterKnob instance so MIX_MASTER appears exactly once in the DOM.
