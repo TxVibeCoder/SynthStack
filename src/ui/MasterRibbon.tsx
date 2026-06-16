@@ -49,12 +49,12 @@ import { displayNameOf, modulesForTab, type ModuleTabId } from '../engine/module
  *  across the full console width; height is the ribbon's own logical height). The SVG is
  *  drawn at this aspect and CSS scales it to the screen-pixel RIBBON_H. */
 export const RIBBON_VB_W = 1805.19;
-export const RIBBON_VB_H = 90;
+export const RIBBON_VB_H = 80;
 
 /** Vertical centers for the two visual rows of leaves inside the ribbon. Most caps are
  *  one row; the elements were authored with their own internal offsets, so we pick a
  *  single baseline that centers them in the 90-tall box. */
-const ROW_Y = 18;
+const ROW_Y = 30;
 
 const RUN_ALL_DEF: ControlDef = { id: 'MIX_RUN_ALL', panelLabel: 'RUN ALL', type: 'button' };
 const STOP_ALL_DEF: ControlDef = { id: 'MIX_STOP_ALL', panelLabel: 'STOP ALL', type: 'button' };

@@ -37,9 +37,18 @@ export interface JackZoneChrome {
   divider: { x: number; y1: number; y2: number };
 }
 
+/**
+ * Patchbay field height — DECOUPLED from REGIONS.jackField.h (229.5) so the voice
+ * jacks get vertical room to spread (bigger row pitch + bigger labels). The field
+ * keeps the full STAGE width (REGIONS.jackField.w) so the CableLayer width÷STAGE.w
+ * scale anchor still holds and cables measure correctly. App.tsx frames the patchbay
+ * jack field to this height (JACKFIELD_BOX), not the stage region.
+ */
+export const FIELD_H = 330;
+
 export const FIELD = {
   width: REGIONS.jackField.w,
-  height: REGIONS.jackField.h,
+  height: FIELD_H,
   /** Field-local x/y of the top-edge step (stage 1117.56 / 668.78). */
   stepX: JACK_FIELD_STEP_X - REGIONS.jackField.x,
   stepY: 668.78 - REGIONS.jackField.y, // = 24
@@ -55,10 +64,10 @@ export const FIELD_FACE: ReadonlyArray<readonly [number, number]> = [
   [0, FIELD.height],
 ];
 
-/** Shared row centers for the Cascade and Anvil zones (full-height, 50-px pitch). */
-const ROW = [48, 98, 148, 198] as const;
-/** Monarch zone rows: 24 px less headroom, 44-px pitch. */
-const MON_ROW = [68, 112, 156, 200] as const;
+/** Shared row centers for the Cascade and Anvil zones (taller field, 78-px pitch). */
+const ROW = [58, 136, 214, 292] as const;
+/** Monarch zone rows: 24 px less headroom at the top, 76-px pitch. */
+const MON_ROW = [62, 138, 214, 290] as const;
 
 // Column centers per zone block (56–64-px pitch; labels clamp at 48 wide).
 const CAS_IN = [36, 92, 148, 204, 260] as const;

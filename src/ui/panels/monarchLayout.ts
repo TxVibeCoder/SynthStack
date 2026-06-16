@@ -2,7 +2,7 @@
  * Monarch panel layout — WIDE hardware re-flow (landscape control panel).
  * CONTROLS-ONLY: all Monarch jacks live in the consolidated jack field
  * (jackFieldLayout.ts), on the Patchbay tab. This panel is a landscape canvas
- * (1180 × 470) decoupled from the stage16x9 regions — App.tsx frames the Monarch
+ * (1480 × 408) decoupled from the stage16x9 regions — App.tsx frames the Monarch
  * tab to these dims directly (no geometry move in stage16x9.ts).
  *
  * Arrangement follows the real unit's signal flow as three full-width knob rows,
@@ -26,16 +26,17 @@
 // (native type stripping), whose ESM resolver wants explicit extensions.
 import type { PanelLayout } from '../types.ts';
 
-/** Landscape canvas — the panel's own viewBox (App.tsx frames the tab to this). */
-export const MONARCH_W = 1180;
-export const MONARCH_H = 470;
+/** Landscape canvas — the panel's own viewBox (App.tsx frames the tab to this).
+ *  Wide + short so the tab fills the viewport width (bigger knobs/text, no side gaps). */
+export const MONARCH_W = 1480;
+export const MONARCH_H = 408;
 
-/** Three control-row centers (114-unit pitch). */
-const ROW = [96, 210, 324] as const;
-/** Eight column centers (145-unit pitch). */
-const C = [92, 237, 382, 527, 672, 817, 962, 1107] as const;
-/** Transport button row, below the first three columns. */
-const TR_Y = 432;
+/** Three control-row centers (110-unit pitch). */
+const ROW = [90, 200, 310] as const;
+/** Eight column centers (184-unit pitch — spread across the wide canvas). */
+const C = [100, 284, 468, 652, 836, 1020, 1204, 1388] as const;
+/** Transport button row, tucked directly below the third control row. */
+const TR_Y = 372;
 
 export const monarchLayout: PanelLayout = {
   width: MONARCH_W,

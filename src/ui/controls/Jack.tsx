@@ -52,7 +52,7 @@ function hexPoints(r: number): string {
 const HEX = hexPoints(JACK_RADIUS.ring + 3);
 
 /** Widest a jack label may render (patchbay cell pitch minus breathing room). */
-const JACK_LABEL_MAX_W = 48;
+const JACK_LABEL_MAX_W = 56;
 
 export const Jack = memo(function Jack({ def, x, y }: JackProps) {
   const isOut = def.direction === 'out';
@@ -93,10 +93,10 @@ export const Jack = memo(function Jack({ def, x, y }: JackProps) {
       {/* label under — clamped to the patchbay cell pitch so long names
           (e.g. "VC MIX CTRL") compress instead of colliding with neighbors */}
       <text
-        y={JACK_RADIUS.ring + 12}
+        y={JACK_RADIUS.ring + 13}
         textAnchor="middle"
         fontFamily={FONT_CONDENSED}
-        fontSize={9}
+        fontSize={10.5}
         letterSpacing={0.5}
         fill={COLORS.legend}
         {...(def.panelLabel.length * 5.6 > JACK_LABEL_MAX_W

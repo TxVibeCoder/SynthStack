@@ -14,6 +14,7 @@ import anvilJson from '../../data/anvil.json';
 import cascadeJson from '../../data/cascade.json';
 import {
   FIELD,
+  FIELD_H,
   JACK_ZONE_CHROME,
   jackFieldJacks,
 } from '../../src/ui/panels/jackFieldLayout';
@@ -27,14 +28,17 @@ const modules = {
 
 const allJackDefs = [...modules.cascade.jacks, ...modules.anvil.jacks, ...modules.monarch.jacks];
 
-/** Stage-space zone rect → field-local (the field starts at stage y 644.78). */
+/**
+ * Zone bounds, field-local. X comes from the stage zone columns (unchanged); Y spans the
+ * full (decoupled, taller) field — the Monarch zone starts below the top-edge step.
+ */
 function zoneLocal(key: keyof typeof JACK_ZONES): { x0: number; x1: number; y0: number; y1: number } {
   const z = JACK_ZONES[key];
   return {
     x0: z.x - REGIONS.jackField.x,
     x1: z.x + z.w - REGIONS.jackField.x,
-    y0: z.y - REGIONS.jackField.y,
-    y1: z.y + z.h - REGIONS.jackField.y,
+    y0: key === 'monarch' ? FIELD.stepY : 0,
+    y1: FIELD.height,
   };
 }
 
@@ -123,8 +127,9 @@ describe('jackFieldLayout', () => {
     }
   });
 
-  it('field dimensions equal the jackField stage region', () => {
-    expect(FIELD.width).toBe(REGIONS.jackField.w);
-    expect(FIELD.height).toBe(REGIONS.jackField.h);
+  it('keeps the jackField stage width but a decoupled, taller height (jacks spread out)', () => {
+    expect(FIELD.width).toBe(REGIONS.jackField.w); // full STAGE width — CableLayer scale anchor
+    expect(FIELD.height).toBe(FIELD_H);
+    expect(FIELD.height).toBeGreaterThan(REGIONS.jackField.h);
   });
 });

@@ -18,7 +18,7 @@ import type { JackDef, ModuleDef } from '../../../data/schema';
 import monarchJson from '../../../data/monarch.json';
 import anvilJson from '../../../data/anvil.json';
 import cascadeJson from '../../../data/cascade.json';
-import { COLORS, FONT_CONDENSED } from '../theme';
+import { COLORS, FONT_CONDENSED, GROUP_BORDER } from '../theme';
 import { Jack } from '../controls/Jack';
 import { FIELD, FIELD_FACE, JACK_ZONE_CHROME, jackFieldJacks } from './jackFieldLayout';
 
@@ -64,8 +64,9 @@ export const JackFieldPanel = memo(function JackFieldPanel() {
           <polygon
             points={polyPoints(zone.frame)}
             fill="none"
-            stroke={COLORS.panelEdge}
-            strokeWidth={1}
+            stroke={GROUP_BORDER[zone.key]}
+            strokeWidth={2}
+            opacity={0.8}
           />
           {/* label in a gap on the frame's top border (SectionFrame idiom) */}
           <rect

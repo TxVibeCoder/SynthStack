@@ -72,13 +72,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import './styles.css';
 import { usePower } from './useStudio';
-import { REGIONS, type RegionBox } from './stage16x9';
+import { REGIONS, STAGE, type RegionBox } from './stage16x9';
 import { MonarchPanel } from './panels/MonarchPanel';
 import { AnvilPanel } from './panels/AnvilPanel';
 import { CascadePanel } from './panels/CascadePanel';
 import { JackFieldPanel } from './panels/JackFieldPanel';
 import { MonarchStepEditor } from './sequencer/MonarchStepEditor';
-import { GroupBorders } from './GroupBorders';
 import { CableLayer } from './cables/CableLayer';
 import { SamplerPanel } from './panels/SamplerPanel';
 import { SamplerJacks } from './panels/SamplerJacks';
@@ -89,6 +88,7 @@ import { KB_W, KB_H } from './keyboard/keyboardLayout';
 import { cascadeLayout } from './panels/cascadeLayout';
 import { anvilLayout } from './panels/anvilLayout';
 import { monarchLayout } from './panels/monarchLayout';
+import { FIELD_H } from './panels/jackFieldLayout';
 import { PresetPicker } from './PresetPicker';
 import { OrientationHint } from './OrientationHint';
 import { TabBar } from './TabBar';
@@ -102,8 +102,8 @@ import type { ModuleTabId } from '../engine/modules/moduleConfig';
  * there is no first-paint layout-shift; keep this in lockstep with those CSS heights.
  *   RIBBON_H 96 + TABBAR_H 40 + 1px borders/seam ≈ CHROME_H.
  */
-export const RIBBON_H = 96;
-export const TABBAR_H = 40;
+export const RIBBON_H = 85;
+export const TABBAR_H = 26;
 export const CHROME_H = RIBBON_H + TABBAR_H;
 
 /** Absolutely-positioned stage region (sizes in stage px — the stage scales). */
@@ -183,7 +183,7 @@ const ANVIL_BOX: RegionBox = { x: 0, y: 0, w: anvilLayout.width, h: anvilLayout.
  */
 const MON_GAP = 16;
 const MON_CONTROLS_BOX: RegionBox = { x: 0, y: 0, w: monarchLayout.width, h: monarchLayout.height };
-const MON_SEQ_W = Math.min(monarchLayout.width, 880);
+const MON_SEQ_W = Math.min(monarchLayout.width, 1000);
 const MON_SEQ_H = (MON_SEQ_W * REGIONS.seqStrip.h) / REGIONS.seqStrip.w;
 const MON_SEQ_BOX: RegionBox = {
   x: (monarchLayout.width - MON_SEQ_W) / 2,
@@ -199,12 +199,30 @@ const MON_KB_BOX: RegionBox = {
   h: MON_KB_H,
 };
 
+/**
+ * PATCHBAY composition. The voice jack field is now TALLER than its stage region
+ * (FIELD_H, decoupled — jackFieldLayout.ts) so the 88 jacks spread out; it keeps the
+ * full STAGE width so the CableLayer width÷STAGE.w scale anchor still holds (cables
+ * measure correctly). The 16 sampler pad jacks render as a COMPACT cluster docked
+ * directly below the field (no longer the full-width SAMPLER_REGION) — a quarter the
+ * footprint, and the dead band between the field and the pads is gone.
+ */
+const JACKFIELD_BOX: RegionBox = { x: 0, y: REGIONS.jackField.y, w: REGIONS.jackField.w, h: FIELD_H };
+const SAMPLER_JACKS_W = 660;
+const SAMPLER_JACKS_H = 150;
+const SAMPLER_PATCH_BOX: RegionBox = {
+  x: (STAGE.w - SAMPLER_JACKS_W) / 2,
+  y: JACKFIELD_BOX.y + FIELD_H + 18,
+  w: SAMPLER_JACKS_W,
+  h: SAMPLER_JACKS_H,
+};
+
 const BBOX: Record<ModuleTabId, RegionBox> = {
   // Each voice fill-zooms to its OWN landscape canvas (the panel layout's width/height).
   cascade: CASCADE_BOX,
   anvil: ANVIL_BOX,
   monarch: union(MON_CONTROLS_BOX, MON_SEQ_BOX, MON_KB_BOX),
-  patchbay: union(REGIONS.jackField, SAMPLER_REGION),
+  patchbay: union(JACKFIELD_BOX, SAMPLER_PATCH_BOX),
   sampler: union(SAMPLER_REGION, DRUM_REGION),
 };
 
@@ -361,16 +379,14 @@ export function App() {
              * render ONLY here; the routing itself persists across tabs (engine store). */}
             {isPatchbay && (
               <>
-                <Region box={REGIONS.jackField} testId="jack-field" dimmed={dim}>
+                <Region box={JACKFIELD_BOX} testId="jack-field" dimmed={dim}>
                   <JackFieldPanel />
                 </Region>
-                <Region box={SAMPLER_REGION} testId="sampler-jacks" dimmed={dim}>
+                <Region box={SAMPLER_PATCH_BOX} testId="sampler-jacks" dimmed={dim}>
                   <SamplerJacks />
                 </Region>
-                {/* overlays: borders under cables; both pointer-transparent. The bbox-clipping
-                 * .stage-sizer (overflow:hidden) trims the GroupBorders control-half strokes
-                 * that fall in the empty band above the jack field (y < 644.78). */}
-                <GroupBorders />
+                {/* CableLayer measures jack DOM positions live (÷ width/STAGE.w), so the
+                 * taller field + relocated pad jacks patch correctly with no cable changes. */}
                 <CableLayer container={stageRef} />
               </>
             )}
