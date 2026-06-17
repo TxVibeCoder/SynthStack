@@ -29,9 +29,10 @@ import { UI_TABS } from './tabs';
  *  sampler -> SAMPLER); 'patchbay' is the UI-only tab with no module. Never hard-code the
  *  voice names — read them from the registry. */
 function tabLabel(tabId: ModuleTabId): string {
-  // patchbay is a UI-only tab (no module) — guard BEFORE modulesForTab, which would
+  // patchbay + fx are UI-only tabs (no module) — guard BEFORE modulesForTab, which would
   // return [] and join to an empty label.
   if (tabId === 'patchbay') return 'PATCHBAY';
+  if (tabId === 'fx') return 'FX';
   const mods = modulesForTab(tabId);
   // single-module tabs use the module's displayName; multi-module tabs join them.
   return mods.length === 1

@@ -218,8 +218,9 @@ function FeatureCap({
  *  sourced from the registry. Each per-voice tab (cascade/anvil/monarch) and the sampler
  *  tab show their single module's displayNameOf(id); 'patchbay' is the UI-only tab. */
 function activeTabName(tab: ModuleTabId): string {
-  // patchbay is a UI-only tab (no module) — guard BEFORE modulesForTab (which is []).
+  // patchbay + fx are UI-only tabs (no module) — guard BEFORE modulesForTab (which is []).
   if (tab === 'patchbay') return 'PATCHBAY';
+  if (tab === 'fx') return 'FX';
   const mods = modulesForTab(tab);
   return mods.length === 1 ? displayNameOf(mods[0]!.id) : mods.map((m) => m.displayName).join(' / ');
 }

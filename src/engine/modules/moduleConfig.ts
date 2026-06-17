@@ -36,8 +36,10 @@ import { SamplerModule } from './sampler';
  *  (modulesForTab('patchbay') therefore returns [] — harmless). It exists only as a
  *  destination in the UI tab set (src/ui/tabs.ts) where the jack field + sampler jacks
  *  co-mount for cross-machine patching; the engine/presets/studio.ts never reference it.
- *  The literal lives in this union so the UI's ModuleTabId-typed tab state can hold it. */
-export type ModuleTabId = 'cascade' | 'anvil' | 'monarch' | 'patchbay' | 'sampler';
+ *  The literal lives in this union so the UI's ModuleTabId-typed tab state can hold it.
+ *  'fx' is likewise a UI-ONLY tab (Wave 2 master effects) with no module — the EffectsPanel
+ *  writes the store's `effects` slice directly through the bridge. */
+export type ModuleTabId = 'cascade' | 'anvil' | 'monarch' | 'patchbay' | 'sampler' | 'fx';
 
 /**
  * Everything the build, persistence, validation and (future) teardown paths need to

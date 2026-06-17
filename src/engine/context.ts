@@ -14,6 +14,8 @@ import ladderWorkletUrl from './worklets/ladder.worklet.ts?worker&url';
 import egWorkletUrl from './worklets/eg.worklet.ts?worker&url';
 import edgeWorkletUrl from './worklets/edge.worklet.ts?worker&url';
 import { MasterRecorder } from './recorder';
+import { MasterFxChain, type MasterFxId } from './fx/masterFxChain';
+import type { MasterEffectsState } from '../state/studioState';
 
 export const WORKLET_URLS = [oscWorkletUrl, ladderWorkletUrl, egWorkletUrl, edgeWorkletUrl];
 
@@ -38,6 +40,7 @@ export class StudioContext {
   private ctx: AudioContext | null = null;
   private _masterIn: GainNode | null = null;
   private insertSlot: GainNode | null = null;
+  private masterFx: MasterFxChain | null = null;
   private masterVolume: GainNode | null = null;
   private softClip: WaveShaperNode | null = null;
   private workletsLoaded = false;
@@ -60,11 +63,14 @@ export class StudioContext {
       this.softClip = this.ctx.createWaveShaper();
       this.softClip.curve = makeSoftClipCurve() as Float32Array<ArrayBuffer>;
       this.softClip.oversample = '2x';
-      this._masterIn
-        .connect(this.insertSlot)
-        .connect(this.masterVolume)
-        .connect(this.softClip)
-        .connect(this.ctx.destination);
+      // Master FX chain occupies the reserved insertSlot:
+      //   masterIn → insertSlot → [flanger→delay→reverb] → masterVolume → softClip → dest.
+      // Built once (effects are dry-only when off), captured by the softClip recorder tap.
+      this.masterFx = new MasterFxChain(this.ctx);
+      this._masterIn.connect(this.insertSlot);
+      this.insertSlot.connect(this.masterFx.input);
+      this.masterFx.output.connect(this.masterVolume);
+      this.masterVolume.connect(this.softClip).connect(this.ctx.destination);
       this.ctx.addEventListener('statechange', () => {
         this.onStateChange?.(this.ctx?.state === 'running');
       });
@@ -125,6 +131,21 @@ export class StudioContext {
 
   setMasterVolume(v01: number): void {
     if (this.masterVolume) this.masterVolume.gain.value = v01;
+  }
+
+  // ---- master effects (Wave 2) — the FX chain at insertSlot --------------------------------
+
+  setMasterFxOn(id: MasterFxId, on: boolean): void {
+    this.masterFx?.setOn(id, on);
+  }
+
+  setMasterFxParam(id: MasterFxId, param: string, value: number): void {
+    this.masterFx?.setParam(id, param, value);
+  }
+
+  /** Push a whole effects.master slice into the graph (load / INIT / preset). */
+  applyMasterEffects(state: MasterEffectsState): void {
+    this.masterFx?.applyMasterEffects(state);
   }
 
   // ---- master-output recording (feature: recording) -------------------------------------

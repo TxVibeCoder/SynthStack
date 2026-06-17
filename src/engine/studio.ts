@@ -10,6 +10,7 @@
  */
 
 import { StudioContext } from './context';
+import type { MasterFxId } from './fx/masterFxChain';
 import { MonarchModule } from './modules/monarch';
 import { AnvilModule } from './modules/anvil';
 import { CascadeModule } from './modules/cascade';
@@ -30,6 +31,7 @@ import { renderFactorySamples } from './factorySamples';
 import type { SampleBackend } from './sampleStore';
 import {
   StudioStore,
+  coalesceEffectsState,
   coalesceSamplerState,
   defaultSamplerState,
   defaultPad,
@@ -508,6 +510,16 @@ export class Studio {
     this.context.setMasterVolume(v01);
   }
 
+  // ---- master effects (Wave 2) — forward to the FX chain at insertSlot ----------------------
+
+  setMasterFxOn(id: MasterFxId, on: boolean): void {
+    this.context.setMasterFxOn(id, on);
+  }
+
+  setMasterFxParam(id: MasterFxId, param: string, value: number): void {
+    this.context.setMasterFxParam(id, param, value);
+  }
+
   // ---- master-output recording passthroughs (ADDITIVE; called by src/ui/engineBridge.ts)
   // The recorder is owned by StudioContext (it taps the private softClip); these only
   // delegate. powerOff (above) already routes through context.powerOff, which auto-stops
@@ -768,6 +780,10 @@ export class Studio {
     this.samplerSeq.setPattern(samp.pattern);
     this.tempoLink = state.mixer.tempoLink;
     this.applyTempoLink();
+    // Master FX: push the whole effects.master slice into the graph (coalesce fills an
+    // older tree's missing `effects` -> all off). Effects are dry-only when off, so this
+    // is silent for a default tree; INIT/preset restores the exact wet/param state.
+    this.context.applyMasterEffects(coalesceEffectsState(state.effects).master);
   }
 
   getState(): StudioState {

@@ -85,6 +85,35 @@ export interface TransportState {
   cascade: CascadeSequencerState;
 }
 
+/** Master effects (Wave 2). Each effect is {on} + numeric params; all plain JSON so the
+ *  getState/setState round-trip holds. The engine graph (engine/fx) mirrors these. */
+export interface FlangerState {
+  on: boolean;
+  rate: number; // LFO Hz, 0.05..8
+  depth: number; // 0..1 sweep depth
+  feedback: number; // 0..0.95
+  mix: number; // 0..1 wet
+}
+export interface DelayState {
+  on: boolean;
+  time: number; // seconds, 0.02..2
+  feedback: number; // 0..0.95
+  mix: number; // 0..1 wet
+}
+export interface ReverbState {
+  on: boolean;
+  size: number; // 0..1 room/decay
+  mix: number; // 0..1 wet
+}
+export interface MasterEffectsState {
+  flanger: FlangerState;
+  delay: DelayState;
+  reverb: ReverbState;
+}
+export interface EffectsState {
+  master: MasterEffectsState;
+}
+
 export interface StudioState {
   version: 1;
   power: boolean;
@@ -99,6 +128,7 @@ export interface StudioState {
   };
   sampler: SamplerState;
   keyboard: KeyboardState;
+  effects: EffectsState;
 }
 
 export function defaultMonarchStep(): MonarchStepState {
@@ -197,6 +227,55 @@ export function coalesceKeyboardState(raw: Partial<KeyboardState> | undefined): 
   return { octave };
 }
 
+export function defaultEffectsState(): EffectsState {
+  return {
+    master: {
+      flanger: { on: false, rate: 0.4, depth: 0.5, feedback: 0.3, mix: 0.5 },
+      delay: { on: false, time: 0.3, feedback: 0.35, mix: 0.4 },
+      reverb: { on: false, size: 0.6, mix: 0.3 },
+    },
+  };
+}
+
+/** Clamp + finite-guard one numeric effect param, defaulting if junk. */
+function num(v: unknown, def: number, lo: number, hi: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def;
+}
+
+/**
+ * Normalize a possibly-partial / older-shape effects slice to a complete EffectsState.
+ * Mirrors coalesceSamplerState: PURE, never mutates `raw`; a pre-feature tree lacking
+ * `effects` -> all effects off at their default params. Every field is validated so a
+ * hand-edited bundle can't inject junk into an AudioParam.
+ */
+export function coalesceEffectsState(raw: Partial<EffectsState> | undefined): EffectsState {
+  const d = defaultEffectsState().master;
+  const m = raw?.master;
+  const flag = (v: unknown, def: boolean) => (typeof v === 'boolean' ? v : def);
+  return {
+    master: {
+      flanger: {
+        on: flag(m?.flanger?.on, d.flanger.on),
+        rate: num(m?.flanger?.rate, d.flanger.rate, 0.01, 12),
+        depth: num(m?.flanger?.depth, d.flanger.depth, 0, 1),
+        feedback: num(m?.flanger?.feedback, d.flanger.feedback, 0, 0.95),
+        mix: num(m?.flanger?.mix, d.flanger.mix, 0, 1),
+      },
+      delay: {
+        on: flag(m?.delay?.on, d.delay.on),
+        time: num(m?.delay?.time, d.delay.time, 0.02, 2),
+        feedback: num(m?.delay?.feedback, d.delay.feedback, 0, 0.95),
+        mix: num(m?.delay?.mix, d.delay.mix, 0, 1),
+      },
+      reverb: {
+        on: flag(m?.reverb?.on, d.reverb.on),
+        size: num(m?.reverb?.size, d.reverb.size, 0, 1),
+        mix: num(m?.reverb?.mix, d.reverb.mix, 0, 1),
+      },
+    },
+  };
+}
+
 export function defaultStudioState(): StudioState {
   return {
     version: 1,
@@ -219,6 +298,7 @@ export function defaultStudioState(): StudioState {
     mixer: { channelLevels: [0.8, 0.8, 0.8, 0.8], masterVolume: 0.8, tempoLink: false },
     sampler: defaultSamplerState(),
     keyboard: defaultKeyboardState(),
+    effects: defaultEffectsState(),
   };
 }
 

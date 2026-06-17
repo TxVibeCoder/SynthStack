@@ -47,6 +47,7 @@
  */
 
 import { Studio } from '../engine/studio';
+import type { MasterFxId } from '../engine/fx/masterFxChain';
 import {
   coalesceKeyboardState,
   coalesceSamplerState,
@@ -56,6 +57,7 @@ import {
   defaultSamplerState,
   QUANTIZE_DIVISIONS,
   type CableState,
+  type EffectsState,
   type PadState,
   type QuantizeDivision,
   type StudioState,
@@ -210,6 +212,9 @@ class EngineBridge {
   private readonly voice = new MonoVoice();
   private readonly midi = new WebMidiInput();
   private keyboardOctave = 0;
+  /** Set by the MonarchStepEditor while REC is armed: each keyboard/MIDI note ON writes the
+   *  cursor step + advances it (step-record). null = not recording. Runtime-only. */
+  private monarchRecordHandler: ((noteVv: number) => void) | null = null;
 
   // pending debounced store mirrors for mixer drags (engine writes are immediate)
   private readonly pendingLevels: [number | null, number | null, number | null, number | null] = [
@@ -523,6 +528,47 @@ class EngineBridge {
     this.scheduleStoreMirror();
   }
 
+  // ---- master effects (Wave 2) — EffectsPanel surface ---------------------------------------
+
+  /** Effect ON/OFF: engine write + store commit (discrete, like setTempoLink). */
+  setMasterFxOn(id: MasterFxId, on: boolean): void {
+    if (this._powered) this.studio.setMasterFxOn(id, on);
+    const s = this.store.getState();
+    s.effects.master[id].on = on;
+    this.store.setState(s);
+  }
+
+  /** Live FX-param write during a knob drag — engine only, NO store (EffectsPanel onInput). */
+  setMasterFxParam(id: MasterFxId, param: string, value: number): void {
+    if (this._powered) this.studio.setMasterFxParam(id, param, value);
+  }
+
+  /** Commit an FX param: engine write + store (EffectsPanel onCommit). */
+  commitMasterFxParam(id: MasterFxId, param: string, value: number): void {
+    if (this._powered) this.studio.setMasterFxParam(id, param, value);
+    const s = this.store.getState();
+    (s.effects.master[id] as unknown as Record<string, number | boolean>)[param] = value;
+    this.store.setState(s);
+  }
+
+  /**
+   * Reference-STABLE effects snapshot for useSyncExternalStore. store.getState() deep-clones
+   * the whole tree on every call, so returning it raw would change identity every render and
+   * spin React's snapshot loop. Cache by the effects-slice JSON: the same object is returned
+   * until the slice actually changes (toggle / commit / preset / INIT), then a new one.
+   */
+  private cachedEffects: EffectsState = defaultStudioState().effects;
+  private cachedEffectsJson = '';
+  getEffects(): EffectsState {
+    const e = this.store.getState().effects;
+    const json = JSON.stringify(e);
+    if (json !== this.cachedEffectsJson) {
+      this.cachedEffectsJson = json;
+      this.cachedEffects = e;
+    }
+    return this.cachedEffects;
+  }
+
   // ---- recording (feature: recording; consumed by UtilityStrip RECORD button) ----------
   // The recorder lives in StudioContext (it needs the private AudioContext + softClip — the
   // final audible node); the bridge ONLY forwards. It owns NO recorder state of its own.
@@ -577,7 +623,12 @@ class EngineBridge {
    */
   noteOn(noteNumber: number, velocity: number): void {
     if (velocity === 0) return this.noteOff(noteNumber);
-    this.applyVoiceAction(this.voice.noteOn(noteNumber));
+    this.applyVoiceAction(this.voice.noteOn(noteNumber)); // sounds the note (also while recording)
+    // Monarch step-record: while armed, the pressed note ALSO writes the cursor step and
+    // advances it (hardware-style step record). Uses the RAW pressed note (not the mono
+    // allocator's result) + the same octave the live voice plays, so what you hear is what
+    // gets written. Engine-independent (works powered or not — it's a store edit).
+    this.monarchRecordHandler?.(noteToVv(noteNumber) + this.keyboardOctave);
   }
 
   /** Note OFF from the keyboard / MIDI. Drives the mono allocator -> applyVoiceAction. */
@@ -766,6 +817,15 @@ class EngineBridge {
     const s = this.store.getState();
     s.transport.monarch.endStep = Math.min(32, Math.max(1, Math.round(endStep)));
     this.store.setState(s);
+  }
+
+  /**
+   * Monarch step-record (Wave 2): the MonarchStepEditor registers a handler while REC is
+   * armed; clears it (null) when disarmed/unmounted. While set, keyboard/MIDI noteOn ALSO
+   * writes the cursor step + advances it. Runtime-only — the recorded steps persist in the
+   * transport slice, but the armed FLAG never serializes (parity with MIDI-enabled). */
+  setMonarchRecordHandler(fn: ((noteVv: number) => void) | null): void {
+    this.monarchRecordHandler = fn;
   }
 
   // ---- patching (stage 2, work order §8.2) -------------------------------------------

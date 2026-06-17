@@ -68,6 +68,7 @@ const mkToggle = (id: string, label: string): ControlDef => ({
 const REST_DEF = mkToggle('MON_STEP_REST', 'REST');
 const ACCENT_DEF = mkToggle('MON_STEP_ACCENT', 'ACCENT');
 const GLIDE_DEF = mkToggle('MON_STEP_GLIDE', 'GLIDE');
+const REC_DEF = mkToggle('MON_REC', 'REC');
 
 function readSeq(): { steps: MonarchStepState[]; endStep: number } {
   const t = engineBridge.store.getState().transport.monarch;
@@ -123,6 +124,7 @@ export const MonarchStepEditor = memo(function MonarchStepEditor() {
   const [seq, setSeq] = useState(readSeq);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(0);
+  const [armed, setArmed] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const pos = useStepPosition('monarch');
   const { monarchRunning } = useTransportFlags();
@@ -138,6 +140,30 @@ export const MonarchStepEditor = memo(function MonarchStepEditor() {
       }
     });
   }, []);
+
+  // Step-record: while REC is armed, register a handler the bridge calls on every keyboard /
+  // MIDI note ON — it writes the cursor (selected) step + advances the cursor (wrapping at
+  // END STEP), so playing the keyboard fills the pattern. Refs keep the handler reading the
+  // LIVE cursor/end without re-registering on every move; the effect re-runs only on arm.
+  const selectedRef = useRef(selected);
+  const endStepRef = useRef(seq.endStep);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  useEffect(() => {
+    endStepRef.current = seq.endStep;
+  }, [seq.endStep]);
+  useEffect(() => {
+    if (!armed) return;
+    engineBridge.setMonarchRecordHandler((noteVv) => {
+      const cur = selectedRef.current;
+      engineBridge.updateMonarchStep(cur, { noteVv, rest: false });
+      const next = (cur + 1) % Math.max(1, endStepRef.current);
+      setSelected(next);
+      setPage(Math.floor(next / 8)); // follow the cursor onto the next page
+    });
+    return () => engineBridge.setMonarchRecordHandler(null);
+  }, [armed]);
 
   const onCellClick = useCallback(
     (index: number, shift: boolean) => {
@@ -277,6 +303,10 @@ export const MonarchStepEditor = memo(function MonarchStepEditor() {
         x={CELL_X0 + 276} y={EDIT_Y} />
       <Button def={REST_DEF} value={sel.rest ? 'ON' : 'OFF'} lit={sel.rest}
         onChange={() => editStep({ rest: !sel.rest })} x={CELL_X0 + 342} y={EDIT_Y} />
+      {/* REC — step-record arm. While lit, keyboard/MIDI notes write the selected cell
+          and advance it (the amber cursor IS the write position). */}
+      <Button def={REC_DEF} value={armed ? 'ON' : 'OFF'} lit={armed}
+        onChange={(p) => setArmed(p === 'ON')} x={CELL_X0 + 408} y={EDIT_Y} />
       </g>
     </svg>
   );

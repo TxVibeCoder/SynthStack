@@ -89,6 +89,7 @@ import { cascadeLayout } from './panels/cascadeLayout';
 import { anvilLayout } from './panels/anvilLayout';
 import { monarchLayout } from './panels/monarchLayout';
 import { FIELD_H } from './panels/jackFieldLayout';
+import { EffectsPanel, FX_W, FX_H } from './panels/EffectsPanel';
 import { PresetPicker } from './PresetPicker';
 import { OrientationHint } from './OrientationHint';
 import { TabBar } from './TabBar';
@@ -173,6 +174,8 @@ function union(...bs: RegionBox[]): RegionBox {
  */
 const CASCADE_BOX: RegionBox = { x: 0, y: 0, w: cascadeLayout.width, h: cascadeLayout.height };
 const ANVIL_BOX: RegionBox = { x: 0, y: 0, w: anvilLayout.width, h: anvilLayout.height };
+/** FX tab — its own landscape canvas (UI-only master effects), decoupled like the voices. */
+const FX_BOX: RegionBox = { x: 0, y: 0, w: FX_W, h: FX_H };
 
 /**
  * Monarch tab = three stacked, full-width-ish bands composed into one landscape canvas
@@ -224,6 +227,7 @@ const BBOX: Record<ModuleTabId, RegionBox> = {
   monarch: union(MON_CONTROLS_BOX, MON_SEQ_BOX, MON_KB_BOX),
   patchbay: union(JACKFIELD_BOX, SAMPLER_PATCH_BOX),
   sampler: union(SAMPLER_REGION, DRUM_REGION),
+  fx: FX_BOX,
 };
 
 /**
@@ -281,6 +285,7 @@ export function App() {
   const isMonarch = tab === 'monarch';
   const isPatchbay = tab === 'patchbay';
   const isSampler = tab === 'sampler';
+  const isFx = tab === 'fx';
 
   // <main>'s inline (pre-scale) height = the BOTTOM of the active tab's bbox, so every
   // region/jack that mounts on this tab lies inside <main>'s box and is measurable by the
@@ -405,6 +410,14 @@ export function App() {
                   <DrumMachinePanel />
                 </Region>
               </>
+            )}
+
+            {/* ===== FX TAB: the master effects panel (UI-only; writes the store `effects`
+             * slice through the bridge). Its own landscape canvas, like the voice tabs. ===== */}
+            {isFx && (
+              <Region box={FX_BOX} testId="tier-fx" dimmed={dim}>
+                <EffectsPanel />
+              </Region>
             )}
           </main>
         </div>

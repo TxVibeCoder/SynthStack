@@ -10,5 +10,6 @@
 import type { ModuleTabId } from '../engine/modules/moduleConfig';
 
 /** The UI tabs, in display order. The 3 per-voice tabs (cascade · anvil · monarch) ·
- *  patchbay (UI-only jack field + sampler jacks) · sampler (sampler/drum controls). */
-export const UI_TABS: ModuleTabId[] = ['cascade', 'anvil', 'monarch', 'patchbay', 'sampler'];
+ *  patchbay (UI-only jack field + sampler jacks) · sampler (sampler/drum controls) ·
+ *  fx (UI-only master effects panel). */
+export const UI_TABS: ModuleTabId[] = ['cascade', 'anvil', 'monarch', 'patchbay', 'sampler', 'fx'];

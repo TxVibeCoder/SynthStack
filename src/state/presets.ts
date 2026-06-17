@@ -12,6 +12,7 @@
  */
 
 import {
+  coalesceEffectsState,
   coalesceKeyboardState,
   coalesceSamplerState,
   defaultMonarchStep,
@@ -199,6 +200,11 @@ export function coalesceStudioState(raw: unknown): StudioState {
   base.sampler.seqRunning = false; // a restored preset never spontaneously runs the drum grid
   base.keyboard = coalesceKeyboardState(
     isObject(raw.keyboard) ? (raw.keyboard as Parameters<typeof coalesceKeyboardState>[0]) : undefined,
+  );
+
+  // 11. effects — strict coalesce; older trees lacking `effects` default all-off.
+  base.effects = coalesceEffectsState(
+    isObject(raw.effects) ? (raw.effects as Parameters<typeof coalesceEffectsState>[0]) : undefined,
   );
 
   base.version = 1;
