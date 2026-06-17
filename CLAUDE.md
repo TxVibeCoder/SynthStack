@@ -1,6 +1,6 @@
 # CLAUDE.md — SynthStack conventions
 
-Browser modular synth: Monarch/Anvil/Cascade voices + an 8-pad sampler/drum machine + on-screen keyboard/MIDI + patchable cables + a software mixer.
+Browser modular synth: Monarch/Anvil/Cascade voices + an 8-pad sampler/drum machine + on-screen keyboard/MIDI (with Monarch step-record) + patchable cables + a software mixer + master effects (flanger/delay/reverb). A ribbon GUIDE button opens an in-app Patchbook (patchbay how-to, sound recipes, glossary) in its own window from `public/guide.html`.
 
 ## Commands
 

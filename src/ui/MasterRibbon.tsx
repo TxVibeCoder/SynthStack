@@ -331,6 +331,42 @@ export const MasterRibbon = memo(function MasterRibbon({
         {/* FULL SCREEN — target the full viewport. */}
         <FullScreenButton x={1100} y={28} />
 
+        {/* GUIDE — opens the standalone Patchbook (public/guide.html) in its own window.
+         * A REAL SVG <a target> link, not scripted window.open: a user-initiated link
+         * navigation can't be popup-blocked, and the named target reuses + raises the same
+         * window on repeat clicks. BASE_URL = '/' (dev) / '/SynthStack/' (build). */}
+        <a
+          href={`${import.meta.env.BASE_URL}guide.html`}
+          target="synthstack-guide"
+          className="control"
+          data-testid="guide"
+          aria-label="Open the Patchbook guide in a new window"
+        >
+          <title>Patchbook — patchbay how-to + sound recipes (opens in its own window)</title>
+          <rect
+            x={1156}
+            y={21}
+            width={48}
+            height={22}
+            rx={4}
+            fill={COLORS.panelShadow}
+            stroke={COLORS.panelEdge}
+            strokeWidth={1.2}
+          />
+          <text
+            x={1180}
+            y={36}
+            textAnchor="middle"
+            fontFamily={FONT_CONDENSED}
+            fontSize={10}
+            letterSpacing={0.5}
+            fill={COLORS.legend}
+            pointerEvents="none"
+          >
+            GUIDE
+          </text>
+        </a>
+
         {/* MIXER CHANNEL FADERS — relocated from the in-stage mixer Region (which App no
          * longer mounts) onto the ribbon. The row carries data-testid="tier-mixer" so the
          * existing mixer e2e finds the faders here. Origin places the 4 knobs (Cascade /

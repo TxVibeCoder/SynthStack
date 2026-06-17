@@ -4,7 +4,7 @@ SynthStack is a local, browser-based modular synthesizer. Everything runs client
 your browser — no account, no cloud, no audio leaves your machine. It bundles three
 analog-style synth voices, an 8-pad sampler with a step drum machine, an on-screen
 keyboard with Web MIDI input, and a virtual patchbay that lets you wire the whole rack
-together and record the result.
+together, run it through master effects, and record the result.
 
 The synthesis is **analog-style and behaviorally inspired** — the voices aim to *sound and
 behave* like classic analog hardware, not to be circuit-accurate emulations.
@@ -17,11 +17,15 @@ behave* like classic analog hardware, not to be circuit-accurate emulations.
 - **Cascade** — a subharmonic, polyrhythmic synth voice.
 - **Sampler** — eight assignable sample pads (4×2) with per-pad level and tune.
 - **Drum machine** — a TR-style step sequencer that triggers the eight sampler pads.
-- **Keyboard** — an on-screen virtual piano with **Web MIDI** input for live playing.
+- **Keyboard** — an on-screen virtual piano with **Web MIDI** input for live playing; arm
+  **REC** to record what you play straight into the Monarch's sequencer (step-record).
 - **Patchbay** — drag patchable virtual cables between any modules; all signals are summed
   through a software mixer.
+- **Master effects** — a master **flanger, delay, and reverb** across the whole mix.
 - **Recording** — capture the master output to a downloadable audio file.
 - **Presets** — save and load full setups, including factory and user presets.
+- **Built-in guide** — an in-app Patchbook (the GUIDE button): how the patchbay works,
+  sound-design recipes, and a glossary of the abbreviations.
 
 Every patchable signal — audio, gates, and control voltages alike — is a real cable you can
 drag, and the whole rack sums through one mixer to the master output.

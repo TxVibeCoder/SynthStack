@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SynthStack Patchbook</title>
+    <!--
+      Standalone help page (opened in its own window from the GUIDE button in the master
+      ribbon — window.open(import.meta.env.BASE_URL + 'guide.html')). Fully self-contained:
+      no app CSS/JS, just this file. Lives in public/ so Vite serves it verbatim at
+      /guide.html (dev) and /SynthStack/guide.html (build). Scrub: voices are named
+      Cascade/Anvil/Monarch only — no brand/model names (synthstack-scrub-rule).
+    -->
+    <style>
+      :root {
+        --bg: #101012;
+        --panel: #1b1b1d;
+        --panel-raised: #232326;
+        --panel-edge: #2e2e33;
+        --panel-shadow: #0a0a0b;
+        --legend: #e8e0cf;
+        --legend-dim: #a89f8c;
+        --knob: #c89b3c;
+        --knob-hi: #e0b95f;
+        --condensed: 'Arial Narrow', 'Roboto Condensed', 'Helvetica Neue', 'Segoe UI', Arial, sans-serif;
+        --stack: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: var(--bg); }
+      body {
+        color: var(--legend);
+        font-family: var(--stack);
+        line-height: 1.55;
+        -webkit-text-size-adjust: 100%;
+      }
+      .article { max-width: 880px; margin: 0 auto; padding: 26px 28px 80px; }
+      h1 { font-family: var(--condensed); font-size: 30px; letter-spacing: 2px; margin: 4px 0 6px; }
+      .lede { color: var(--legend-dim); margin: 0 0 8px; }
+      h2 {
+        font-family: var(--condensed); font-size: 20px; letter-spacing: 1.5px;
+        color: var(--knob-hi); margin: 30px 0 10px; padding-bottom: 6px;
+        border-bottom: 1px solid var(--panel-edge);
+      }
+      h3 { font-family: var(--condensed); font-size: 15px; letter-spacing: 1px; margin: 0 0 6px; }
+      p { margin: 8px 0; }
+      ul { margin: 8px 0; padding-left: 20px; }
+      ul > li { margin: 8px 0; }
+      ul ul { margin: 4px 0; padding-left: 18px; }
+      b { color: var(--legend); }
+      .callout {
+        background: var(--panel-raised); border-left: 3px solid var(--knob);
+        border-radius: 4px; padding: 10px 14px; margin: 12px 0;
+      }
+      .jack {
+        font-family: var(--condensed); font-size: 12.5px; letter-spacing: 0.5px;
+        padding: 1px 7px; border-radius: 4px; border: 1px solid var(--panel-edge); white-space: nowrap;
+      }
+      .out { color: var(--bg); background: var(--knob); border-color: var(--knob-hi); }
+      .in { color: var(--legend); background: var(--panel-shadow); }
+      .voices { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 12px; margin: 10px 0; }
+      .voice { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 6px; padding: 12px 14px; }
+      .voice p { font-size: 13.5px; }
+      .jacks-line { font-size: 12px; color: var(--legend-dim); }
+      .recipe { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 6px; padding: 12px 16px; margin: 12px 0; }
+      .recipe h4 {
+        font-family: var(--condensed); font-size: 15px; letter-spacing: 0.5px; margin: 0 0 8px;
+        display: flex; align-items: center; gap: 10px;
+      }
+      .n {
+        display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+        flex: none; border-radius: 50%; background: var(--knob); color: var(--bg); font-size: 12px; font-weight: 700;
+      }
+      .patches { margin: 6px 0 10px; }
+      .patch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 5px 0; }
+      .arrow { color: var(--knob-hi); font-weight: 700; }
+      .recipe p { font-size: 13.5px; margin: 6px 0 0; }
+      .tweak { color: var(--legend-dim); }
+      .footer { margin-top: 28px; color: var(--legend-dim); font-style: italic; }
+      /* jump nav */
+      .toc {
+        display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 2px;
+        font-family: var(--condensed); font-size: 13px; letter-spacing: 1px;
+      }
+      .toc a { color: var(--knob-hi); text-decoration: none; border-bottom: 1px solid transparent; }
+      .toc a:hover { border-bottom-color: var(--knob-hi); }
+      /* glossary */
+      .glossary h3 {
+        color: var(--knob-hi); margin: 22px 0 6px; font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+      }
+      .glossary dl { margin: 0; }
+      .glossary dt { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 11px 0 2px; }
+      .term {
+        flex: none; min-width: 76px; font-family: var(--condensed); font-weight: 700;
+        letter-spacing: 0.5px; color: var(--knob-hi);
+      }
+      .full { color: var(--legend-dim); font-size: 13px; }
+      .glossary dd { margin: 0 0 0 84px; color: var(--legend); font-size: 13.5px; }
+      @media (max-width: 560px) { .glossary dd { margin-left: 0; } }
+    </style>
+  </head>
+  <body>
+    <article class="article">
+      <header>
+        <h1>SynthStack Patchbook</h1>
+        <p class="lede">
+          How the patchbay works, what every voice brings, and a handful of patches to get new
+          sounds out of the rack.
+        </p>
+        <nav class="toc">
+          <a href="#basics">Patchbay basics</a>
+          <a href="#voices">The voices</a>
+          <a href="#recipes">Recipes</a>
+          <a href="#glossary">Glossary</a>
+        </nav>
+      </header>
+
+      <h2>Why patch at all?</h2>
+      <p>
+        Each voice already makes sound on its own — internal <b>normalled</b> connections wire it
+        up like a hardwired synth. Running a cable from a jack <b>overrides</b> that default wiring
+        and re-routes the signal by hand. That is the whole game: send an output somewhere new and
+        the rack becomes a different instrument.
+      </p>
+      <p class="callout">
+        <b>Wire on the Patchbay, play on the voices.</b> Cables are drawn and removed on the
+        <b>PATCHBAY</b> tab only — but the connection stays live everywhere, so you patch there and
+        play on the CASCADE / ANVIL / MONARCH tabs.
+      </p>
+
+      <h2 id="basics">Patchbay basics</h2>
+      <ul>
+        <li>
+          <b>Outputs feed inputs.</b> Drag a cable from a bright-ring <b>output</b> to a dark-ring
+          <b>input</b>. Two outputs can&rsquo;t connect; one output can fan out to many inputs.
+        </li>
+        <li>
+          <b>Four kinds of signal:</b>
+          <ul>
+            <li><b>Audio</b> — the actual sound (oscillators, filter, the VCA output you hear).</li>
+            <li>
+              <b>CV</b> (control voltage) — a steering signal: pitch, filter cutoff, levels. Here CV
+              is audio-rate, so you can even use an oscillator as a CV source for wild effects.
+            </li>
+            <li><b>Gate</b> — an on/off pulse meaning &ldquo;note on / note off.&rdquo;</li>
+            <li><b>Clock</b> — a steady tick that keeps sequencers in time.</li>
+          </ul>
+          Anything plugs into anything, but like-into-like (CV&rarr;CV, gate&rarr;gate) is the
+          musical starting point.
+        </li>
+        <li>
+          <b>Normalled jacks (dashed ring).</b> A dashed ring means the input already has a built-in
+          source. Example: <span class="jack in">Monarch &#9656; GATE</span> is normalled to its
+          keyboard, so the keys play it by default — patch a cable into GATE and your cable takes over.
+        </li>
+        <li>
+          <b>Cable budget.</b> Up to <b>12 cables</b> at once (the counter sits top-right of the
+          patchbay). Click a cable&rsquo;s curve to remove it; <b>INIT</b> (top ribbon) clears them all.
+        </li>
+      </ul>
+
+      <h2 id="voices">The three voices at a glance</h2>
+      <div class="voices">
+        <div class="voice">
+          <h3>CASCADE — polyrhythmic drone machine</h3>
+          <p>
+            Two oscillators, each with two sub-oscillators, two 4-step sequencers, and four rhythm
+            generators. Built for evolving chords, drones, and cross-rhythms.
+          </p>
+          <p class="jacks-line">
+            <b>Outs:</b> VCO 1/2 · VCO 1/2 SUB 1/2 · SEQ 1/2 (pitch) · SEQ 1/2 CLK · CLOCK<br />
+            <b>Ins:</b> CUTOFF · VCO 1/2 · VCO/SUB/PWM · RHYTHM 1–4 · PLAY · RESET
+          </p>
+        </div>
+        <div class="voice">
+          <h3>ANVIL — the percussion brain</h3>
+          <p>
+            Two oscillators with FM and hard sync, plus an 8-step sequencer that sends both
+            <b>pitch</b> and <b>velocity</b> per step. Drums, zaps, and gnarly basslines.
+          </p>
+          <p class="jacks-line">
+            <b>Outs:</b> VCA (its sound) · PITCH · VELOCITY · TRIGGER · VCA/VCF/VCO EG · VCO 1/2<br />
+            <b>Ins:</b> VCO 1/2 CV · 1→2 FM AMT · VCF/VCA/VCO DECAY · TRIGGER · VELOCITY
+          </p>
+        </div>
+        <div class="voice">
+          <h3>MONARCH — the classic mono synth</h3>
+          <p>
+            One oscillator (saw + pulse), a fat ladder filter, an LFO, a 32-step sequencer, and the
+            keyboard. The go-to for basslines and leads.
+          </p>
+          <p class="jacks-line">
+            <b>Outs:</b> VCA · VCF · VCO SAW/PULSE · LFO TRI/SQ · EG · KB · GATE · MULT 1/2<br />
+            <b>Ins:</b> VCO 1V/OCT (pitch) · VCO LIN FM · VCF CUTOFF/RES · VCO MOD · LFO RATE · GATE
+          </p>
+        </div>
+        <div class="voice">
+          <h3>SAMPLER</h3>
+          <p>
+            Eight pads, each with an audio <b>OUT</b> and a <b>TRIG</b> input — fire any pad from any
+            gate or clock in the rack.
+          </p>
+        </div>
+      </div>
+
+      <h2 id="recipes">Recipes</h2>
+      <p class="lede">
+        Each one is a small patch. Power on, switch to the <b>PATCHBAY</b> tab, drag the cables,
+        then play on the voice tabs.
+      </p>
+
+      <div class="recipe">
+        <h4><span class="n">1</span>Let the drum brain play the bass</h4>
+        <div class="patches">
+          <div class="patch"><span class="jack out">Anvil &#9656; PITCH</span><span class="arrow">→</span><span class="jack in">Monarch &#9656; VCO 1V/OCT</span></div>
+          <div class="patch"><span class="jack out">Anvil &#9656; TRIGGER</span><span class="arrow">→</span><span class="jack in">Monarch &#9656; GATE</span></div>
+        </div>
+        <p><b>Why:</b> Anvil&rsquo;s 8-step sequencer sends a pitch and a trigger per step; routed into Monarch&rsquo;s oscillator pitch and gate, the percussion sequencer now plays a melodic bassline on the Monarch.</p>
+        <p class="tweak"><b>Try:</b> Dial the Anvil step PITCH knobs for the line, and shape the Monarch filter for the bass tone.</p>
+      </div>
+
+      <div class="recipe">
+        <h4><span class="n">2</span>Lock the whole rack to one clock</h4>
+        <div class="patches">
+          <div class="patch"><span class="jack out">Cascade &#9656; CLOCK</span><span class="arrow">→</span><span class="jack in">Anvil &#9656; ADV / CLOCK</span></div>
+          <div class="patch"><span class="jack out">Cascade &#9656; SEQ 1 CLK</span><span class="arrow">→</span><span class="jack in">Sampler &#9656; TRIG 1</span></div>
+        </div>
+        <p><b>Why:</b> One clock source advances Anvil&rsquo;s sequencer and fires a sample, so the polyrhythms, the drum steps, and the samples all stay locked together.</p>
+        <p class="tweak"><b>Try:</b> No cable needed for tempo alone — the TEMPO LINK button in the top ribbon slaves every voice&rsquo;s tempo at once.</p>
+      </div>
+
+      <div class="recipe">
+        <h4><span class="n">3</span>Bell &amp; metal tones (audio into the filter)</h4>
+        <div class="patches">
+          <div class="patch"><span class="jack out">Monarch &#9656; VCO SAW</span><span class="arrow">→</span><span class="jack in">Monarch &#9656; VCF CUTOFF</span></div>
+        </div>
+        <p><b>Why:</b> Feeding an audio-rate signal into the filter&rsquo;s cutoff makes it scream and ring with inharmonic, bell-like overtones — the cutoff is being modulated thousands of times a second.</p>
+        <p class="tweak"><b>Try:</b> Crank VCF RES, then play with the oscillator pitch. Swap in VCO PULSE, or a different voice&rsquo;s oscillator, for a new flavour.</p>
+      </div>
+
+      <div class="recipe">
+        <h4><span class="n">4</span>Cross-FM clang</h4>
+        <div class="patches">
+          <div class="patch"><span class="jack out">Cascade &#9656; VCO 1</span><span class="arrow">→</span><span class="jack in">Monarch &#9656; VCO LIN FM</span></div>
+        </div>
+        <p><b>Why:</b> One oscillator frequency-modulates another, giving glassy, clangorous, DX-style metallic tones instead of a plain waveform.</p>
+        <p class="tweak"><b>Try:</b> Sweep Cascade&rsquo;s VCO 1 FREQ for the timbre, and detune the two oscillators for movement.</p>
+      </div>
+
+      <div class="recipe">
+        <h4><span class="n">5</span>One LFO, two filters</h4>
+        <div class="patches">
+          <div class="patch"><span class="jack out">Monarch &#9656; LFO TRI</span><span class="arrow">→</span><span class="jack in">Cascade &#9656; CUTOFF</span></div>
+        </div>
+        <p><b>Why:</b> Monarch&rsquo;s LFO now wobbles the Cascade filter as well as its own, so both voices breathe with the same motion — coherent, hands-free movement.</p>
+        <p class="tweak"><b>Try:</b> Slow the LFO RATE right down for a long, drifting sweep; speed it up for a tremolo/vibrato shimmer.</p>
+      </div>
+
+      <div class="recipe">
+        <h4><span class="n">6</span>Trigger samples from a sequencer</h4>
+        <div class="patches">
+          <div class="patch"><span class="jack out">Anvil &#9656; TRIGGER</span><span class="arrow">→</span><span class="jack in">Sampler &#9656; TRIG 1</span></div>
+          <div class="patch"><span class="jack out">Cascade &#9656; SEQ 2 CLK</span><span class="arrow">→</span><span class="jack in">Sampler &#9656; TRIG 2</span></div>
+        </div>
+        <p><b>Why:</b> Your drum samples fire in lockstep with the analog sequencers — layer a sampled kick under Anvil&rsquo;s synth drum, and a hat on Cascade&rsquo;s rhythm.</p>
+        <p class="tweak"><b>Try:</b> On the SAMPLER tab, load different sounds onto the pads; each TRIG fires whatever pad it&rsquo;s wired to.</p>
+      </div>
+
+      <div class="recipe">
+        <h4><span class="n">7</span>Make the bass duck to the drums</h4>
+        <div class="patches">
+          <div class="patch"><span class="jack out">Anvil &#9656; VCA EG</span><span class="arrow">→</span><span class="jack in">Monarch &#9656; VCA CV</span></div>
+        </div>
+        <p><b>Why:</b> Anvil&rsquo;s percussive envelope now controls the Monarch&rsquo;s volume, so the bass pumps and pulses in time with the drum hits — a built-in sidechain feel.</p>
+        <p class="tweak"><b>Try:</b> Shorten the Anvil VCA DECAY for a tight pump; lengthen it for a slow swell.</p>
+      </div>
+
+      <div class="recipe">
+        <h4><span class="n">8</span>Drone through the ladder filter</h4>
+        <div class="patches">
+          <div class="patch"><span class="jack out">Cascade &#9656; VCO 1 SUB 1</span><span class="arrow">→</span><span class="jack in">Monarch &#9656; EXT AUDIO</span></div>
+        </div>
+        <p><b>Why:</b> Cascade&rsquo;s deep sub-oscillator is sent through Monarch&rsquo;s ladder filter (listen at the Monarch VCF / VCA output) — thick, processed drones from one voice run through another&rsquo;s character.</p>
+        <p class="tweak"><b>Try:</b> Patch Monarch&rsquo;s LFO into its own VCF CUTOFF for slow filter motion on the drone.</p>
+      </div>
+
+      <h2>Handy to know</h2>
+      <ul>
+        <li><b>Record what you play.</b> On the MONARCH tab, arm <b>REC</b> on the step strip, then play the keyboard — each note is written to the pattern and the cursor advances, so you never have to dial in steps one at a time.</li>
+        <li><b>Master FX.</b> The <b>FX</b> tab adds flanger, delay, and reverb across the whole mix — they sit on the master output, after everything.</li>
+        <li><b>Save your patch.</b> <b>SAVE</b> (top ribbon) stores the whole rig — cables, knobs, sequences, effects — to a slot or a shareable file; <b>PRESETS</b> loads them back.</li>
+      </ul>
+
+      <h2 id="glossary">Glossary</h2>
+      <p class="lede">The abbreviations on the panels and jacks, in plain English.</p>
+      <div class="glossary">
+        <h3>Sound sources &amp; shaping</h3>
+        <dl>
+          <dt><span class="term">VCO</span><span class="full">Voltage-Controlled Oscillator</span></dt>
+          <dd>The part that makes the raw tone. Its pitch is set by a control voltage — that&rsquo;s what a sequencer or keyboard steers.</dd>
+          <dt><span class="term">SUB</span><span class="full">Sub-oscillator</span></dt>
+          <dd>An extra oscillator tuned an octave (or two) below the main one, for added weight and bass.</dd>
+          <dt><span class="term">NOISE</span><span class="full">Noise generator</span></dt>
+          <dd>Random hiss. Great for percussion, wind, and texture; often mixed in or sent to the filter.</dd>
+          <dt><span class="term">VCF</span><span class="full">Voltage-Controlled Filter</span></dt>
+          <dd>Removes frequencies to shape the brightness/tone. The &ldquo;ladder&rdquo; filter is the classic warm, round one.</dd>
+          <dt><span class="term">VCA</span><span class="full">Voltage-Controlled Amplifier</span></dt>
+          <dd>Controls volume over time. An envelope drives it so each note swells and fades instead of just switching on.</dd>
+          <dt><span class="term">EG</span><span class="full">Envelope Generator</span></dt>
+          <dd>A shape over time — attack, decay, sustain — fired when a note hits. Usually moves volume or filter cutoff.</dd>
+          <dt><span class="term">LFO</span><span class="full">Low-Frequency Oscillator</span></dt>
+          <dd>A slow oscillator, below hearing, used to wobble things: vibrato (pitch), tremolo (volume), or a filter sweep.</dd>
+        </dl>
+
+        <h3>Waveforms &amp; filter</h3>
+        <dl>
+          <dt><span class="term">SAW / PULSE / TRI / SQ</span></dt>
+          <dd>Oscillator waveforms — Sawtooth, Pulse, Triangle, Square — from bright and buzzy (saw) to hollow (pulse/square) to mellow (triangle).</dd>
+          <dt><span class="term">CUTOFF</span><span class="full">filter cutoff frequency</span></dt>
+          <dd>Where the filter starts cutting. Sweeping it is the classic &ldquo;wah&rdquo; / opening-up sound.</dd>
+          <dt><span class="term">RES</span><span class="full">Resonance</span></dt>
+          <dd>A boost right at the cutoff. Crank it and the filter whistles or screams; high enough and it self-oscillates into a tone.</dd>
+          <dt><span class="term">HP / LP</span><span class="full">High-Pass / Low-Pass</span></dt>
+          <dd>Filter modes. LP keeps the lows (warms, darkens); HP keeps the highs (thins, brightens).</dd>
+          <dt><span class="term">PW / PWM</span><span class="full">Pulse Width / Pulse-Width Modulation</span></dt>
+          <dd>The shape of a pulse wave. Modulating it (PWM) gives a rich, shimmering, animated tone.</dd>
+        </dl>
+
+        <h3>Modulation &amp; control</h3>
+        <dl>
+          <dt><span class="term">CV</span><span class="full">Control Voltage</span></dt>
+          <dd>A steering signal you don&rsquo;t hear — it sets pitch, cutoff, levels. Here CV is audio-rate, so it can also do wild, fast effects.</dd>
+          <dt><span class="term">MOD</span><span class="full">Modulation</span></dt>
+          <dd>Using one signal to change another — e.g. an LFO modulating pitch for vibrato.</dd>
+          <dt><span class="term">FM / LIN FM</span><span class="full">Frequency Modulation / Linear FM</span></dt>
+          <dd>Using one oscillator to rapidly modulate another&rsquo;s pitch, for glassy, metallic, bell-like tones.</dd>
+          <dt><span class="term">1V/OCT</span><span class="full">one volt per octave</span></dt>
+          <dd>The standard pitch-CV scaling — one step up raises pitch an octave. Patch a pitch CV here to play a voice.</dd>
+          <dt><span class="term">MULT</span><span class="full">Multiple</span></dt>
+          <dd>A passive splitter: one signal in, the same signal out of several jacks, to send it to two or three places at once.</dd>
+          <dt><span class="term">ASSIGN</span><span class="full">assignable output</span></dt>
+          <dd>A CV output you can route to a chosen destination — a spare modulation source.</dd>
+          <dt><span class="term">VC MIX</span><span class="full">Voltage-Controlled Mixer</span></dt>
+          <dd>Blends or crossfades two signals, with the blend itself controllable by CV.</dd>
+        </dl>
+
+        <h3>Sequencing &amp; timing</h3>
+        <dl>
+          <dt><span class="term">SEQ</span><span class="full">Sequencer</span></dt>
+          <dd>Plays a repeating pattern of steps (pitches and gates) on its own.</dd>
+          <dt><span class="term">GATE</span></dt>
+          <dd>An on/off pulse meaning &ldquo;note on / note off&rdquo; — it tells the envelope when to fire and release.</dd>
+          <dt><span class="term">TRIG</span><span class="full">Trigger</span></dt>
+          <dd>A short pulse that fires a single event: a drum hit, a step, a sample.</dd>
+          <dt><span class="term">CLK</span><span class="full">Clock</span></dt>
+          <dd>A steady tick that keeps sequencers in time; patch one clock to many places to lock everything together.</dd>
+          <dt><span class="term">ADV</span><span class="full">Advance</span></dt>
+          <dd>Steps the sequencer forward one step — usually driven by a clock.</dd>
+          <dt><span class="term">VEL</span><span class="full">Velocity</span></dt>
+          <dd>How hard a note hits; here it can scale loudness or punch per step.</dd>
+          <dt><span class="term">GLIDE</span><span class="full">portamento</span></dt>
+          <dd>Sliding smoothly in pitch from one note to the next instead of jumping.</dd>
+          <dt><span class="term">ACCENT</span></dt>
+          <dd>An emphasis — louder/brighter — on a chosen sequencer step.</dd>
+          <dt><span class="term">RATCHET</span></dt>
+          <dd>Repeating a step&rsquo;s hit several times within the one step — a roll or stutter.</dd>
+          <dt><span class="term">TIE</span></dt>
+          <dd>Holding a note across into the next step instead of re-triggering it.</dd>
+          <dt><span class="term">REST</span></dt>
+          <dd>A silent step — no note plays.</dd>
+          <dt><span class="term">BPM</span><span class="full">beats per minute</span></dt>
+          <dd>The tempo — higher is faster.</dd>
+          <dt><span class="term">TEMPO LINK</span></dt>
+          <dd>Slaves all the voices to one shared tempo so they stay in sync (top ribbon, no cable needed).</dd>
+          <dt><span class="term">POLYRHYTHM</span></dt>
+          <dd>Running two or more rhythms of different lengths at once, so they drift in and out of phase — the heart of the Cascade.</dd>
+        </dl>
+
+        <h3>Tuning &amp; general</h3>
+        <dl>
+          <dt><span class="term">ET / JI</span><span class="full">Equal Temperament / Just Intonation</span></dt>
+          <dd>Two ways to tune the scale. ET spaces the steps evenly (like a piano); JI uses pure whole-number ratios (more consonant). The numbers (12, 8) are how many steps per octave.</dd>
+          <dt><span class="term">OCT</span><span class="full">Octave</span></dt>
+          <dd>A doubling of pitch — the same note higher or lower.</dd>
+          <dt><span class="term">KB</span><span class="full">Keyboard</span></dt>
+          <dd>The on-screen keys (and any connected MIDI keyboard), which play the Monarch voice.</dd>
+          <dt><span class="term">EXT</span><span class="full">External (audio in)</span></dt>
+          <dd>An input for an outside sound to run through the voice&rsquo;s filter and amplifier.</dd>
+          <dt><span class="term">HARD SYNC</span></dt>
+          <dd>Forcing one oscillator to restart in step with another, for aggressive, cutting, tearing tones.</dd>
+          <dt><span class="term">MIDI</span></dt>
+          <dd>A standard for connecting musical gear and controllers; here, plugging in a MIDI keyboard to play.</dd>
+          <dt><span class="term">INIT</span><span class="full">Initialize</span></dt>
+          <dd>Reset everything — knobs, cables, sequences — back to factory defaults (top ribbon).</dd>
+        </dl>
+      </div>
+
+      <p class="footer">Happy patching — there are no wrong cables, only new sounds.</p>
+    </article>
+  </body>
+</html>

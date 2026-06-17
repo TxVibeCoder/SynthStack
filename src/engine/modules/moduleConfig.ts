@@ -38,7 +38,8 @@ import { SamplerModule } from './sampler';
  *  co-mount for cross-machine patching; the engine/presets/studio.ts never reference it.
  *  The literal lives in this union so the UI's ModuleTabId-typed tab state can hold it.
  *  'fx' is likewise a UI-ONLY tab (Wave 2 master effects) with no module — the EffectsPanel
- *  writes the store's `effects` slice directly through the bridge. */
+ *  writes the store's `effects` slice directly through the bridge. (The Patchbook guide is NOT
+ *  a tab — the ribbon's GUIDE link opens it in its own window; see MasterRibbon.tsx.) */
 export type ModuleTabId = 'cascade' | 'anvil' | 'monarch' | 'patchbay' | 'sampler' | 'fx';
 
 /**

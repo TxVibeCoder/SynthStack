@@ -11,5 +11,6 @@ import type { ModuleTabId } from '../engine/modules/moduleConfig';
 
 /** The UI tabs, in display order. The 3 per-voice tabs (cascade · anvil · monarch) ·
  *  patchbay (UI-only jack field + sampler jacks) · sampler (sampler/drum controls) ·
- *  fx (UI-only master effects panel). */
+ *  fx (UI-only master effects panel). The Patchbook GUIDE is NOT a tab — the ribbon's
+ *  GUIDE link opens it in its own window (public/guide.html, see MasterRibbon.tsx). */
 export const UI_TABS: ModuleTabId[] = ['cascade', 'anvil', 'monarch', 'patchbay', 'sampler', 'fx'];
