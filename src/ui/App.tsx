@@ -94,6 +94,7 @@ import { PresetPicker } from './PresetPicker';
 import { OrientationHint } from './OrientationHint';
 import { TabBar } from './TabBar';
 import { MasterRibbon } from './MasterRibbon';
+import { ErrorOverlay } from './ErrorOverlay';
 import type { ModuleTabId } from '../engine/modules/moduleConfig';
 
 /**
@@ -426,6 +427,9 @@ export function App() {
        * .stage-viewport so the stylesheet can pin it at fixed/inset:0. Always mounted;
        * revealed ONLY for portrait + coarse-pointer + narrow. */}
       <OrientationHint />
+      {/* GLOBAL ERROR SURFACE — a SIBLING of .stage-viewport, screen-pixel positioned. Renders
+       * nothing until window.onerror / unhandledrejection / a caught rAF throw reports one. */}
+      <ErrorOverlay />
       {/* PRESET PICKER overlay — a SIBLING of .stage-viewport, OUTSIDE the transform:scale
        * <main>, screen-pixel sized. UNMOUNTED until a ribbon cap opens it (picker !== null). */}
       {picker && <PresetPicker mode={picker} onClose={() => setPicker(null)} />}

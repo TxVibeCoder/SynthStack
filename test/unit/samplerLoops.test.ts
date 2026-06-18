@@ -52,6 +52,33 @@ describe('SamplerLoopClock (feature: loop-quantize)', () => {
     expect(clock.nextEventTime).toBe(Infinity);
   });
 
+  it('panicAll() clears a sounding loop + pending schedule so nothing re-launches', () => {
+    const clock = new SamplerLoopClock();
+    const phase = runningPhase(0, 120); // bar = 2.0 s
+    // Launch pad 0: loopStart fires at the 2.0 s boundary and the loop is now sounding,
+    // with a re-launch pending at 4.0 s (firstLaunchTime 2.0 + 1·bar).
+    const before = collect(clock, 3.0 - 1e-9, (c) => {
+      c.requestLaunch(0, nextBoundary(0.3, '1 BAR', phase), phase);
+    });
+    expect(padTimes(before, 'loopStart', 0)).toHaveLength(1);
+    expect(clock.nextEventTime).toBeCloseTo(4.0, 9); // a re-launch is queued
+
+    clock.panicAll(); // PANIC: wipe loop + pending state
+    expect(clock.nextEventTime).toBe(Infinity); // idles — nothing queued
+
+    // Pump well past the would-be 4.0/6.0 re-launches: no event resurrects the loop.
+    let now = 3.0;
+    const after: TransportEvent[] = [];
+    const sched = new Scheduler(() => now, 0.1);
+    sched.add(clock, (e) => after.push(e));
+    clock.setPhase(phase);
+    for (let i = 0; i < 200; i++) {
+      sched.pump();
+      now += 0.025;
+    }
+    expect(after).toHaveLength(0);
+  });
+
   it('a quantized launch fires loopStart on the boundary then loopRelaunch each bar', () => {
     const clock = new SamplerLoopClock();
     const phase = runningPhase(0, 120); // bar = 2.0 s

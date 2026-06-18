@@ -93,7 +93,15 @@ export class Studio {
   /** Power on (user gesture) and build the graph once. */
   async powerOn(): Promise<void> {
     const ctx = await this.context.powerOn();
-    if (this.built) return;
+    if (this.built) {
+      // Power CYCLE (off -> on): powerOff() stopped the lookahead pump (scheduler.stop()),
+      // but the graph is already built so we must NOT rebuild — just restart the pump.
+      // Without this the AudioContext resumes yet the scheduler stays dead: every sequencer
+      // and the LED chase freeze until a full page reload. start() is idempotent (it guards
+      // on its own timer), so a redundant call here is harmless.
+      this.scheduler.start();
+      return;
+    }
     this.built = true;
 
     // Build every module from the MODULES registry (single source of truth). Construction
@@ -380,6 +388,29 @@ export class Studio {
     this.anvilSeq.stop();
     this.cascadeClock.stop();
     const t = this.context.audioContext.currentTime;
+    this.monarch.gateAt(false, t);
+  }
+
+  /**
+   * PANIC / ALL SOUND OFF — the user-facing "make it stop" escape hatch. Halts EVERY sound
+   * generator and releases the shared gate: all five transports (the three voices + the drum
+   * step seq + the sampler loop clock), the held sampler-loop voices, and the Monarch gate.
+   * Goes WIDER than stopAll(), which only stops the three voice transports.
+   *
+   * Non-destructive: the patch, cables, knob values and sequences are untouched — press RUN
+   * to resume. NOTE: a voice deliberately held open by VCA MODE = ON is not "runaway" — it
+   * ignores the gate — so panic() cannot silence it; that is the voice's VCA mode / its mixer
+   * channel / the MASTER knob. The keyboard/MIDI held-note stack is cleared by the bridge
+   * (engineBridge.panic -> releaseAllNotes) before this runs.
+   */
+  panic(): void {
+    const t = this.context.audioContext.currentTime;
+    this.monarchSeq.stop();
+    this.anvilSeq.stop();
+    this.cascadeClock.stop();
+    this.samplerSeq.stop();
+    this.samplerLoops.panicAll(); // clear the loop SCHEDULE so nothing re-launches...
+    for (let i = 0; i < 8; i++) this.sampler.stopLoop(i, t); // ...and stop the sounding voices
     this.monarch.gateAt(false, t);
   }
 

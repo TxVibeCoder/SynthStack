@@ -147,6 +147,54 @@ const InitCap = memo(function InitCap({ x, y }: { x: number; y: number }) {
   );
 });
 
+/** PANIC — SINGLE click: ALL SOUND OFF. Stops every transport + sampler loop and drops the
+ *  shared gate (engineBridge.panic). Single click (unlike INIT's double) so it is instant in
+ *  an emergency; it is non-destructive (only stops playback — the patch/sequences survive),
+ *  so a stray click costs nothing. Filled red to read as the emergency control. */
+const PanicCap = memo(function PanicCap({ x, y }: { x: number; y: number }) {
+  const onActivate = useCallback(() => engineBridge.panic(), []);
+  const onKeyDown = useCallback((e: ReactKeyboardEvent<SVGGElement>) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    engineBridge.panic();
+  }, []);
+  return (
+    <g
+      className="control"
+      role="button"
+      tabIndex={0}
+      aria-label="Panic — stop all sound"
+      data-testid="panic"
+      onClick={onActivate}
+      onKeyDown={onKeyDown}
+    >
+      <title>ALL SOUND OFF — stop every sequencer, loop and held note (your patch is kept)</title>
+      <rect
+        x={x - 27}
+        y={y - 13}
+        width={54}
+        height={26}
+        rx={5}
+        fill={COLORS.ledRed}
+        stroke={COLORS.ledRed}
+        strokeWidth={1.2}
+      />
+      <text
+        x={x}
+        y={y + 4}
+        textAnchor="middle"
+        fontFamily={FONT_CONDENSED}
+        fontSize={12}
+        letterSpacing={2}
+        fontWeight={600}
+        fill={COLORS.panelShadow}
+      >
+        PANIC
+      </text>
+    </g>
+  );
+});
+
 /** Momentary "open a flow" cap (PRESETS / SAVE) — opens the preset-picker overlay via
  *  onActivate (App owns the open-state). Same shape + testids as the relocated
  *  UtilityStrip FeatureCap so presets.spec.ts (which scopes them under utility-strip)
@@ -366,6 +414,10 @@ export const MasterRibbon = memo(function MasterRibbon({
             GUIDE
           </text>
         </a>
+
+        {/* PANIC — ALL SOUND OFF. Sits in the clear gap between GUIDE and the channel
+         * faders, filled red so it reads as the emergency control. Single click. */}
+        <PanicCap x={1252} y={32} />
 
         {/* MIXER CHANNEL FADERS — relocated from the in-stage mixer Region (which App no
          * longer mounts) onto the ribbon. The row carries data-testid="tier-mixer" so the

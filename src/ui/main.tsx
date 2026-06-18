@@ -5,6 +5,11 @@
 
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { installGlobalErrorHandlers } from './errorLog';
+
+// Wire window 'error' + 'unhandledrejection' to the visible ErrorOverlay BEFORE first
+// render, so a startup throw or a silent rAF/audio failure surfaces instead of vanishing.
+installGlobalErrorHandlers();
 
 const root = document.getElementById('root');
 if (!root) throw new Error('missing #root');

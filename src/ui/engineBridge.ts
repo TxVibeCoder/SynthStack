@@ -64,6 +64,7 @@ import {
   type StudioStore,
 } from '../state/studioState';
 import { MonoVoice, noteToVv, type VoiceAction } from '../engine/voice/monoVoice';
+import { reportError } from './errorLog';
 import { WebMidiInput, type MidiStatus } from './midi/webMidiInput';
 import type { EgMode } from '../engine/sequencers/cascadeClock';
 import { buildJackIndex, validateCable, type CableValidation, type JackIndex } from '../engine/router';
@@ -690,6 +691,19 @@ class EngineBridge {
   }
 
   /**
+   * PANIC / ALL SOUND OFF (the ribbon's red button). Releases any held keyboard/MIDI note
+   * (clears the mono-voice stack + drops the shared gate) and then stops every transport +
+   * sampler loop via the studio. No-op before power-on (no audio graph). Non-destructive:
+   * the patch, cables and sequences are untouched — RUN resumes playback. A deliberately
+   * held drone (Monarch VCA MODE = ON) is not silenced here by design — see Studio.panic().
+   */
+  panic(): void {
+    if (!this._powered || !this.studioInstance) return;
+    this.releaseAllNotes();
+    this.studioInstance.panic();
+  }
+
+  /**
    * Apply one allocator VoiceAction to the Monarch voice. The allocator has ALREADY run (the
    * held-note stack is correct regardless of power), so this only performs the engine WRITE,
    * and only when powered. Octave is applied HERE — the ONLY place — as +keyboardOctave on
@@ -747,43 +761,51 @@ class EngineBridge {
    * carries pitchVv/velocityVv, the Monarch step does not.
    */
   private chase = (): void => {
-    const studio = this.studioInstance;
-    if (studio && this._powered) {
-      const due = studio.scheduler.drainUi(studio.context.audioContext.currentTime);
-      let changed = false;
-      for (const e of due) {
-        if (e.type === 'step') {
-          const idx = e.data?.['stepIndex'] as number;
-          if (e.data && 'pitchVv' in e.data) {
-            if (this.stepPositions.anvil !== idx) {
-              this.stepPositions.anvil = idx;
+    // try/finally so the rAF ALWAYS re-arms: a throw in drainUi or a step-listener used to
+    // kill this loop permanently (the re-arm sat after the body), freezing every LED with no
+    // visible error. Now a throw is surfaced (errorLog -> ErrorOverlay) and the loop survives.
+    try {
+      const studio = this.studioInstance;
+      if (studio && this._powered) {
+        const due = studio.scheduler.drainUi(studio.context.audioContext.currentTime);
+        let changed = false;
+        for (const e of due) {
+          if (e.type === 'step') {
+            const idx = e.data?.['stepIndex'] as number;
+            if (e.data && 'pitchVv' in e.data) {
+              if (this.stepPositions.anvil !== idx) {
+                this.stepPositions.anvil = idx;
+                changed = true;
+              }
+            } else if (this.stepPositions.monarch !== idx) {
+              this.stepPositions.monarch = idx;
               changed = true;
             }
-          } else if (this.stepPositions.monarch !== idx) {
-            this.stepPositions.monarch = idx;
-            changed = true;
-          }
-        } else if (e.type === 'pitchUpdate') {
-          const seq = e.data?.['seq'] as 0 | 1;
-          const idx = e.data?.['stepIndex'] as number;
-          if (this.stepPositions.cascade[seq] !== idx) {
-            this.stepPositions.cascade[seq] = idx;
-            changed = true;
-          }
-        } else if (e.type === 'drumStep') {
-          // The drum column marker (distinct type — no payload-sniff collision with the
-          // monarch/anvil 'step' disambiguation). The co-queued 'drumHit' events have no branch
-          // here; drainUi already popped them, so they neither leak nor accumulate.
-          const idx = e.data?.['stepIndex'] as number;
-          if (this.stepPositions.drum !== idx) {
-            this.stepPositions.drum = idx;
-            changed = true;
+          } else if (e.type === 'pitchUpdate') {
+            const seq = e.data?.['seq'] as 0 | 1;
+            const idx = e.data?.['stepIndex'] as number;
+            if (this.stepPositions.cascade[seq] !== idx) {
+              this.stepPositions.cascade[seq] = idx;
+              changed = true;
+            }
+          } else if (e.type === 'drumStep') {
+            // The drum column marker (distinct type — no payload-sniff collision with the
+            // monarch/anvil 'step' disambiguation). The co-queued 'drumHit' events have no
+            // branch here; drainUi already popped them, so they neither leak nor accumulate.
+            const idx = e.data?.['stepIndex'] as number;
+            if (this.stepPositions.drum !== idx) {
+              this.stepPositions.drum = idx;
+              changed = true;
+            }
           }
         }
+        if (changed) for (const l of this.stepListeners) l();
       }
-      if (changed) for (const l of this.stepListeners) l();
+    } catch (err) {
+      reportError(err);
+    } finally {
+      this.rafId = requestAnimationFrame(this.chase);
     }
-    this.rafId = requestAnimationFrame(this.chase);
   };
 
   private startChase(): void {

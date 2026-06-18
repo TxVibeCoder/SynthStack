@@ -146,6 +146,21 @@ export class SamplerLoopClock implements Transport {
     this.recompute();
   }
 
+  /**
+   * PANIC: clear every pad's loop + pending start/stop so nothing re-launches. The held
+   * loop VOICES are stopped by the studio (sampler.stopLoop); this wipes the SCHEDULE so a
+   * queued launch or per-bar re-launch can't resurrect a loop. Idles at Infinity afterwards.
+   */
+  panicAll(): void {
+    for (const p of this.pads) {
+      p.looping = false;
+      p.pendingStart = null;
+      p.pendingStop = null;
+      p.relaunchIndex = 0;
+    }
+    this.recompute();
+  }
+
   /** Declarative LOOP-flag mirror — does NOT start/stop audio (launch is tap-driven). */
   setLoopEnabled(_padIndex: number, _on: boolean): void {
     // The held-loop run is driven entirely by request*/pullEventsAt; the enabled flag
