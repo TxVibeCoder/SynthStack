@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- SynthStack mark: a panel tile with a gold knob + power LED. Palette mirrors
+       src/ui/styles.css (--color-bg/panel/knob/led-red); flat fills for 16px crispness. -->
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#1b1b1d" stroke="#2e2e33" stroke-width="1.5" />
+  <circle cx="16" cy="17" r="9" fill="#c89b3c" stroke="#8a6a24" stroke-width="1.5" />
+  <line x1="16" y1="17" x2="11" y2="11.5" stroke="#141210" stroke-width="2.2" stroke-linecap="round" />
+  <circle cx="25" cy="7" r="2.4" fill="#e23b2e" />
+</svg>

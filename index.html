@@ -9,6 +9,9 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Semi-Modular Studio" />
+    <!-- %BASE_URL% = '/' (dev) / '/SynthStack/' (Pages build) — Vite HTML env replacement,
+         so the icon resolves under the project subpath instead of 404ing at the domain root. -->
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
     <title>Semi-Modular Studio</title>
   </head>
   <body>
