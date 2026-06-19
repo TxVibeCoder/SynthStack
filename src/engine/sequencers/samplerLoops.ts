@@ -220,6 +220,17 @@ export class SamplerLoopClock implements Transport {
   }
 
   advance(): void {
+    // Advancing past the current boundary: expire any pending start/stop sitting at/before it.
+    // In the normal schedule loop pullEventsAt() has already cleared the target at this boundary,
+    // so this is a no-op there; in the scheduler's stale fast-forward loop (a throttled tab whose
+    // quantized launch went past with no pump to catch it) this DROPS the stale target so
+    // recompute() makes progress instead of pinning nextEventTime at a past value forever (the
+    // scheduler's "drop stale events, don't burst-schedule them" contract).
+    const boundary = this.nextEventTime;
+    for (const p of this.pads) {
+      if (p.pendingStart != null && p.pendingStart <= boundary + EPS) p.pendingStart = null;
+      if (p.pendingStop != null && p.pendingStop <= boundary + EPS) p.pendingStop = null;
+    }
     this.recompute();
   }
 }

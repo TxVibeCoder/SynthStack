@@ -19,7 +19,7 @@ import type { MasterEffectsState } from '../state/studioState';
 
 export const WORKLET_URLS = [oscWorkletUrl, ladderWorkletUrl, egWorkletUrl, edgeWorkletUrl];
 
-/** Load our three worklet modules into any context (each Offline context needs this too). */
+/** Load our worklet modules into any context (each Offline context needs this too). */
 export async function loadWorklets(ctx: BaseAudioContext): Promise<void> {
   for (const url of WORKLET_URLS) {
     await ctx.audioWorklet.addModule(url);

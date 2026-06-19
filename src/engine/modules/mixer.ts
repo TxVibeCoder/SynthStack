@@ -1,7 +1,7 @@
 /**
- * Master mixer: 4 channels (ch4 spare) with level knobs into the
- * master bus. Module audio arrives in vv (±5) and is scaled to Web Audio range here
- * (×0.2 — units.VV_TO_WEBAUDIO, conversion layer (a) of D8).
+ * Master mixer: 4 channels (ch1 Cascade, ch2 Anvil, ch3 Monarch, ch4 sampler mix) with
+ * level knobs into the master bus. Module audio arrives in vv (±5) and is scaled to Web Audio
+ * range here (×0.2 — units.VV_TO_WEBAUDIO, conversion layer (a) of D8).
  */
 
 import { VV_TO_WEBAUDIO } from '../units';
@@ -15,7 +15,7 @@ export class MixerModule {
       const scale = ctx.createGain();
       scale.gain.value = VV_TO_WEBAUDIO;
       const level = ctx.createGain();
-      level.gain.value = i < 3 ? 0.8 : 0;
+      level.gain.value = 0.8; // all four channels in use (ch4 = sampler mix); applyState overrides
       scale.connect(level).connect(masterIn);
       this.vvScale.push(scale);
       this.channels.push(level);

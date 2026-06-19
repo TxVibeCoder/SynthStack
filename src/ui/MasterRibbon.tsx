@@ -248,7 +248,7 @@ function FeatureCap({
         y={y + 4}
         textAnchor="middle"
         fontFamily={FONT_CONDENSED}
-        fontSize={10}
+        fontSize={11}
         letterSpacing={0.5}
         fill={COLORS.legend}
         pointerEvents="none"
@@ -406,7 +406,7 @@ export const MasterRibbon = memo(function MasterRibbon({
             y={36}
             textAnchor="middle"
             fontFamily={FONT_CONDENSED}
-            fontSize={10}
+            fontSize={11}
             letterSpacing={0.5}
             fill={COLORS.legend}
             pointerEvents="none"

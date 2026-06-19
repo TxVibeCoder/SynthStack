@@ -38,8 +38,14 @@ describe('monarchLayout', () => {
     expect(monarchLayout.width).toBeGreaterThan(monarchLayout.height); // landscape
   });
 
-  it('places every control id from data/monarch.json', () => {
+  // Setup-mode parameters that intentionally have NO front-panel control — true to the hardware,
+  // where the real Monarch sets these in Setup mode, not via a panel knob (engine + state + preset
+  // settable). MON_ASSIGN_SOURCE selects the ASSIGN out source (Setup-mode page 1).
+  const SETUP_ONLY = new Set(['MON_ASSIGN_SOURCE']);
+
+  it('places every panel control id from data/monarch.json (Setup-only params excluded)', () => {
     for (const c of def.controls) {
+      if (SETUP_ONLY.has(c.id)) continue;
       expect(monarchLayout.controls[c.id], `missing control position for ${c.id}`).toBeDefined();
     }
   });

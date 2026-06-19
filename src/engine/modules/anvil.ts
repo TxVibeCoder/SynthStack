@@ -74,7 +74,7 @@ export class AnvilModule extends ModuleBase {
     this.inputBus('ANV_VCO2_CV_IN').connect(pitchSum2);
 
     // ---- VCO EG (decay-only, attack 1 ms) into both pitches, bipolar amounts ---
-    this.vcoEg = this.mkEg(ctx, 0.001, false);
+    this.vcoEg = this.mkEg(ctx, 0.001);
     this.egAmt1 = gain(ctx, 0);
     this.egAmt2 = gain(ctx, 0);
     // EG 0..8 vv scaled to vv-per-octave pitch: amount ±1 -> ±(eg/8)·5 vv ≈ kick sweeps
@@ -144,13 +144,13 @@ export class AnvilModule extends ModuleBase {
     this.vcfModAmount = gain(ctx, 0);
     this.inputBus('ANV_VCF_MOD_IN').connect(this.vcfModAmount).connect(cutoffCvSum);
     // VCF EG bipolar amount (EG 0..8 vv -> ± octaves of cutoff)
-    this.vcfEg = this.mkEg(ctx, 0.001, false);
+    this.vcfEg = this.mkEg(ctx, 0.001);
     this.vcfEgAmt = gain(ctx, 0);
     this.vcfEg.connect(this.vcfEgAmt).connect(cutoffCvSum);
     this.vcfEg.connect(this.outputTap('ANV_VCF_EG_OUT'));
 
     // ---- VCA ---------------------------------------------------------------------------
-    this.vcaEg = this.mkEg(ctx, 0.001, true);
+    this.vcaEg = this.mkEg(ctx, 0.001);
     this.vcaEg.connect(this.outputTap('ANV_VCA_EG_OUT'));
     const vcaEgNorm = gain(ctx, 1 / 8);
     const vcaShape = shaper(ctx, (x) => Math.pow(clamp(x, 0, 1), 1.3));
@@ -199,8 +199,8 @@ export class AnvilModule extends ModuleBase {
     this.drift2.start();
   }
 
-  private mkEg(ctx: BaseAudioContext, attackS: number, isVca: boolean): AudioWorkletNode {
-    return new AudioWorkletNode(ctx, 'synthstack-eg', {
+  private mkEg(ctx: BaseAudioContext, attackS: number): AudioWorkletNode {
+    const eg = new AudioWorkletNode(ctx, 'synthstack-eg', {
       numberOfInputs: 2,
       numberOfOutputs: 1,
       outputChannelCount: [1],
@@ -211,9 +211,19 @@ export class AnvilModule extends ModuleBase {
         retrigInAttack: true,
         attackCompletes: false,
         peakVv: 8,
-        isVca,
       },
     });
+    // eg.worklet's process() re-applies the attackS AudioParam (default 0.01) on EVERY block,
+    // clobbering the constructor's processorOptions.attackS. Pin the param so vcoEg/vcfEg keep
+    // the intended 1 ms percussion attack (vcaEg is later overridden by ANV_VCA_EG_ATTACK).
+    eg.parameters.get('attackS')!.value = attackS;
+    return eg;
+  }
+
+  /** Power-off teardown: stop the per-VCO drift random-walk timers (re-armed on power-cycle). */
+  stopDrift(): void {
+    this.drift1.stop();
+    this.drift2.stop();
   }
 
   setControl(id: string, value: number | string): void {

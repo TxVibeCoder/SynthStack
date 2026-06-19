@@ -12,11 +12,11 @@ import { ModuleBase } from './moduleBase';
 import { constant, equalPowerCrossfade, gain, shaper, type Crossfade } from './helpers';
 import { createNoiseSource } from '../noise';
 import { DriftSource } from '../drift';
+import type { AssignSource } from '../assign';
 import {
   ACCENT_CUTOFF_BOOST_VV,
   PITCH_REF_HZ,
   clamp,
-  expKnob01,
 } from '../units';
 
 /** Linear FM depth, Hz per vv (no published figure — tunable). */
@@ -347,6 +347,9 @@ export class MonarchModule extends ModuleBase {
       case 'MON_VC_MIX':
         this.vcMixPosKnob.offset.value = num;
         break;
+      case 'MON_ASSIGN_SOURCE':
+        if (typeof value === 'string') this._assignSource = value as AssignSource;
+        break;
       default:
         break; // sequencer controls handled by the transport (Phase 3)
     }
@@ -389,14 +392,26 @@ export class MonarchModule extends ModuleBase {
     this.accentVcaGain.gain.setValueAtTime(on ? 1.25 : 1, time);
   }
 
-  /** ASSIGN out, v1 mode 2: one +5 pulse per step (5 ms). */
+  /** ASSIGN out source (Setup-mode page 1). The binder reads this to realize the 9 analog sources;
+   *  defaults to CLOCK so the out-of-box behavior is unchanged. */
+  private _assignSource: AssignSource = 'CLOCK';
+  get assignSource(): AssignSource {
+    return this._assignSource;
+  }
+
+  /** ASSIGN out as a clock-type source: one +5 V pulse (5 ms) at `time`. */
   assignPulseAt(time: number): void {
     this.assignOut.offset.setValueAtTime(5, time);
     this.assignOut.offset.setValueAtTime(0, time + 0.005);
   }
 
-  /** Map natural-unit knob values for the worklet params that want 0..1. */
-  static cutoffKnob01(hz: number): number {
-    return expKnob01(hz, 20, 20000);
+  /** ASSIGN out as a step-shape source (RAMP/SAW/TRI/RANDOM): a held CV level (0..+5 V) at `time`. */
+  assignLevelAt(vv: number, time: number): void {
+    this.assignOut.offset.setValueAtTime(vv, time);
+  }
+
+  /** Power-off teardown: stop the per-VCO drift random-walk timer (re-armed on power-cycle). */
+  stopDrift(): void {
+    this.drift.stop();
   }
 }

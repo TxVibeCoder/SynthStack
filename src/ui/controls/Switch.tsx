@@ -32,9 +32,16 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
   const onClick = (e: ReactMouseEvent<SVGGElement>) => advance(e.shiftKey ? -1 : 1);
 
   const onKeyDown = (e: ReactKeyboardEvent<SVGGElement>) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    e.preventDefault();
-    advance(e.shiftKey ? -1 : 1);
+    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      advance(1);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      advance(-1);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      advance(e.shiftKey ? -1 : 1);
+    }
   };
 
   return (
@@ -110,7 +117,7 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
           x={13}
           y={yOf(i) + 3}
           fontFamily={FONT_CONDENSED}
-          fontSize={8.5}
+          fontSize={9.5}
           letterSpacing={0.3}
           fill={i === idx ? COLORS.legend : COLORS.legendDim}
           {...(pos.length * 5 > 36 ? { textLength: 36, lengthAdjust: 'spacingAndGlyphs' as const } : {})}

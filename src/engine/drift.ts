@@ -37,6 +37,7 @@ export class DriftSource {
   }
 
   start(): void {
+    if (!DRIFT_ENABLED) return; // no idle timer when drift is off (topUp would no-op anyway)
     if (this.timer) return;
     this.topUp();
     this.timer = setInterval(() => this.topUp(), 2000);

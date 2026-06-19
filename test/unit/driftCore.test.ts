@@ -39,4 +39,29 @@ describe('VCO drift (work order §7.4)', () => {
     }
     expect(identical).toBe(false);
   });
+
+  it('separate VCOs decorrelate; a sub seeded from its parent tracks it exactly (C8)', () => {
+    // The engine contract (units.ts / drift.ts): each VCO gets its own seed → independent drift,
+    // but a sub-oscillator shares its PARENT VCO's drift (same seed → identical series).
+    const pearson = (x: Float64Array, y: Float64Array): number => {
+      const n = Math.min(x.length, y.length);
+      let sx = 0, sy = 0;
+      for (let i = 0; i < n; i++) { sx += x[i]!; sy += y[i]!; }
+      const mx = sx / n, my = sy / n;
+      let cov = 0, vx = 0, vy = 0;
+      for (let i = 0; i < n; i++) {
+        const dx = x[i]! - mx, dy = y[i]! - my;
+        cov += dx * dy; vx += dx * dx; vy += dy * dy;
+      }
+      return cov / Math.sqrt(Math.max(vx * vy, 1e-30));
+    };
+    // two independent VCOs over 30 s — weakly correlated at most
+    const a = new DriftWalk(1).simulate(30);
+    const b = new DriftWalk(2).simulate(30);
+    expect(Math.abs(pearson(a, b))).toBeLessThan(0.5);
+    // a sub built from the SAME seed as its parent is bit-identical (subs share parent drift)
+    const parent = new DriftWalk(7).simulate(10);
+    const sub = new DriftWalk(7).simulate(10);
+    for (let i = 0; i < parent.length; i++) expect(sub[i]).toBe(parent[i]);
+  });
 });

@@ -256,7 +256,7 @@ export function coalesceEffectsState(raw: Partial<EffectsState> | undefined): Ef
     master: {
       flanger: {
         on: flag(m?.flanger?.on, d.flanger.on),
-        rate: num(m?.flanger?.rate, d.flanger.rate, 0.01, 12),
+        rate: num(m?.flanger?.rate, d.flanger.rate, 0.05, 8),
         depth: num(m?.flanger?.depth, d.flanger.depth, 0, 1),
         feedback: num(m?.flanger?.feedback, d.flanger.feedback, 0, 0.95),
         mix: num(m?.flanger?.mix, d.flanger.mix, 0, 1),

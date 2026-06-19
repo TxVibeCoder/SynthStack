@@ -87,15 +87,13 @@ export class Scheduler {
 
   /** Pop UI events due at or before `upTo` (rAF loop calls this for LED chasing). */
   drainUi(upTo: number): TransportEvent[] {
+    // Single-pass partition (order-preserving) — avoids the O(n²) splice-in-loop churn this
+    // runs 60×/s on. uiQueue is readonly (mutate in place, never reassign).
     const due: TransportEvent[] = [];
-    let i = 0;
-    while (i < this.uiQueue.length) {
-      if (this.uiQueue[i]!.time <= upTo) {
-        due.push(this.uiQueue.splice(i, 1)[0]!);
-      } else {
-        i++;
-      }
-    }
+    const keep: TransportEvent[] = [];
+    for (const e of this.uiQueue) (e.time <= upTo ? due : keep).push(e);
+    this.uiQueue.length = 0;
+    for (const e of keep) this.uiQueue.push(e);
     return due;
   }
 

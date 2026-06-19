@@ -66,7 +66,7 @@ export function buildFlanger(ctx: BaseAudioContext): FxUnit {
     setParam(name, value) {
       switch (name) {
         case 'rate':
-          lfo.frequency.value = clamp(value, 0.01, 12);
+          lfo.frequency.value = clamp(value, 0.05, 8); // canonical range (matches the UI knob)
           break;
         case 'depth':
           lfoDepth.gain.value = clamp(value, 0, 1) * 0.003;
@@ -84,7 +84,7 @@ export function buildFlanger(ctx: BaseAudioContext): FxUnit {
 }
 
 /** DELAY — a feedback delay line, mixed against dry.
- *  params: time (0.02..1.0 s), feedback (0..0.95), mix (0..1). */
+ *  params: time (0.02..2 s), feedback (0..0.95), mix (0..1). */
 export function buildDelay(ctx: BaseAudioContext): FxUnit {
   const input = ctx.createGain();
   const output = ctx.createGain();

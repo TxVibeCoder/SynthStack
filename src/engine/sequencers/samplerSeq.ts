@@ -179,9 +179,12 @@ export class SamplerStepSeq implements Transport {
       const step = this.phase.sixteenthDurS;
       this.origin =
         this.phase.anchorTime + Math.round((this.origin - this.phase.anchorTime) / step) * step;
-      // a tempo change could snap the next boundary to/just before now; nudge it forward by
-      // whole steps so the scheduler never sees a stale/past boundary (re-anchor emits no past).
-      while (this.origin + this.stepCounter * step < now) this.stepCounter++;
+      // a tempo change could snap the next boundary to/just before now; advance the no-drift TIME
+      // cursor (origin) by whole steps — NOT stepCounter — so the scheduler never sees a stale/past
+      // boundary while the column sequence (col = stepCounter % numSteps) stays contiguous. origin
+      // is already lattice-aligned, so adding a whole step keeps phase-lock; a stepCounter bump
+      // would skip a drum column at the tempo change.
+      while (this.origin + this.stepCounter * step < now) this.origin += step;
     }
     this.recompute();
   }

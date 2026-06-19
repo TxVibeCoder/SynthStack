@@ -28,11 +28,19 @@ describe('parseMidiMessage — pure MIDI decode (channel omni)', () => {
     expect(parseMidiMessage([0x8c, 48, 10])).toEqual({ type: 'noteOff', note: 48, velocity: 0 });
   });
 
-  it('maps CC / pitch-bend / clock / active-sensing to "other"', () => {
+  it('maps CC / pitch-bend / active-sensing to "other"', () => {
     expect(parseMidiMessage([0xb0, 7, 100]).type).toBe('other'); // control change (volume)
     expect(parseMidiMessage([0xe0, 0, 64]).type).toBe('other'); // pitch bend
-    expect(parseMidiMessage([0xf8, 0, 0]).type).toBe('other'); // timing clock
-    expect(parseMidiMessage([0xfe, 0, 0]).type).toBe('other'); // active sensing
+    expect(parseMidiMessage([0xfe, 0, 0]).type).toBe('other'); // active sensing (real-time, ignored)
+  });
+
+  it('decodes single-byte system real-time transport clock (before the length-3 guard)', () => {
+    expect(parseMidiMessage([0xf8]).type).toBe('clock'); // 24-PPQN timing clock
+    expect(parseMidiMessage([0xfa]).type).toBe('start');
+    expect(parseMidiMessage([0xfb]).type).toBe('continue');
+    expect(parseMidiMessage([0xfc]).type).toBe('stop');
+    // delivered as a 1-byte Uint8Array by onmidimessage — must NOT trip the length<3 guard
+    expect(parseMidiMessage(new Uint8Array([0xf8])).type).toBe('clock');
   });
 
   it('maps short / empty / garbage messages to "other" WITHOUT throwing (length < 3 guard)', () => {

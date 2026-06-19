@@ -144,6 +144,7 @@ export class LadderCore {
       let y = hp ? hpSample : outSample;
       if (!Number.isFinite(y)) {
         this.reset();
+        prevIn = 0; // also sanitize the cross-sample interpolation history (and lastInput below)
         y = 0;
       }
       output[i] = (y / INPUT_SCALE) * VV_DENORM;

@@ -102,7 +102,7 @@ import type { ModuleTabId } from '../engine/modules/moduleConfig';
  * subtracted from the window height before the stage is scaled to fit. Fixed-height
  * chrome (see styles.css .master-ribbon / .tab-bar) so the budget is deterministic and
  * there is no first-paint layout-shift; keep this in lockstep with those CSS heights.
- *   RIBBON_H 96 + TABBAR_H 40 + 1px borders/seam ≈ CHROME_H.
+ *   RIBBON_H 85 + TABBAR_H 26 = CHROME_H 111.
  */
 export const RIBBON_H = 85;
 export const TABBAR_H = 26;
@@ -237,11 +237,20 @@ const BBOX: Record<ModuleTabId, RegionBox> = {
  * fit into (innerHeight − CHROME_H). Because every bbox width === STAGE.w, this is the
  * uniform scale the rendered <main> (always STAGE.w wide) is drawn at.
  */
+/**
+ * Hard cap so ultrawide / 4K windows (and browser zoom-out) don't over-zoom a voice tab
+ * into cartoonishly large controls; STAGE_MARGIN keeps a small symmetric side gutter so the
+ * console never kisses the window edge. 1.8 clears every tab's natural 1080p fit (the tightest,
+ * the trimmed Cascade, lands ~1.67) and only engages on much larger viewports.
+ */
+const MAX_SCALE = 1.8;
+const STAGE_MARGIN = 8;
 function computeScale(box: RegionBox): number {
-  return Math.min(
-    window.innerWidth / box.w,
+  const raw = Math.min(
+    (window.innerWidth - STAGE_MARGIN * 2) / box.w,
     Math.max(0, window.innerHeight - CHROME_H) / box.h,
   );
+  return Math.min(raw, MAX_SCALE);
 }
 
 export function App() {

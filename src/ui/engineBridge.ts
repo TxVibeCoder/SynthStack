@@ -500,10 +500,20 @@ class EngineBridge {
 
   runAll(): void {
     if (this._powered) this.studio.runAll();
+    // RUN ALL drives the drum grid too (Studio.runAll), so persist seqRunning to match —
+    // exactly as drumRun does — keeping the live state and the persisted flag consistent.
+    const s = this.store.getState();
+    s.sampler = coalesceSamplerState(s.sampler);
+    s.sampler.seqRunning = true;
+    this.store.setState(s);
   }
 
   stopAll(): void {
     if (this._powered) this.studio.stopAll();
+    const s = this.store.getState();
+    s.sampler = coalesceSamplerState(s.sampler);
+    s.sampler.seqRunning = false;
+    this.store.setState(s);
   }
 
   /** TEMPO LINK is a discrete switch: engine write + immediate store commit. */
@@ -673,6 +683,14 @@ class EngineBridge {
       (note, velocity) => this.noteOn(note, velocity),
       (note) => this.noteOff(note),
       () => this.releaseAllNotes(),
+      // MIDI transport clock: forward to the studio, which time-stamps + drives the Cascade/Monarch
+      // external clock. Guarded internally on power (studio.onMidiClock* no-op until built).
+      {
+        onClock: () => this.studio.onMidiClockTick(),
+        onStart: () => this.studio.onMidiClockStart(),
+        onContinue: () => this.studio.onMidiClockContinue(),
+        onStop: () => this.studio.onMidiClockStop(),
+      },
     );
   }
 

@@ -57,6 +57,11 @@ export const FACTORY_KIT: FactoryKitEntry[] = [
 
 /** Trigger lead — every render fires its sources at t0 so onset detectors line up. */
 const T0 = 0.1;
+/** Frames of leading silence to strip from each PAD buffer (the T0 render lead). The render
+ *  KEEPS T0 (the offline onset detectors in the audio battery rely on it), but the buffer a
+ *  pad receives must begin AT the transient — otherwise every factory hit plays T0 (100 ms,
+ *  ~0.8 of a 16th @120 BPM) late on the grid, and the gap repeats every loop cycle. */
+const LEAD_FRAMES = Math.round(T0 * SR);
 
 // ---- shared peak-normalize ----------------------------------------------------------
 
@@ -65,16 +70,21 @@ const T0 = 0.1;
  * every factory render ends in (Anvil ±5 vv and native ±5 noise both land here, so a
  * pad always receives ±1.0). Guards divide-by-zero on silence.
  */
-function normalizeToBuffer(ctx: BaseAudioContext, raw: Float32Array): AudioBuffer {
+function normalizeToBuffer(ctx: BaseAudioContext, raw: Float32Array, startFrame = 0): AudioBuffer {
+  // startFrame trims the render's leading T0 silence (sources fire at T0, so [0, startFrame)
+  // is exactly zero): the pad buffer then begins AT the transient, so triggerPad's
+  // src.start(time) lands on the grid instead of T0 late — for one-shots AND loops.
+  const start = Math.min(Math.max(0, startFrame), raw.length);
   let peak = 0;
-  for (let i = 0; i < raw.length; i++) {
+  for (let i = start; i < raw.length; i++) {
     const a = Math.abs(raw[i]!);
     if (a > peak) peak = a;
   }
   const norm = peak > 0 ? 1 / peak : 1;
-  const buffer = ctx.createBuffer(1, raw.length, SR);
+  const len = Math.max(1, raw.length - start);
+  const buffer = ctx.createBuffer(1, len, SR);
   const out = buffer.getChannelData(0);
-  for (let i = 0; i < raw.length; i++) out[i] = raw[i]! * norm;
+  for (let i = 0; i < len; i++) out[i] = (raw[start + i] ?? 0) * norm;
   return buffer;
 }
 
@@ -127,7 +137,7 @@ async function renderAnvil(spec: AnvilSpec): Promise<FactorySample> {
   mod.outputTap('ANV_VCA_OUT').connect(ctx.destination);
 
   const rendered = await ctx.startRendering();
-  const buffer = normalizeToBuffer(ctx, rendered.getChannelData(0));
+  const buffer = normalizeToBuffer(ctx, rendered.getChannelData(0), LEAD_FRAMES);
   return { id: spec.id, name: nameFor(spec.id), buffer };
 }
 
@@ -254,7 +264,7 @@ const NATIVE_SPECS: NativeSpec[] = [
       return sum;
     },
   },
-  // [7] PERC — a tonal blip: sine ~440 Hz (short upward glide) + an octave-up sine.
+  // [7] PERC — a tonal blip: sine 660->440 Hz (short downward glide) + an octave-up (880 Hz) sine.
   {
     id: 'factory-perc',
     durS: 0.3,
@@ -291,7 +301,7 @@ async function renderNative(spec: NativeSpec): Promise<FactorySample> {
   // No worklets needed for a stock-node graph; the build wires straight to destination.
   spec.build(ctx, spec.durS).connect(ctx.destination);
   const rendered = await ctx.startRendering();
-  const buffer = normalizeToBuffer(ctx, rendered.getChannelData(0));
+  const buffer = normalizeToBuffer(ctx, rendered.getChannelData(0), LEAD_FRAMES);
   return { id: spec.id, name: nameFor(spec.id), buffer };
 }
 

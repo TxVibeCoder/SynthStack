@@ -82,7 +82,7 @@ export const JackFieldPanel = memo(function JackFieldPanel() {
             fontFamily={FONT_CONDENSED}
             fontSize={13}
             letterSpacing={1.5}
-            fill={COLORS.legend}
+            fill={GROUP_BORDER[zone.key]}
           >
             {zone.label}
           </text>
@@ -124,6 +124,21 @@ export const JackFieldPanel = memo(function JackFieldPanel() {
       {MODULES.map((m) => (
         <g key={m.id}>{m.jacks.map(renderJack)}</g>
       ))}
+
+      {/* on-canvas patch hint (discoverability) — sits in the band below the last jack row */}
+      <text
+        x={FIELD.width / 2}
+        y={FIELD.height - 8}
+        textAnchor="middle"
+        fontFamily={FONT_CONDENSED}
+        fontSize={11}
+        letterSpacing={1.5}
+        fill={COLORS.legendDim}
+        opacity={0.75}
+        pointerEvents="none"
+      >
+        DRAG ONE JACK TO ANOTHER TO PATCH · CLICK A CABLE TO REMOVE IT
+      </text>
     </svg>
   );
 });

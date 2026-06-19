@@ -76,6 +76,34 @@ describe('ladder.worklet core — Huovilainen (work order §7.3)', () => {
     expect(rms(out, FS, 2 * FS)).toBeLessThan(0.01);
   });
 
+  it('LP slope ≈ 24 dB/octave above cutoff (4-pole ladder, manual) (C1)', () => {
+    const core = new LadderCore(FS);
+    core.setCutoffHz(500);
+    core.setResonance01(0);
+    const out = processAll(core, whiteNoise(12, 42, 1.0));
+    const spec = fftMagAveraged(out.subarray(FS), FS, 16384, 4096);
+    // octave ratios in the asymptotic region (well above the 500 Hz corner)
+    const oct1 = db(magAtHz(spec, 2000, 2) / magAtHz(spec, 1000, 2));
+    const oct2 = db(magAtHz(spec, 4000, 2) / magAtHz(spec, 2000, 2));
+    for (const slope of [oct1, oct2]) {
+      expect(slope).toBeLessThan(-18); // 24 dB/oct ± 6
+      expect(slope).toBeGreaterThan(-30);
+    }
+  });
+
+  it('self-oscillation onset: silent at 0.70 knob, oscillating by 0.90 ("above 3 o\'clock") (C2)', () => {
+    const tail = (knob: number): number => {
+      const core = new LadderCore(FS);
+      core.setCutoffHz(1000);
+      core.setResonance01(knob);
+      const input = new Float32Array(3 * FS);
+      input[0] = 1; // tiny kick, then silence
+      return rms(processAll(core, input), 2 * FS, 3 * FS);
+    };
+    expect(tail(0.7)).toBeLessThan(0.01); // not yet oscillating below ~3 o'clock
+    expect(tail(0.9)).toBeGreaterThan(0.3); // robust self-oscillation by ~3 o'clock+
+  });
+
   it('cutoff sweep 100 Hz -> 8 kHz: centroid strictly increases, no NaN/Inf', () => {
     const core = new LadderCore(FS);
     core.setResonance01(0.2);

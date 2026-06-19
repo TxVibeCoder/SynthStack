@@ -10,7 +10,7 @@
  * re-renders while dragging; parents are never forced to re-render.
  */
 
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
@@ -87,17 +87,63 @@ function KnobLabel({ label, r }: { label: string; r: number }) {
   );
 }
 
-export function Knob({ def, value, onInput, onCommit, size = 'm', x, y }: KnobProps) {
+export function Knob({ def, value, onInput, onCommit, size = 'm', accent, x, y }: KnobProps) {
   // useId may contain ':' which breaks url(#...) references — strip to a safe id.
   const gradId = `knob-grad-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   /** Live value while dragging / keyboard-adjusting; null = render from props. */
   const [live, setLive] = useState<number | null>(null);
+  /** Reveal the value readout at rest while the pointer is over / the knob is focused. */
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const drag = useRef<InteractionState>({ pointerId: -1, norm: 0, lastY: 0, kbActive: false });
+  const gRef = useRef<SVGGElement | null>(null);
+  const wheelTimer = useRef<number | null>(null);
+  /** Always-current props for the once-attached native wheel listener (avoids staleness). */
+  const latest = useRef({ value, def, detents: stepCount(def), onInput, onCommit });
 
   const r = KNOB_RADIUS[size];
+  /** Knob-rim "skirt": machine accent when the panel supplies one, else the gold shade. */
+  const skirt = accent ?? COLORS.knobLo;
   const shown = live ?? value;
   const angle = normToAngle(valueToNorm(shown, def));
   const detents = stepCount(def);
+  latest.current = { value, def, detents, onInput, onCommit };
+
+  // Mouse-wheel adjust: scroll over a knob to nudge it (the cursor is already ns-resize, so
+  // users reach for the wheel). Native non-passive listener — React's onWheel is passive and
+  // cannot preventDefault the page scroll. Reuses the keyboard inc; commits once idle (350 ms).
+  useEffect(() => {
+    const el = gRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const cur = latest.current;
+      const s = drag.current;
+      const base = s.kbActive || s.pointerId !== -1 ? s.norm : valueToNorm(cur.value, cur.def);
+      const inc = cur.detents != null ? 1 / (cur.detents - 1) : e.shiftKey ? 0.001 : 0.01;
+      const target = clamp01(base + (e.deltaY < 0 ? inc : -inc)); // wheel up = increase
+      if (target === base) return; // at a rail — let the page scroll instead
+      e.preventDefault();
+      s.norm = target;
+      s.kbActive = true;
+      const v = normToValue(target, cur.def);
+      setLive(v);
+      cur.onInput(v);
+      if (wheelTimer.current != null) clearTimeout(wheelTimer.current);
+      wheelTimer.current = window.setTimeout(() => {
+        wheelTimer.current = null;
+        const s2 = drag.current;
+        if (!s2.kbActive) return;
+        s2.kbActive = false;
+        setLive(null);
+        latest.current.onCommit(normToValue(s2.norm, latest.current.def));
+      }, 350);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      if (wheelTimer.current != null) clearTimeout(wheelTimer.current);
+    };
+  }, []);
 
   const onPointerDown = (e: ReactPointerEvent<SVGGElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -194,12 +240,15 @@ export function Knob({ def, value, onInput, onCommit, size = 'm', x, y }: KnobPr
       ? Array.from({ length: detents }, (_, i) => normToAngle(i / (detents - 1)))
       : [normToAngle(0), normToAngle(0.5), normToAngle(1)];
 
-  const readout = live != null ? formatValue(live, def) : null;
+  // Shown while interacting AND on hover / keyboard focus, so any knob's value is one
+  // point-or-tab away (not only mid-drag). Sources `shown` (= live ?? value).
+  const readout = live != null || hovered || focused ? formatValue(shown, def) : null;
   const readoutW = readout != null ? readout.length * 6.4 + 14 : 0;
 
   return (
     <g
       className="control control--knob"
+      ref={gRef}
       transform={`translate(${x} ${y})`}
       tabIndex={0}
       role="slider"
@@ -212,10 +261,16 @@ export function Knob({ def, value, onInput, onCommit, size = 'm', x, y }: KnobPr
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
       onDoubleClick={onDoubleClick}
       onKeyDown={onKeyDown}
       onKeyUp={commitKeyboard}
-      onBlur={commitKeyboard}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        commitKeyboard();
+      }}
     >
       <defs>
         <radialGradient id={gradId} cx="0.35" cy="0.3" r="0.85">
@@ -224,6 +279,11 @@ export function Knob({ def, value, onInput, onCommit, size = 'm', x, y }: KnobPr
           <stop offset="100%" stopColor={COLORS.knobLo} />
         </radialGradient>
       </defs>
+
+      {/* Enlarged invisible hit target: 's' knobs paint at r=13 but should grab from r>=16,
+          so trimmers / step knobs aren't a sub-target. Transparent fill still hit-tests;
+          events bubble to the <g> handlers. */}
+      <circle r={Math.max(r, 16)} fill="transparent" />
 
       {/* 270° tick arc + tick marks */}
       <path
@@ -248,7 +308,7 @@ export function Knob({ def, value, onInput, onCommit, size = 'm', x, y }: KnobPr
 
       {/* cap (shadow skirt + gold body + dark pointer line) */}
       <circle r={r + 2} fill={COLORS.panelShadow} />
-      <circle r={r} fill={`url(#${gradId})`} stroke={COLORS.knobLo} strokeWidth={1} />
+      <circle r={r} fill={`url(#${gradId})`} stroke={skirt} strokeWidth={accent ? 1.5 : 1} />
       <g transform={`rotate(${angle})`}>
         <line
           y1={-(r - 2.5)}

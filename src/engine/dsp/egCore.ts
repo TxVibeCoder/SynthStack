@@ -13,6 +13,8 @@
  * segment visibly completes (~98%) at the nominal time.
  */
 
+import { GATE_THRESHOLD_VV } from '../units';
+
 export type SustainMode = 'off' | 'on' | 'gateHold';
 
 export interface EgConfig {
@@ -26,7 +28,10 @@ export interface EgConfig {
   peakVv: number; // 7.5 (Monarch) or 8 (Anvil/Cascade)
 }
 
-const GATE_THRESHOLD = 2.5;
+// Single source of truth: the +2.5 vv rising-edge gate threshold lives in units.ts (D8). Kept over
+// the manuals' "~+3.2 V" hardware figure — 2.5 is the clean half-amplitude of a 0/+5 gate, and both
+// fire identically on a full-scale gate. (Was a duplicated local const here — deduped to units.ts.)
+const GATE_THRESHOLD = GATE_THRESHOLD_VV;
 const ATTACK_DONE = 0.99;
 const IDLE_FLOOR = 1e-4;
 

@@ -44,7 +44,7 @@ export interface JackZoneChrome {
  * scale anchor still holds and cables measure correctly. App.tsx frames the patchbay
  * jack field to this height (JACKFIELD_BOX), not the stage region.
  */
-export const FIELD_H = 330;
+export const FIELD_H = 690;
 
 export const FIELD = {
   width: REGIONS.jackField.w,
@@ -64,10 +64,12 @@ export const FIELD_FACE: ReadonlyArray<readonly [number, number]> = [
   [0, FIELD.height],
 ];
 
-/** Shared row centers for the Cascade and Anvil zones (taller field, 78-px pitch). */
-const ROW = [58, 136, 214, 292] as const;
-/** Monarch zone rows: 24 px less headroom at the top, 76-px pitch. */
-const MON_ROW = [62, 138, 214, 290] as const;
+/** Shared row centers for the Cascade and Anvil zones. The field now fills the patchbay's
+ *  vertical band (FIELD_H 690), so the four rows spread on a generous ~180-px pitch — the
+ *  jacks de-crowd and their labels get real breathing room. */
+const ROW = [90, 270, 450, 630] as const;
+/** Monarch zone rows: start below the seq-strip step, same generous pitch. */
+const MON_ROW = [94, 272, 450, 628] as const;
 
 // Column centers per zone block (56–64-px pitch; labels clamp at 48 wide).
 const CAS_IN = [36, 92, 148, 204, 260] as const;
@@ -88,8 +90,8 @@ export const JACK_ZONE_CHROME: readonly JackZoneChrome[] = [
       [4, FIELD.height - 4],
     ],
     labelAt: { x: 14, y: 6 },
-    inLabelAt: { x: 148, y: 28 },
-    outLabelAt: { x: 424, y: 28 },
+    inLabelAt: { x: 148, y: 60 },
+    outLabelAt: { x: 424, y: 60 },
     divider: { x: 300, y1: 14, y2: FIELD.height - 14 },
   },
   {
@@ -104,8 +106,8 @@ export const JACK_ZONE_CHROME: readonly JackZoneChrome[] = [
       [JACK_ZONES.anvil.x + 4, FIELD.height - 4],
     ],
     labelAt: { x: JACK_ZONES.anvil.x + 14, y: 6 },
-    inLabelAt: { x: 686, y: 28 },
-    outLabelAt: { x: 948, y: 28 },
+    inLabelAt: { x: 686, y: 60 },
+    outLabelAt: { x: 948, y: 60 },
     divider: { x: 830, y1: 14, y2: FIELD.height - 14 },
   },
   {
@@ -118,8 +120,8 @@ export const JACK_ZONE_CHROME: readonly JackZoneChrome[] = [
       [JACK_ZONES.monarch.x + 4, FIELD.height - 4],
     ],
     labelAt: { x: JACK_ZONES.monarch.x + 14, y: FIELD.stepY + 4 },
-    inLabelAt: { x: 1334, y: 46 },
-    outLabelAt: { x: 1622, y: 46 },
+    inLabelAt: { x: 1334, y: 64 },
+    outLabelAt: { x: 1622, y: 64 },
     divider: { x: 1492, y1: FIELD.stepY + 14, y2: FIELD.height - 14 },
   },
 ];

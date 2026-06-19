@@ -150,12 +150,13 @@ test('studio smoke: load, power, panels, knob drag, run/stop all', async ({ page
   await page.waitForTimeout(500);
   expectNoErrors('while all transports run');
   const running = await page.evaluate(() => window.__synthstackStudio?.getTransportFlags() ?? null);
-  expect(running, 'all three transports should run after RUN ALL').toEqual({
+  expect(running, 'all four transports should run after RUN ALL').toEqual({
     monarchRunning: true,
     anvilRunning: true,
     cascadePlaying: true,
-    // drumRunning is independent of RUN ALL (DECISION 6): RUN ALL never starts the drum grid.
-    drumRunning: false,
+    // RUN ALL is now the single master transport — it ALSO starts the drum grid (supersedes the
+    // old DECISION 6 "drum is independent"; the drum panel keeps its own RUN/STOP for drums-only).
+    drumRunning: true,
   });
   await page.locator('[role="button"][aria-label^="STOP ALL"]').click();
   const stopped = await page.evaluate(() => window.__synthstackStudio?.getTransportFlags() ?? null);

@@ -25,7 +25,7 @@ import { memo } from 'react';
 import type { ReactElement } from 'react';
 import type { ControlDef, ModuleDef } from '../../../data/schema';
 import type { KnobSize, PanelSection } from '../types';
-import { COLORS, FONT_CONDENSED } from '../theme';
+import { COLORS, FONT_CONDENSED, GROUP_BORDER } from '../theme';
 import { Knob } from '../controls/Knob';
 import { Switch } from '../controls/Switch';
 import { Button } from '../controls/Button';
@@ -36,6 +36,8 @@ import monarchJson from '../../../data/monarch.json';
 
 const MODULE_ID = 'monarch';
 const moduleDef = monarchJson as unknown as ModuleDef;
+/** Per-machine identity color (matches the patchbay group border + tab). */
+const ACCENT = GROUP_BORDER.monarch;
 
 // ---- per-control-type subcomponents (each memoized; each re-renders alone) -------------
 
@@ -53,7 +55,9 @@ const PanelKnob = memo(function PanelKnob({
 }) {
   const fallback = typeof def.default === 'number' ? def.default : (def.min ?? 0);
   const [value, onInput, onCommit] = useControl<number>(MODULE_ID, def.id, fallback);
-  return <Knob def={def} value={value} onInput={onInput} onCommit={onCommit} size={size} x={x} y={y} />;
+  return (
+    <Knob def={def} value={value} onInput={onInput} onCommit={onCommit} size={size} accent={ACCENT} x={x} y={y} />
+  );
 });
 
 /** switch — discrete: onChange lands engine write + store commit together (no debounce). */
@@ -207,18 +211,18 @@ export const MonarchPanel = memo(function MonarchPanel() {
         height={monarchLayout.height}
         rx={8}
         fill={COLORS.panel}
-        stroke={COLORS.panelEdge}
-        strokeWidth={2}
+        stroke={ACCENT}
+        strokeWidth={1.5}
       />
 
-      {/* plain-text functional title — no trade dress */}
+      {/* plain-text functional title, machine-tinted — no trade dress */}
       <text
-        x={12}
+        x={14}
         y={24}
         fontFamily={FONT_CONDENSED}
-        fontSize={16}
-        letterSpacing={2}
-        fill={COLORS.legend}
+        fontSize={18}
+        letterSpacing={2.5}
+        fill={ACCENT}
       >
         {monarchLayout.title.toUpperCase()}
       </text>

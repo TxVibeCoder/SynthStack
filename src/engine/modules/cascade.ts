@@ -12,7 +12,7 @@
 
 import type { ModuleDef } from '../../../data/schema';
 import { ModuleBase } from './moduleBase';
-import { constant, gain } from './helpers';
+import { constant, gain, shaper } from './helpers';
 import { DriftSource } from '../drift';
 import { clamp, cascadeSeqOctRange, cascadeSeqToSubOffset } from '../units';
 import { quantizeVv, type QuantizeMode } from '../quantize';
@@ -129,12 +129,20 @@ export class CascadeModule extends ModuleBase {
     const vcaEgNorm = gain(ctx, 1 / 8);
     const vcaCvNorm = gain(ctx, 1 / 8);
     this.inputBus('CAS_VCA_IN').connect(vcaCvNorm);
-    const vcaCtl = gain(ctx, 1);
+    // 0.5 pre-scale maps the 0..2 EG+CV sum into the shaper's 0..1 domain (parity with
+    // Monarch/Anvil), then a tanh soft-knee caps gain ~1.2 so a patched CAS_VCA_IN can no
+    // longer drive the post-filter signal to 2.0 and hard-clip the master bus.
+    const vcaCtl = gain(ctx, 0.5);
     vcaEgNorm.connect(vcaCtl);
     vcaCvNorm.connect(vcaCtl);
     this.vcaEg.connect(vcaEgNorm);
+    const vcaClip = shaper(ctx, (x) => {
+      const g = clamp(x, 0, 1) * 2;
+      return g <= 1 ? g : 1 + 0.2 * Math.tanh((g - 1) / 0.2);
+    });
+    vcaCtl.connect(vcaClip);
     this.vcaGainNode = gain(ctx, 0);
-    vcaCtl.connect(this.vcaGainNode.gain);
+    vcaClip.connect(this.vcaGainNode.gain);
     this.volume = gain(ctx, 0.7);
     this.ladder.connect(this.vcaGainNode).connect(this.volume);
     this.volume.connect(this.outputTap('CAS_VCA_OUT'));
@@ -153,6 +161,12 @@ export class CascadeModule extends ModuleBase {
 
     this.drift1.start();
     this.drift2.start();
+  }
+
+  /** Power-off teardown: stop the per-VCO drift random-walk timers (re-armed on power-cycle). */
+  stopDrift(): void {
+    this.drift1.stop();
+    this.drift2.stop();
   }
 
   private buildSection(ctx: BaseAudioContext, idx: 0 | 1, drift: DriftSource, mixSum: GainNode): VcoSection {
@@ -344,11 +358,26 @@ export class CascadeModule extends ModuleBase {
         }
         const assign = /^CAS_SEQ([12])_ASSIGN_(OSC|SUB1|SUB2)$/.exec(id);
         if (assign) {
-          const a = this.seqAssign[(Number(assign[1]) - 1) as 0 | 1]!;
+          const sIdx = (Number(assign[1]) - 1) as 0 | 1;
+          const a = this.seqAssign[sIdx]!;
+          const sec = this.sections[sIdx]!;
           const on = value === 'ON';
-          if (assign[2] === 'OSC') a.osc = on;
-          else if (assign[2] === 'SUB1') a.sub1 = on;
-          else a.sub2 = on;
+          // On de-assign, clear the residual sequencer contribution so pitch returns to the
+          // knob immediately — even with the sequencer stopped (no future step would clear it).
+          if (assign[2] === 'OSC') {
+            a.osc = on;
+            if (!on) sec.seqVv = 0;
+          } else if (assign[2] === 'SUB1') {
+            a.sub1 = on;
+            if (!on) sec.sub1SeqOffset = 0;
+          } else {
+            a.sub2 = on;
+            if (!on) sec.sub2SeqOffset = 0;
+          }
+          if (!on) {
+            this.applyPitch(sec);
+            this.rebuildSubCvCurves(sec);
+          }
         }
         break;
       }

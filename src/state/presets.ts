@@ -91,7 +91,8 @@ export function coalesceStudioState(raw: unknown): StudioState {
       for (const controlId of Object.keys(incoming)) {
         const value = incoming[controlId];
         const def = defs[controlId];
-        const isKnob = def?.type === 'knob' || def?.type === 'stepKnob';
+        if (!def) continue; // drop ids not in the module's CONTROL_INDEX (typo / removed / injected)
+        const isKnob = def.type === 'knob' || def.type === 'stepKnob';
         if (typeof value === 'number') {
           if (!Number.isFinite(value)) continue; // drop NaN/Infinity
           if (isKnob && typeof def?.min === 'number' && typeof def?.max === 'number') {
@@ -176,6 +177,21 @@ export function coalesceStudioState(raw: unknown): StudioState {
     return { pitchVv, velocityVv };
   });
   base.transport.anvil.running = false;
+
+  // Reconcile the SHADOW step/swing knob controls from the transport slice (the authoritative
+  // source the sequencer plays from). The Anvil step knobs (ANV_SEQ_PITCH/VELOCITY_n) and the
+  // Monarch SWING knob render from state.controls, but the engine reads state.transport. A live
+  // drag writes BOTH (engineBridge.applyControlCommit), yet a preset/slot/bundle that authors
+  // only the transport (e.g. factory presets Iron Garden / Cellar Door) would otherwise leave the
+  // displayed knobs stale (0/4, 50). Mirror transport -> controls here so every load path keeps
+  // display and engine in lockstep. Values are already clamped to the knob ranges by the rebuild
+  // above (pitch -5..5, velocity 0..5, swing 0..100), so no extra clamp is needed.
+  const anvilControls = (base.controls.anvil ??= {});
+  base.transport.anvil.steps.forEach((step, i) => {
+    anvilControls[`ANV_SEQ_PITCH_${i + 1}`] = step.pitchVv;
+    anvilControls[`ANV_SEQ_VELOCITY_${i + 1}`] = step.velocityVv;
+  });
+  (base.controls.monarch ??= {}).MON_SWING = base.transport.monarch.swingPct;
 
   base.transport.cascade.playing = false;
 

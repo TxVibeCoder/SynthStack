@@ -128,4 +128,54 @@ describe('osc.worklet core — polyBLEP (work order §7.2)', () => {
     expect(min).toBeLessThan(-4.5);
     expect(min).toBeGreaterThan(-5.6);
   });
+
+  // ---- manual-spec locks (Workstream C) ------------------------------------------------
+
+  it('narrow pulse at a high pitch: aliased partials >= 40 dB down across the audible band (C7)', () => {
+    // A 10% pulse at ~2 kHz is the worst real-world aliaser (richest high-harmonic content).
+    const f0 = 2001; // off-grid so folded aliases do not hide under true partials
+    const buf = render(new OscCore(FS), 2, { baseHz: f0, shape: SHAPE_PULSE, pulseWidth: 0.1 });
+    const size = 16384;
+    const spec = fftMag(buf, FS, size, FS);
+    const binHz = spec.binHz;
+    const trueBins = new Set<number>();
+    for (let k = 1; k * f0 < FS / 2; k++) {
+      const bin = Math.round((k * f0) / binHz);
+      for (let d = -10; d <= 10; d++) trueBins.add(bin + d);
+    }
+    let strongestTrue = 0;
+    for (let k = 1; k * f0 < FS / 2; k++) strongestTrue = Math.max(strongestTrue, magAtHz(spec, k * f0));
+    let worstAlias = 0;
+    const lowGuard = Math.round(50 / binHz);
+    const highGuard = Math.round(23400 / binHz); // half-band transition edge (same scope as the saw test)
+    for (let i = lowGuard; i < highGuard; i++) {
+      if (trueBins.has(i)) continue;
+      if (spec.mags[i]! > worstAlias) worstAlias = spec.mags[i]!;
+    }
+    expect(db(worstAlias / strongestTrue)).toBeLessThanOrEqual(-40);
+  });
+
+  it('audio-rate linear FM produces sidebands at carrier ± modulator (C6 — FM depth sanity)', () => {
+    // Carrier 600 Hz, a 200 Hz sine modulator at the Monarch LIN-FM depth (150 Hz/vv, ±1 vv).
+    // β = depth·A/mod = 150/200 = 0.75 → first sidebands ≈ 0.4× carrier (Bessel J1/J0). The manuals
+    // give NO Hz figure for FM depth; this LOCKS the chosen 150/200 constants by their modulation index.
+    const core = new OscCore(FS);
+    const n = 2 * FS;
+    const carrier = 600;
+    const mod = 200;
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const lfm = Math.sin((2 * Math.PI * mod * i) / FS);
+      out[i] = core.processSample({
+        baseHz: carrier, pitchCvVv: 0, linFmVv: lfm, linFmDepthHzPerVv: 150,
+        syncIn: 0, pulseWidth: 0.5, shape: SHAPE_TRIANGLE,
+      }).out;
+    }
+    const spec = fftMag(out, FS, 16384, FS);
+    const car = magAtHz(spec, carrier, 3);
+    const upper = magAtHz(spec, carrier + mod, 3);
+    const lower = magAtHz(spec, carrier - mod, 3);
+    expect(db(upper / car)).toBeGreaterThan(-15); // clear first sidebands (β ≈ 0.75)
+    expect(db(lower / car)).toBeGreaterThan(-15);
+  });
 });

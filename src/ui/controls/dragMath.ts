@@ -24,7 +24,7 @@ import type { ControlDef } from '../../../data/schema';
  * it here would drag the whole engine into this pure module and its Node tests.
  * Change together with theme.ts or not at all.
  */
-export const DRAG_FULL_SWEEP_PX = 150;
+export const DRAG_FULL_SWEEP_PX = 200;
 export const FINE_DRAG_FACTOR = 0.1;
 export const KNOB_SWEEP_DEG = { start: -135, end: 135 } as const;
 
@@ -32,6 +32,7 @@ export const KNOB_SWEEP_DEG = { start: -135, end: 135 } as const;
 export const EXP_MIN_FLOOR = 0.001;
 
 function clamp(x: number, lo: number, hi: number): number {
+  if (!Number.isFinite(x)) return lo; // NaN / ±Infinity -> the low rail; never propagate non-finite
   return x < lo ? lo : x > hi ? hi : x;
 }
 
@@ -118,6 +119,11 @@ export function normToAngle(norm: number): number {
  * '%' attaches without a space; other units get one.
  */
 export function formatValue(value: number, def: ControlDef): string {
+  if (!Number.isFinite(value)) {
+    // A NaN/Infinity value (bad prop or preset round-trip) must never render as "NaN" —
+    // fall back to the def's default, then its min.
+    value = typeof def.default === 'number' ? def.default : rangeOf(def).min;
+  }
   const unit = def.unit ?? '';
   if (isStepped(def)) {
     const n = Math.round(snapStepped(value, def));

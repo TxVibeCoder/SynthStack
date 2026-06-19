@@ -20,27 +20,34 @@
  * facts shape the implementation and are called out inline below.
  */
 
-/** Decoded message kind + payload. note/velocity are 0 for 'other'. */
+/** Decoded message kind + payload. note/velocity are 0 for non-note kinds. */
 export interface ParsedMidiMessage {
-  type: 'noteOn' | 'noteOff' | 'other';
+  type: 'noteOn' | 'noteOff' | 'clock' | 'start' | 'continue' | 'stop' | 'other';
   note: number;
   velocity: number;
 }
 
 /**
  * PURE decode of a MIDI message (channel ignored = omni, v1). noUncheckedIndexedAccess is
- * ON, so data[i] is number|undefined — we length-check and read into locals BEFORE
- * indexing, never out of bounds.
+ * ON, so data[i] is number|undefined — we read into locals BEFORE indexing, never out of bounds.
+ *   System real-time (SINGLE-byte, status >= 0xF8) is decoded FIRST, before the length-3 guard:
+ *     0xF8 -> clock (24 PPQN), 0xFA -> start, 0xFB -> continue, 0xFC -> stop
  *   0x90 with velocity > 0           -> noteOn { note, velocity }
  *   0x80, OR 0x90 with velocity === 0 (running-status note-off-as-vel-0) -> noteOff
- *   anything else (CC 0xB0, bend 0xE0, clock 0xF8, active-sensing 0xFE, short/garbage) -> other
+ *   anything else (CC 0xB0, bend 0xE0, active-sensing 0xFE, short/garbage) -> other
  */
 export function parseMidiMessage(data: ArrayLike<number>): ParsedMidiMessage {
-  if (data.length < 3) return { type: 'other', note: 0, velocity: 0 };
   const status = data[0];
+  if (status === undefined) return { type: 'other', note: 0, velocity: 0 };
+  // System real-time messages are single-byte — must be handled before the length-3 guard.
+  if (status === 0xf8) return { type: 'clock', note: 0, velocity: 0 };
+  if (status === 0xfa) return { type: 'start', note: 0, velocity: 0 };
+  if (status === 0xfb) return { type: 'continue', note: 0, velocity: 0 };
+  if (status === 0xfc) return { type: 'stop', note: 0, velocity: 0 };
+  if (data.length < 3) return { type: 'other', note: 0, velocity: 0 };
   const note = data[1];
   const velocity = data[2];
-  if (status === undefined || note === undefined || velocity === undefined) {
+  if (note === undefined || velocity === undefined) {
     return { type: 'other', note: 0, velocity: 0 };
   }
   const command = status & 0xf0;
@@ -51,6 +58,14 @@ export function parseMidiMessage(data: ArrayLike<number>): ParsedMidiMessage {
     return { type: 'noteOff', note, velocity: 0 };
   }
   return { type: 'other', note: 0, velocity: 0 };
+}
+
+/** Optional MIDI transport-clock callbacks (24-PPQN clock + Start/Continue/Stop). */
+export interface MidiClockHandlers {
+  onClock?: () => void;
+  onStart?: () => void;
+  onContinue?: () => void;
+  onStop?: () => void;
 }
 
 /** Runtime-only MIDI connection status (never persisted: the prompt needs a fresh gesture). */
@@ -73,6 +88,8 @@ export class WebMidiInput {
   private onNoteOff: NoteOffHandler | null = null;
   /** Bridge panic callback fired when a hot-unplug drops the live device count to 0. */
   private onAllNotesOff: (() => void) | null = null;
+  /** Optional transport-clock callbacks (24-PPQN clock + Start/Continue/Stop). */
+  private clock: MidiClockHandlers | null = null;
   /** Inputs we have attached onmidimessage to, so disable()/re-enumerate can detach cleanly. */
   private attached: MIDIInput[] = [];
   /** In-flight enable() (the permission prompt is async); concurrent calls share it. */
@@ -90,10 +107,12 @@ export class WebMidiInput {
     onNoteOn: NoteOnHandler,
     onNoteOff: NoteOffHandler,
     onAllNotesOff?: () => void,
+    clock?: MidiClockHandlers,
   ): Promise<MidiStatus> {
     this.onNoteOn = onNoteOn;
     this.onNoteOff = onNoteOff;
     this.onAllNotesOff = onAllNotesOff ?? null;
+    this.clock = clock ?? null;
 
     // Idempotent: already enabled -> return current status, no second prompt.
     if (this.access && this.statusValue.state === 'enabled') {
@@ -162,7 +181,11 @@ export class WebMidiInput {
     const msg = parseMidiMessage(e.data);
     if (msg.type === 'noteOn') this.onNoteOn?.(msg.note, msg.velocity);
     else if (msg.type === 'noteOff') this.onNoteOff?.(msg.note);
-    // 'other' (CC / bend / clock / active-sensing / garbage) -> ignored
+    else if (msg.type === 'clock') this.clock?.onClock?.();
+    else if (msg.type === 'start') this.clock?.onStart?.();
+    else if (msg.type === 'continue') this.clock?.onContinue?.();
+    else if (msg.type === 'stop') this.clock?.onStop?.();
+    // 'other' (CC / bend / active-sensing / garbage) -> ignored
   }
 
   private detachInputs(): void {

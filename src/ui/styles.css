@@ -11,12 +11,13 @@
   --color-panel-edge: #2e2e33;
   --color-panel-shadow: #0a0a0b;
   --color-legend: #e8e0cf;
-  --color-legend-dim: #a89f8c;
+  --color-legend-dim: #bcb39d;
   --color-knob: #c89b3c;
   --color-knob-hi: #e0b95f;
   --color-knob-lo: #8a6a24;
   --color-knob-pointer: #141210;
   --color-led-red: #e23b2e;
+  --color-led-red-hot: #ffd9c0; /* lit step-LED hot core — mirrors theme.ts COLORS.ledRedHot */
   --color-led-amber: #f0a030;
   --color-led-green: #43b05c;
   --color-led-off: #473530;
@@ -37,7 +38,7 @@
    * window height before scaling the stage, and these vars size + offset the chrome. */
   --ribbon-h: 85px;
   --tabbar-h: 26px;
-  --chrome-h: 111px; /* = ribbon-h + tabbar-h */
+  --chrome-h: calc(var(--ribbon-h) + var(--tabbar-h)); /* 85 + 26 = 111px */
 }
 
 html,
@@ -168,6 +169,11 @@ body {
   align-items: stretch;
   gap: 4px;
   padding: 0 10px;
+  /* Stay a single row within TABBAR_H on narrow windows: never wrap; scroll horizontally
+   * if the labels overrun (roving-tabindex Arrow keys still scroll off-screen tabs in). */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
   background: var(--color-panel);
   border-bottom: 1px solid var(--color-panel-edge);
 }
@@ -198,6 +204,47 @@ body {
   color: var(--color-bg);
   background: var(--color-knob);
   border-color: var(--color-knob-hi);
+}
+
+/* Per-machine identity: a top stripe on the three voice tabs in the machine color, and the
+ * active voice tab fills with it (active text stays dark for contrast — set above).
+ * Patchbay / Sampler / FX keep the neutral gold active fill. Matches GROUP_BORDER and the
+ * panel titles / faces / knob skirts / jack-field zone labels. */
+.tab-bar__tab--cascade {
+  box-shadow: inset 0 3px 0 var(--color-group-cascade);
+}
+.tab-bar__tab--anvil {
+  box-shadow: inset 0 3px 0 var(--color-group-anvil);
+}
+.tab-bar__tab--monarch {
+  box-shadow: inset 0 3px 0 var(--color-group-monarch);
+}
+.tab-bar__tab--active.tab-bar__tab--cascade {
+  background: var(--color-group-cascade);
+  border-color: var(--color-group-cascade);
+}
+.tab-bar__tab--active.tab-bar__tab--anvil {
+  background: var(--color-group-anvil);
+  border-color: var(--color-group-anvil);
+}
+.tab-bar__tab--active.tab-bar__tab--monarch {
+  background: var(--color-group-monarch);
+  border-color: var(--color-group-monarch);
+}
+
+/* The global focus ring (amber on gold) is ~1.19:1 on the active tab — effectively
+ * invisible on the app's primary keyboard-nav surface. Swap to the dark page color on
+ * that one element for a ~7.9:1 ring. Reuses existing tokens (no theme.ts mirror needed). */
+.tab-bar__tab--active:focus-visible {
+  outline-color: var(--color-bg);
+}
+
+/* Narrow windows: tighten tab padding/tracking so the strip stays one row within TABBAR_H. */
+@media (max-width: 560px) {
+  .tab-bar__tab {
+    padding: 0 8px;
+    letter-spacing: 0.5px;
+  }
 }
 
 /* One absolutely-positioned stage region per stage region (stage16x9.REGIONS). */
@@ -303,6 +350,12 @@ body {
   cursor: ns-resize;
 }
 
+/* Jacks are patch points — a crosshair distinguishes them from a knob (ns-resize) or a
+ * button, hinting that you drag jack-to-jack to patch. */
+.control[data-jack-id] {
+  cursor: crosshair;
+}
+
 /*
  * D4 / §12.4: un-powered = suspended AudioContext + dimmed regions. Applied to
  * each stage region EXCEPT the utility strip (the POWER button stays bright).
@@ -310,7 +363,9 @@ body {
  * engine just isn't running.
  */
 .unpowered {
-  filter: brightness(0.55) saturate(0.55);
+  /* 0.7 (was 0.55) keeps an obvious "engine off" cue while lifting dimmed legend/LED text
+   * back clear of the AA floor. */
+  filter: brightness(0.7) saturate(0.7);
   transition: filter 250ms ease;
 }
 
@@ -555,6 +610,22 @@ body {
   50% {
     fill: var(--color-led-amber);
     filter: drop-shadow(0 0 4px var(--color-led-amber));
+  }
+}
+
+/* Respect the OS "reduce motion" setting (WCAG 2.3.3): stop the infinite power-pulse and the
+ * tab/dim transitions. The power lamp falls back to its static off-state fill, so the off cue
+ * stays visible. Additive — no existing rule's resting value changes. */
+@media (prefers-reduced-motion: reduce) {
+  .power-lamp--off {
+    animation: none;
+    fill: var(--color-led-off);
+  }
+  .tab-bar__tab {
+    transition: none;
+  }
+  .unpowered {
+    transition: none;
   }
 }
 

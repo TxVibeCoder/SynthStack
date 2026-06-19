@@ -120,7 +120,7 @@ const DrumCell = memo(function DrumCell({ track, step, on }: DrumCellProps) {
 export function DrumMachinePanel() {
   const [snap, setSnap] = useState<DrumSnapshot>(readSnapshot);
   const pos = useStepPosition('drum');
-  const { drumRunning } = useTransportFlags();
+  const { drumRunning, monarchRunning } = useTransportFlags();
 
   // Whole-pattern + label subscription with a JSON dirty-key (MonarchStepEditor.readSeq idiom).
   // A fresh-array useSyncExternalStore getSnapshot would loop; this re-renders only when a
@@ -256,6 +256,32 @@ export function DrumMachinePanel() {
           y={DRUM_TRANSPORT.y}
         />
       </g>
+
+      {/* MASTER-STOPPED hint: the grid follows the Monarch master clock, so a lit drum RUN
+          while the master is stopped emits nothing (v1 master-stopped semantics). Surface it
+          so "I pressed RUN and nothing happened" reads as a state, not a bug. RUN ALL (or the
+          Monarch's RUN) starts the master; with the master running this vanishes. */}
+      {drumRunning && !monarchRunning && (
+        <g data-testid="drum-waiting-master" pointerEvents="none">
+          <title>
+            The drum grid follows the master clock. Start the master (RUN ALL, or the Monarch
+            transport) to hear the drums.
+          </title>
+          <circle cx={DRUM_TRANSPORT.clearX + 50} cy={DRUM_TRANSPORT.y} r={4} fill={COLORS.ledAmber} />
+          <text
+            x={DRUM_TRANSPORT.clearX + 62}
+            y={DRUM_TRANSPORT.y + 4}
+            textAnchor="start"
+            fontFamily={FONT_CONDENSED}
+            fontSize={12}
+            letterSpacing={1}
+            fontWeight={600}
+            fill={COLORS.ledAmber}
+          >
+            WAITING FOR MASTER RUN
+          </text>
+        </g>
+      )}
     </svg>
   );
 }

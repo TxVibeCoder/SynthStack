@@ -49,7 +49,7 @@ export interface OscSampleIn {
   linFmVv: number;
   /** Linear FM depth, Hz per vv. */
   linFmDepthHzPerVv: number;
-  /** Hard-sync input: a rising edge (>2.5) resets phase. */
+  /** Hard-sync input: a rising edge (>= 2.5) resets phase. */
   syncIn: number;
   /** Pulse width 0.01..0.99. */
   pulseWidth: number;
@@ -111,7 +111,7 @@ export class OscCore {
     // hard sync: rising edge resets phase (true phase-reset sync; a slaved VCO below
     // the master's pitch nearly vanishes — authentic, falls out naturally).
     // Edge timing is quantized to the output rate (≤1 sample jitter).
-    if (inp.syncIn > 2.5 && this.lastSyncIn <= 2.5) {
+    if (inp.syncIn >= 2.5 && this.lastSyncIn < 2.5) {
       this.phase = 0;
     }
     this.lastSyncIn = inp.syncIn;
@@ -122,6 +122,12 @@ export class OscCore {
     const maxF = 0.45 * this.sampleRate; // keep musical content below the OUTPUT Nyquist
     if (f > maxF) f = maxF;
     const dt = f / osRate;
+    // f clamped to 0 (deep negative linear FM) ⇒ the oscillator is silent; output 0 and settle
+    // the triangle integrator so no DC offset is held while silenced (shape-agnostic).
+    if (dt === 0) {
+      this.tri = 0;
+      return { out: 0, syncOut: 0 };
+    }
 
     const pw =
       inp.shape === SHAPE_SQUARE ? 0.5 : inp.pulseWidth < 0.01 ? 0.01 : inp.pulseWidth > 0.99 ? 0.99 : inp.pulseWidth;

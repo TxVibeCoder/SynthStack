@@ -58,6 +58,17 @@ export function Button({ def, value, onChange, lit, momentary, x, y }: ButtonPro
   };
 
   const onKeyDown = (e: ReactKeyboardEvent<SVGGElement>) => {
+    // Latching buttons step with arrows too (APG / knob parity); momentary buttons don't.
+    if (!momentary && (e.key === 'ArrowRight' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      cycle(1);
+      return;
+    }
+    if (!momentary && (e.key === 'ArrowLeft' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      cycle(-1);
+      return;
+    }
     if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
     if (e.repeat) return;
@@ -122,9 +133,12 @@ export function Button({ def, value, onChange, lit, momentary, x, y }: ButtonPro
             y={3}
             textAnchor="middle"
             fontFamily={FONT_CONDENSED}
-            fontSize={8.5}
+            fontSize={9.5}
             letterSpacing={0.5}
-            fill={COLORS.legendDim}
+            fill={COLORS.legend}
+            {...(value.length * 6 > 28
+              ? { textLength: 28, lengthAdjust: 'spacingAndGlyphs' as const }
+              : {})}
           >
             {value.toUpperCase()}
           </text>

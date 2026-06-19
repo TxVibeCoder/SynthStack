@@ -9,6 +9,12 @@
  * Reads the store's `effects` slice via useSyncExternalStore (the single source of truth);
  * a drag re-renders nothing (no store write) — only an ON toggle / commit does. Plain-text
  * functional title + our own typography (no trade dress), matching the voice panels.
+ *
+ * LAYOUT (UX pass): three EQUAL columns, each effect a 2×2 knob grid under its ON toggle.
+ * The canvas was 1200×380 (AR 3.16) — a wide letterboxed strip; it is now 1000×520 (AR
+ * 1.92), which the per-tab fill-zoom renders width-bound at ~+16% scale on 1080p while
+ * filling the vertical band instead of wasting it. Equal columns give every effect the same
+ * frame; Reverb's 2 knobs simply sit in the top row.
  */
 
 import { memo, useCallback, useSyncExternalStore } from 'react';
@@ -21,8 +27,8 @@ import { Button } from '../controls/Button';
 import { engineBridge } from '../engineBridge';
 
 /** Landscape canvas — the panel's own viewBox (App.tsx frames the FX tab to this). */
-export const FX_W = 1200;
-export const FX_H = 380;
+export const FX_W = 1000;
+export const FX_H = 520;
 
 interface ParamMeta {
   param: string;
@@ -44,12 +50,14 @@ interface FxSection {
   params: ParamMeta[];
 }
 
+/** Three EQUAL columns: 25 margin · 300 · 25 gap · 300 · 25 gap · 300 · 25 margin = 1000. */
+const COL_W = 300;
 const SECTIONS: FxSection[] = [
   {
     id: 'flanger',
     label: 'FLANGER',
-    x: 16,
-    w: 540,
+    x: 25,
+    w: COL_W,
     params: [
       { param: 'rate', label: 'RATE', min: 0.05, max: 8, def: 0.4, unit: 'Hz' },
       { param: 'depth', label: 'DEPTH', min: 0, max: 1, def: 0.5 },
@@ -60,8 +68,8 @@ const SECTIONS: FxSection[] = [
   {
     id: 'delay',
     label: 'DELAY',
-    x: 568,
-    w: 372,
+    x: 350,
+    w: COL_W,
     params: [
       { param: 'time', label: 'TIME', min: 0.02, max: 2, def: 0.3, unit: 's' },
       { param: 'feedback', label: 'FEEDBK', min: 0, max: 0.95, def: 0.35 },
@@ -71,8 +79,8 @@ const SECTIONS: FxSection[] = [
   {
     id: 'reverb',
     label: 'REVERB',
-    x: 952,
-    w: 232,
+    x: 675,
+    w: COL_W,
     params: [
       { param: 'size', label: 'SIZE', min: 0, max: 1, def: 0.6, commitOnly: true },
       { param: 'mix', label: 'MIX', min: 0, max: 1, def: 0.3 },
@@ -80,10 +88,12 @@ const SECTIONS: FxSection[] = [
   },
 ];
 
-const SEC_Y = 44;
-const SEC_H = 300;
-const TOGGLE_Y = 108;
-const KNOB_Y = 248;
+const SEC_Y = 56;
+const SEC_H = 440; // frame bottom = 496 (< FX_H 520)
+const TOGGLE_Y = 120;
+/** Two knob rows inside each section (2×2 grid). */
+const KNOB_Y1 = 268;
+const KNOB_Y2 = 398;
 
 const subscribe = (cb: () => void) => engineBridge.store.subscribe(cb);
 const getEffects = () => engineBridge.getEffects();
@@ -91,12 +101,16 @@ function useEffectsState(): EffectsState {
   return useSyncExternalStore(subscribe, getEffects);
 }
 
-/** Evenly-spaced knob column centers across a section's inner width. */
-function knobXs(x: number, w: number, n: number): number[] {
-  const pad = 56;
-  const span = w - pad * 2;
-  if (n === 1) return [x + w / 2];
-  return Array.from({ length: n }, (_, i) => x + pad + (span * i) / (n - 1));
+/**
+ * Knob center for param `i` of `n`, laid out row-major two-per-row inside a 300-wide section.
+ * Left/right columns at x+90 / x+210; a lone trailing knob (odd count) centers at x+150.
+ */
+function knobSlot(s: FxSection, i: number, n: number): { x: number; y: number } {
+  const row = Math.floor(i / 2);
+  const y = row === 0 ? KNOB_Y1 : KNOB_Y2;
+  const lastOdd = i === n - 1 && n % 2 === 1 && i % 2 === 0;
+  const x = lastOdd ? s.x + s.w / 2 : i % 2 === 0 ? s.x + 90 : s.x + 210;
+  return { x, y };
 }
 
 const FxToggle = memo(function FxToggle({ id, on, x }: { id: MasterFxId; on: boolean; x: number }) {
@@ -110,11 +124,13 @@ const ParamKnob = memo(function ParamKnob({
   meta,
   value,
   x,
+  y,
 }: {
   id: MasterFxId;
   meta: ParamMeta;
   value: number;
   x: number;
+  y: number;
 }) {
   const def: ControlDef = {
     id: `FX_${id}_${meta.param}`,
@@ -135,7 +151,7 @@ const ParamKnob = memo(function ParamKnob({
     (v: number) => engineBridge.commitMasterFxParam(id, meta.param, v),
     [id, meta.param],
   );
-  return <Knob def={def} value={value} onInput={onInput} onCommit={onCommit} x={x} y={KNOB_Y} />;
+  return <Knob def={def} value={value} onInput={onInput} onCommit={onCommit} x={x} y={y} />;
 });
 
 function SectionFrame({ s }: { s: FxSection }) {
@@ -157,7 +173,7 @@ function SectionFrame({ s }: { s: FxSection }) {
         x={s.x + 18}
         y={SEC_Y + 5}
         fontFamily={FONT_CONDENSED}
-        fontSize={14}
+        fontSize={15}
         letterSpacing={2}
         fill={COLORS.legend}
       >
@@ -185,13 +201,13 @@ export const EffectsPanel = memo(function EffectsPanel() {
         stroke={COLORS.panelEdge}
         strokeWidth={2}
       />
-      <text x={12} y={28} fontFamily={FONT_CONDENSED} fontSize={18} letterSpacing={2} fill={COLORS.legend}>
+      <text x={16} y={34} fontFamily={FONT_CONDENSED} fontSize={20} letterSpacing={2} fill={COLORS.legend}>
         MASTER FX
       </text>
 
       {SECTIONS.map((s) => {
         const fx = effects.master[s.id] as unknown as Record<string, number | boolean>;
-        const xs = knobXs(s.x, s.w, s.params.length);
+        const n = s.params.length;
         return (
           <g key={s.id}>
             <SectionFrame s={s} />
@@ -207,9 +223,19 @@ export const EffectsPanel = memo(function EffectsPanel() {
             >
               {fx.on ? 'ON' : 'OFF'}
             </text>
-            {s.params.map((meta, i) => (
-              <ParamKnob key={meta.param} id={s.id} meta={meta} value={fx[meta.param] as number} x={xs[i]!} />
-            ))}
+            {s.params.map((meta, i) => {
+              const slot = knobSlot(s, i, n);
+              return (
+                <ParamKnob
+                  key={meta.param}
+                  id={s.id}
+                  meta={meta}
+                  value={fx[meta.param] as number}
+                  x={slot.x}
+                  y={slot.y}
+                />
+              );
+            })}
           </g>
         );
       })}

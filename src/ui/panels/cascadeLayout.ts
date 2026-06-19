@@ -26,8 +26,8 @@
 import type { PanelLayout } from '../types.ts';
 
 /** Landscape canvas — the panel's own viewBox (App.tsx frames the tab to this). */
-export const CASCADE_W = 1180;
-export const CASCADE_H = 640;
+export const CASCADE_W = 1110;
+export const CASCADE_H = 580;
 
 export const cascadeLayout: PanelLayout = {
   width: CASCADE_W,
@@ -39,14 +39,14 @@ export const cascadeLayout: PanelLayout = {
   controls: {
     // ===== LEFT column — sequencers / rhythm / transport =====================
     // Two 4-step sequencer rows (small step knobs).
-    CAS_SEQ1_STEP_1: { x: 70, y: 78, size: 's' },
-    CAS_SEQ1_STEP_2: { x: 138, y: 78, size: 's' },
-    CAS_SEQ1_STEP_3: { x: 206, y: 78, size: 's' },
-    CAS_SEQ1_STEP_4: { x: 274, y: 78, size: 's' },
-    CAS_SEQ2_STEP_1: { x: 70, y: 184, size: 's' },
-    CAS_SEQ2_STEP_2: { x: 138, y: 184, size: 's' },
-    CAS_SEQ2_STEP_3: { x: 206, y: 184, size: 's' },
-    CAS_SEQ2_STEP_4: { x: 274, y: 184, size: 's' },
+    CAS_SEQ1_STEP_1: { x: 70, y: 78, size: 'm' },
+    CAS_SEQ1_STEP_2: { x: 138, y: 78, size: 'm' },
+    CAS_SEQ1_STEP_3: { x: 206, y: 78, size: 'm' },
+    CAS_SEQ1_STEP_4: { x: 274, y: 78, size: 'm' },
+    CAS_SEQ2_STEP_1: { x: 70, y: 184, size: 'm' },
+    CAS_SEQ2_STEP_2: { x: 138, y: 184, size: 'm' },
+    CAS_SEQ2_STEP_3: { x: 206, y: 184, size: 'm' },
+    CAS_SEQ2_STEP_4: { x: 274, y: 184, size: 'm' },
 
     // Rhythm grid: four divider knobs, each over a SEQ1/SEQ2 assign-button stack.
     CAS_RHYTHM_1: { x: 70, y: 300 },

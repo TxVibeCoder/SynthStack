@@ -186,6 +186,84 @@ describe('Monarch sequencer (work order §9.2)', () => {
 });
 
 /**
+ * External TEMPO clock (MON_TEMPO IN — the Monarch "Single Clock Advance" default). Each rising
+ * edge fires the current step then advances; the internal clock is suppressed.
+ */
+describe('Monarch external clock (MON_TEMPO IN)', () => {
+  it('pullEventsAt returns nothing while externalClock (internal clock suppressed)', () => {
+    const seq = new MonarchSequencer();
+    seq.externalClock = true;
+    seq.start(0);
+    expect(seq.pullEventsAt(0)).toEqual([]);
+    seq.advance();
+    expect(seq.nextEventTime).toBe(Infinity); // never self-scheduled
+  });
+
+  it('one edge = one step, in order; step markers wrap at endStep', () => {
+    const seq = new MonarchSequencer();
+    seq.externalClock = true;
+    seq.endStep = 3;
+    const steps: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const evs = seq.onExternalEdge(i * 0.2, 0.2);
+      steps.push(evs.find((e) => e.type === 'step')!.data!['stepIndex'] as number);
+    }
+    expect(steps).toEqual([0, 1, 2, 0, 1, 2]);
+  });
+
+  it('ratchet sub-gates space by the MEASURED external interval, not the internal step duration', () => {
+    const seq = new MonarchSequencer();
+    seq.tempoBpm = 120; // internal stepDur 0.125 — must NOT be used while externally clocked
+    seq.externalClock = true;
+    seq.endStep = 1;
+    seq.steps[0]!.ratchet = 2;
+    seq.steps[0]!.gateLength = 0.5;
+    const interval = 0.4;
+    const ons = seq.onExternalEdge(1.0, interval).filter((e) => e.type === 'gateOn').map((e) => e.time);
+    expect(ons).toHaveLength(2);
+    expect(ons[0]).toBeCloseTo(1.0, 10);
+    expect(ons[1]).toBeCloseTo(1.0 + interval / 2, 10); // half the EXTERNAL interval, not 0.125/2
+  });
+
+  it('tie across two edges emits no second gateOn', () => {
+    const seq = new MonarchSequencer();
+    seq.externalClock = true;
+    seq.endStep = 2;
+    seq.steps[0]!.gateLength = 1.0; // tie into step 2
+    seq.steps[1]!.gateLength = 0.5;
+    const a = seq.onExternalEdge(0, 0.25);
+    const b = seq.onExternalEdge(0.25, 0.25);
+    expect(a.filter((e) => e.type === 'gateOn')).toHaveLength(1);
+    expect(b.filter((e) => e.type === 'gateOn')).toHaveLength(0);
+  });
+
+  it('HOLD re-fires the current step on each edge', () => {
+    const seq = new MonarchSequencer();
+    seq.externalClock = true;
+    seq.endStep = 8;
+    for (let i = 0; i < 8; i++) seq.steps[i]!.noteVv = i;
+    seq.onExternalEdge(0, 0.2); // step 0
+    seq.onExternalEdge(0.2, 0.2); // step 1
+    seq.holdActive = true;
+    const p2 = seq.onExternalEdge(0.4, 0.2).find((e) => e.type === 'pitch')!.data!['noteVv'];
+    const p3 = seq.onExternalEdge(0.6, 0.2).find((e) => e.type === 'pitch')!.data!['noteVv'];
+    expect(p2).toBe(2);
+    expect(p3).toBe(2);
+  });
+
+  it('resumeInternal re-anchors the clock to now (unplug-while-running recovery)', () => {
+    const seq = new MonarchSequencer();
+    seq.externalClock = true;
+    seq.start(0);
+    seq.advance(); // external → nextEventTime Infinity
+    expect(seq.nextEventTime).toBe(Infinity);
+    seq.externalClock = false;
+    seq.resumeInternal(3.0);
+    expect(seq.nextEventTime).toBe(3.0); // lookahead clock resumes instead of freezing
+  });
+});
+
+/**
  * phaseRef() — the master bar/beat phase source for the sampler quantize grid
  * (loop-quantize feature). Pure read; purely additive — the 10 tests above stay green.
  * The anchorTime invariant is the highest-leverage property of the whole feature.

@@ -25,6 +25,7 @@
     { "id": "MON_VOLUME", "panelLabel": "VOLUME", "type": "knob", "min": 0, "max": 1, "default": 0.7, "taper": "lin", "manualRef": "Monarch p.16" },
     { "id": "MON_GLIDE", "panelLabel": "GLIDE", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "exp", "unit": "s", "manualRef": "Monarch p.17", "notes": "portamento time; per-step glide enable lives in the sequencer" },
     { "id": "MON_VC_MIX", "panelLabel": "VC MIX", "type": "knob", "min": 0, "max": 1, "default": 0.5, "taper": "lin", "manualRef": "Monarch p.17", "notes": "crossfades MIX 1 (CCW) vs MIX 2 (CW)" },
+    { "id": "MON_ASSIGN_SOURCE", "panelLabel": "ASSIGN SRC", "type": "switch", "positions": ["ACCENT", "CLOCK", "CLOCK_2", "CLOCK_4", "STEP_RAMP", "STEP_SAW", "STEP_TRI", "STEP_RANDOM", "STEP1_TRIG"], "default": "CLOCK", "manualRef": "Monarch p.52, Setup p.58", "notes": "ASSIGN out source (Setup-mode page 1). v1 = 9 analog sources; MIDI sources 10-16 deferred (need MIDI CC/bend decode). Engine + state + preset settable; no dedicated panel control yet." },
     { "id": "MON_TEMPO", "panelLabel": "TEMPO", "type": "knob", "min": 20, "max": 300, "default": 120, "taper": "exp", "unit": "BPM", "manualRef": "Monarch p.18" },
     { "id": "MON_SWING", "panelLabel": "SWING", "type": "knob", "min": 0, "max": 100, "default": 50, "taper": "lin", "unit": "%", "manualRef": "Monarch pp.19-20", "notes": "hardware accesses swing via SHIFT; emulator gives it a knob (work order §9.3)" },
     { "id": "MON_RUN_STOP", "panelLabel": "RUN/STOP", "type": "button", "manualRef": "Monarch p.18" },
@@ -60,7 +61,7 @@
     { "id": "MON_VC_MIX_OUT", "panelLabel": "VC MIX", "direction": "out", "signal": "cv", "rangeVv": [-5, 5], "manualRef": "Monarch p.51", "notes": "crossfade of MIX1/MIX2; unpatched = variable 0..+5 fixed-voltage source via knob" },
     { "id": "MON_MULT1_OUT", "panelLabel": "MULT 1", "direction": "out", "signal": "cv", "manualRef": "Monarch p.51", "notes": "buffered copy of MULT in; any signal type" },
     { "id": "MON_MULT2_OUT", "panelLabel": "MULT 2", "direction": "out", "signal": "cv", "manualRef": "Monarch p.51", "notes": "buffered copy of MULT in; any signal type" },
-    { "id": "MON_ASSIGN_OUT", "panelLabel": "ASSIGN", "direction": "out", "signal": "cv", "rangeVv": [0, 5], "manualRef": "Monarch p.52", "notes": "16 selectable sources; v1 implements only mode 2 (seq clock, one +5 pulse per step)" },
+    { "id": "MON_ASSIGN_OUT", "panelLabel": "ASSIGN", "direction": "out", "signal": "cv", "rangeVv": [0, 5], "manualRef": "Monarch p.52", "notes": "Selectable via MON_ASSIGN_SOURCE (Setup mode): 9 analog sources implemented — ACCENT, CLOCK, CLOCK/2, CLOCK/4, STEP RAMP/SAW/TRI/RANDOM, STEP1 TRIG; the 7 MIDI sources deferred." },
     { "id": "MON_EG_OUT", "panelLabel": "EG", "direction": "out", "signal": "cv", "rangeVv": [0, 7.5], "manualRef": "Monarch p.53" },
     { "id": "MON_KB_OUT", "panelLabel": "KB", "direction": "out", "signal": "cv", "rangeVv": [-5, 5], "manualRef": "Monarch p.53", "notes": "note CV (keyboard/seq/MIDI), glide applied" },
     { "id": "MON_GATE_OUT", "panelLabel": "GATE", "direction": "out", "signal": "gate", "rangeVv": [0, 5], "manualRef": "Monarch p.53", "notes": "per-note gate" }

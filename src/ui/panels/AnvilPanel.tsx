@@ -17,7 +17,7 @@
 import { memo } from 'react';
 import type { ControlDef, ModuleDef } from '../../../data/schema';
 import anvilJson from '../../../data/anvil.json';
-import { COLORS, FONT_CONDENSED } from '../theme';
+import { COLORS, FONT_CONDENSED, GROUP_BORDER } from '../theme';
 import type { KnobSize, PanelSection } from '../types';
 import { Knob } from '../controls/Knob';
 import { Switch } from '../controls/Switch';
@@ -29,6 +29,8 @@ import { anvilLayout, SEQ_LED_Y } from './anvilLayout';
 
 const MODULE_ID = 'anvil';
 const anvilDef = anvilJson as unknown as ModuleDef;
+/** Per-machine identity color (matches the patchbay group border + tab). */
+const ACCENT = GROUP_BORDER.anvil;
 
 // ---- value fallbacks (store value wins; JSON default otherwise) -----------------------
 
@@ -71,7 +73,7 @@ const PanelKnob = memo(function PanelKnob({
 }: PlacedControl & { size?: KnobSize }) {
   const [value, onInput, onCommit] = useControl<number>(MODULE_ID, def.id, numericDefault(def));
   return (
-    <Knob def={def} value={value} onInput={onInput} onCommit={onCommit} size={size} x={x} y={y} />
+    <Knob def={def} value={value} onInput={onInput} onCommit={onCommit} size={size} accent={ACCENT} x={x} y={y} />
   );
 });
 
@@ -212,18 +214,18 @@ export function AnvilPanel() {
         height={anvilLayout.height - 1}
         rx={8}
         fill={COLORS.panel}
-        stroke={COLORS.panelEdge}
-        strokeWidth={1}
+        stroke={ACCENT}
+        strokeWidth={1.5}
       />
 
-      {/* plain-text functional title, top-left — no trade dress */}
+      {/* plain-text functional title, machine-tinted — no trade dress */}
       <text
         x={14}
         y={24}
         fontFamily={FONT_CONDENSED}
-        fontSize={17}
+        fontSize={18}
         letterSpacing={2.5}
-        fill={COLORS.legend}
+        fill={ACCENT}
       >
         {anvilLayout.title.toUpperCase()}
       </text>

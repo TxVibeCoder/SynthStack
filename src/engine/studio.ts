@@ -24,6 +24,7 @@ import { Scheduler, type TransportEvent } from './scheduler';
 import { MonarchSequencer } from './sequencers/monarchseq';
 import { AnvilSequencer } from './sequencers/anvilseq';
 import { CascadeClock } from './sequencers/cascadeClock';
+import { MidiClock } from './sequencers/midiClock';
 import { SamplerLoopClock } from './sequencers/samplerLoops';
 import { SamplerStepSeq } from './sequencers/samplerSeq';
 import { nextBoundary, type QuantDivision, type PhaseRef } from './quantGrid';
@@ -40,13 +41,16 @@ import {
   type QuantizeDivision,
 } from '../state/studioState';
 import { anvilStepRateHz, expKnob01 } from './units';
+import { assignSourceValue } from './assign';
 
 export const CABLE_COUNT = 12; // D5
 export const CABLE_COLORS = ['#d4a017', '#b0413e', '#3e6fb0', '#3e8e5a', '#7a4fa3', '#c2c2c2'];
 
 /** Internal clock outputs whose pulses exist in the scheduled event stream. */
 const INTERNAL_CLOCK_EVENTS: Record<string, { transport: string; type: string; seq?: number }> = {
-  MON_ASSIGN_OUT: { transport: 'monarchseq', type: 'assignPulse' },
+  // 'assignEdge' (not the per-step 'assignPulse') so a divider/accent/step-1 ASSIGN source that
+  // SKIPS steps doesn't over-trigger a downstream follower, and a level source never advances one.
+  MON_ASSIGN_OUT: { transport: 'monarchseq', type: 'assignEdge' },
   CAS_CLOCK_OUT: { transport: 'cascadeclock', type: 'clockOutPulse' },
   CAS_SEQ1_CLK_OUT: { transport: 'cascadeclock', type: 'seqClkPulse', seq: 0 },
   CAS_SEQ2_CLK_OUT: { transport: 'cascadeclock', type: 'seqClkPulse', seq: 1 },
@@ -66,6 +70,11 @@ export class Studio {
   readonly monarchSeq = new MonarchSequencer();
   readonly anvilSeq = new AnvilSequencer();
   readonly cascadeClock = new CascadeClock();
+  /** External MIDI transport clock (24-PPQN ÷6 → 16ths). When running it is the studio master:
+   *  it clocks the Cascade (4 PPQN, manual priority MIDI > analog) and the Monarch (unless
+   *  its analog TEMPO IN is patched — Monarch priority analog > MIDI). Fed by the bridge from Web MIDI. */
+  readonly midiClock = new MidiClock();
+  private midiClockMaster = false;
   /** Sampler loop-quantize transport (4th scheduler citizen): emits the bar-grid
    *  loopStart/loopStop/loopRelaunch events; holds no audio nodes. running stays
    *  permanently true (idles at nextEventTime=Infinity). */
@@ -87,6 +96,12 @@ export class Studio {
   private followers: ((e: TransportEvent) => void)[] = [];
   /** live edge-detector taps for arbitrary-signal followers (stage 3) */
   private edgeFollowers: { tap: AudioNode; node: AudioWorkletNode }[] = [];
+  /** Was a cable in MON_HOLD_IN last rebuild? Used to RELEASE hold when it is unplugged
+   *  (the edge follower that would deliver the gate-low is torn down with the cable). */
+  private monarchHoldPatched = false;
+  /** Was a cable in MON_TEMPO_IN last rebuild? Used to RESUME the internal clock when it is
+   *  unplugged while running (the external-clock branch left nextEventTime=Infinity). */
+  private monarchTempoPatched = false;
   private registry: StudioEndpointRegistry | null = null;
   private built = false;
 
@@ -100,6 +115,13 @@ export class Studio {
       // and the LED chase freeze until a full page reload. start() is idempotent (it guards
       // on its own timer), so a redundant call here is harmless.
       this.scheduler.start();
+      // powerOff() also stopped the per-VCO drift top-up timers; re-arm them (start() is
+      // idempotent) so analog drift resumes after a power-cycle.
+      this.monarch.drift.start();
+      this.anvil.drift1.start();
+      this.anvil.drift2.start();
+      this.cascade.drift1.start();
+      this.cascade.drift2.start();
       return;
     }
     this.built = true;
@@ -154,6 +176,13 @@ export class Studio {
 
   async powerOff(): Promise<void> {
     this.scheduler?.stop();
+    // Stop the per-VCO drift top-up setInterval timers so they do not leak/spin after power-off
+    // (modules are built once and never torn down; powerOn's power-cycle branch re-arms them).
+    if (this.built) {
+      this.monarch.stopDrift();
+      this.anvil.stopDrift();
+      this.cascade.stopDrift();
+    }
     await this.context.powerOff();
   }
 
@@ -176,9 +205,29 @@ export class Studio {
       case 'accentOff':
         this.monarch.accentAt(false, e.time);
         break;
-      case 'assignPulse':
-        this.monarch.assignPulseAt(e.time);
-        break;
+      case 'assignPulse': {
+        // Realize the selected ASSIGN source (Setup-mode page 1). Randomness for STEP RANDOM lives
+        // here in the shell (never the pure seq). Only a real pulse emits 'assignEdge' to followers.
+        const d = e.data!;
+        const action = assignSourceValue(
+          this.monarch.assignSource,
+          {
+            stepIndex: d['stepIndex'] as number,
+            endStep: d['endStep'] as number,
+            tickCount: d['tickCount'] as number,
+            accent: d['accent'] as boolean,
+            isStep1: d['isStep1'] as boolean,
+          },
+          Math.random(),
+        );
+        if (action.kind === 'pulse') {
+          this.monarch.assignPulseAt(e.time);
+          this.feedFollowers('monarchseq', { time: e.time, type: 'assignEdge' });
+        } else if (action.kind === 'level') {
+          this.monarch.assignLevelAt(action.vv, e.time);
+        }
+        return; // do NOT feed the raw per-step assignPulse — downstream followers key on assignEdge
+      }
     }
     this.feedFollowers('monarchseq', e);
   }
@@ -240,8 +289,19 @@ export class Studio {
     // for the LED chase only.
   }
 
+  /** Guards feedFollowers against self/indirect clock-feedback loops (e.g. ANV_TRIGGER_OUT
+   *  patched into ANV_ADV_CLOCK_IN): a follower that re-emits the same event type would
+   *  otherwise recurse unbounded and overflow the stack. */
+  private feedingFollowers = false;
+
   private feedFollowers(transportId: string, e: TransportEvent): void {
-    for (const f of this.followers) f({ ...e, data: { ...e.data, __transport: transportId } });
+    if (this.feedingFollowers) return; // break self/indirect clock-feedback cycles
+    this.feedingFollowers = true;
+    try {
+      for (const f of this.followers) f({ ...e, data: { ...e.data, __transport: transportId } });
+    } finally {
+      this.feedingFollowers = false;
+    }
   }
 
   // ---- patching -----------------------------------------------------------------------
@@ -319,8 +379,10 @@ export class Studio {
     }
 
     const cascadeClockIn = findCable('CAS_CLOCK_IN');
-    this.cascadeClock.externalClock = !!cascadeClockIn;
-    if (cascadeClockIn) {
+    // Cascade priority: MIDI clock > analog CLOCK in > internal. While MIDI is master it
+    // drives the Cascade via routeMidiEdge (4 PPQN) and the analog CLOCK-in cable is ignored.
+    this.cascadeClock.externalClock = this.midiClockMaster || !!cascadeClockIn;
+    if (cascadeClockIn && !this.midiClockMaster) {
       const src = INTERNAL_CLOCK_EVENTS[cascadeClockIn.from];
       if (src) {
         this.followers.push((e) => {
@@ -334,6 +396,42 @@ export class Studio {
         });
       }
     }
+
+    // Monarch external TEMPO clock (Single Clock Advance, the hardware default): a cable in
+    // MON_TEMPO_IN suppresses the internal clock and steps the pattern one step per rising edge —
+    // structurally identical to the Anvil ADV/CLOCK block above.
+    const monarchTempo = findCable('MON_TEMPO_IN');
+    const monarchAnalog = !!monarchTempo;
+    // Monarch priority: analog TEMPO IN > MIDI clock > internal. The analog cable wins; otherwise
+    // MIDI (when master) drives it via routeMidiEdge.
+    this.monarchSeq.externalClock = monarchAnalog || this.midiClockMaster;
+    if (monarchTempo) {
+      let lastEdge = -1;
+      const onEdge = (t: number): void => {
+        const interval = lastEdge >= 0 ? t - lastEdge : undefined;
+        lastEdge = t;
+        for (const fe of this.monarchSeq.onExternalEdge(t, interval)) this.bindMonarchEvent(fe);
+      };
+      const src = INTERNAL_CLOCK_EVENTS[monarchTempo.from];
+      if (src) {
+        this.followers.push((e) => {
+          if (
+            e.data?.['__transport'] === src.transport &&
+            e.type === src.type &&
+            (src.seq === undefined || e.data?.['seq'] === src.seq)
+          ) {
+            onEdge(e.time);
+          }
+        });
+      } else {
+        this.addEdgeFollower(monarchTempo.from, (t) => onEdge(t));
+      }
+    } else if (this.monarchTempoPatched && !this.midiClockMaster && this.monarchSeq.running) {
+      // TEMPO cable just unplugged (and MIDI not driving): the external-clock advance left
+      // nextEventTime=Infinity, so re-anchor the internal clock to now or the sequence freezes.
+      this.monarchSeq.resumeInternal(this.context.audioContext.currentTime + 0.03);
+    }
+    this.monarchTempoPatched = monarchAnalog; // remembered for the next rebuild's unplug detection / MIDI routing
 
     // Monarch transport gate inputs (gate semantics — always via the edge detector)
     const monarchRun = findCable('MON_RUN_STOP_IN');
@@ -350,6 +448,7 @@ export class Studio {
     }
     const monarchHold = findCable('MON_HOLD_IN');
     if (monarchHold) {
+      this.monarchHoldPatched = true;
       this.addEdgeFollower(
         monarchHold.from,
         () => {
@@ -359,6 +458,16 @@ export class Studio {
           this.monarchSeq.holdActive = false;
         },
       );
+    } else if (this.monarchHoldPatched) {
+      // The HOLD cable was just UNPLUGGED. HOLD is a gate input (data/monarch.json), so no
+      // cable = signal low = released. Without this, unplugging while the source was HIGH
+      // strands holdActive=true: the falling-edge follower that releases it is torn down with
+      // the cable (clearEdgeFollowers), so the sequence freezes repeating one step with no
+      // obvious recovery (only the momentary panel HOLD clears it). Mirrors the Monarch voice
+      // gate's release-on-teardown. Guarded by the prior-patched flag so an unrelated patch
+      // edit never clobbers a live panel-HOLD press (that path leaves this flag false).
+      this.monarchHoldPatched = false;
+      this.monarchSeq.holdActive = false;
     }
 
     // Sampler pad triggers: a rising edge on SAMP_PAD{n}_TRIG_IN fires that pad
@@ -378,15 +487,17 @@ export class Studio {
     this.monarchSeq.start(now);
     this.anvilSeq.start(now);
     this.cascadeClock.start(now);
-    // The drum step sequencer is an INDEPENDENT machine — intentionally NOT
-    // started here in v1. this.samplerSeq.start(now) could be added if a single master
-    // transport is later wanted (and this.samplerSeq.stop() in stopAll).
+    // START ALL is the single master transport: it also runs the drum grid, started in the
+    // SAME gesture as the Monarch (the drum grid slaves to the Monarch phase, so a simultaneous
+    // start locks them with no "who started first" ambiguity). An empty grid is a silent no-op.
+    this.samplerSeq.start(now);
   }
 
   stopAll(): void {
     this.monarchSeq.stop();
     this.anvilSeq.stop();
     this.cascadeClock.stop();
+    this.samplerSeq.stop(); // STOP ALL halts the drum grid too (mirrors runAll)
     const t = this.context.audioContext.currentTime;
     this.monarch.gateAt(false, t);
   }
@@ -420,6 +531,63 @@ export class Studio {
     const bpm = this.monarchSeq.tempoBpm;
     this.anvilSeq.rateHz = (bpm / 60) * 4; // 16th steps
     this.cascadeClock.tempoHz = bpm / 60; // 1 PPQ
+  }
+
+  // ---- external MIDI transport clock (fed by the bridge from Web MIDI) -----------------------
+  // 24-PPQN clock ÷6 → 16ths. While running, MIDI is the studio master: it clocks the Cascade
+  // (4 PPQN, priority MIDI > analog) and the Monarch (unless its analog TEMPO IN is patched —
+  // priority analog > MIDI). The bridge guards on power; the studio time-stamps to currentTime + lead
+  // (main-thread tick jitter is accepted — documented in DECISIONS.md). Real-device delivery is an
+  // operator hardware checkpoint; the divider + routing are proven headlessly in the audio battery.
+
+  /** 0xF8 clock tick. `time` defaults to the audio clock (currentTime + lead) for live Web MIDI. */
+  onMidiClockTick(time?: number): void {
+    if (!this.built) return;
+    const t = time ?? this.context.audioContext.currentTime + 0.02;
+    if (this.midiClock.onTick(t)) this.routeMidiEdge(t);
+    if (this.tempoLink && this.midiClockMaster) {
+      this.anvilSeq.rateHz = (this.midiClock.tempoBpm / 60) * 4; // Anvil has no MIDI clock in — follows via LINK
+    }
+  }
+
+  /** 0xFA Start: become master, realign both clocked sequencers to their downbeat. */
+  onMidiClockStart(): void {
+    if (!this.built) return;
+    this.midiClock.start();
+    this.midiClockMaster = true;
+    this.monarchSeq.reset();
+    this.cascadeClock.reset();
+    this.rebuildFollowers({ cables: this.store.getState().cables });
+  }
+
+  /** 0xFB Continue: become master, keep the current phase. */
+  onMidiClockContinue(): void {
+    if (!this.built) return;
+    this.midiClock.continue();
+    this.midiClockMaster = true;
+    this.rebuildFollowers({ cables: this.store.getState().cables });
+  }
+
+  /** 0xFC Stop: release master; restore internal scheduling for anything MIDI was clocking. */
+  onMidiClockStop(): void {
+    if (!this.built) return;
+    this.midiClock.stop();
+    this.midiClockMaster = false;
+    this.rebuildFollowers({ cables: this.store.getState().cables });
+    // The Monarch's external-clock advance left nextEventTime=Infinity; if it is now internal and
+    // running, re-anchor it (the Cascade self-recovers — its advance always bumps nextEventTime).
+    if (!this.monarchSeq.externalClock && this.monarchSeq.running) {
+      this.monarchSeq.resumeInternal(this.context.audioContext.currentTime + 0.03);
+    }
+  }
+
+  private routeMidiEdge(t: number): void {
+    // Cascade consumes the MIDI clock (every 6th tick = 4 PPQN = one 16th).
+    for (const e of this.cascadeClock.onExternalEdge(t)) this.bindCascadeEvent(e);
+    // Monarch follows MIDI only when its analog TEMPO IN is NOT patched (analog > MIDI).
+    if (!this.monarchTempoPatched) {
+      for (const e of this.monarchSeq.onExternalEdge(t)) this.bindMonarchEvent(e);
+    }
   }
 
   // ---- UI bridge passthroughs (stage-1 interface pass; ADDITIVE ONLY) -------------------

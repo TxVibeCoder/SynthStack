@@ -57,6 +57,8 @@ export interface KnobProps {
   /** Fires once on pointer release / double-click reset → single store commit. */
   onCommit: (v: number) => void;
   size?: KnobSize;
+  /** Optional machine-accent color (GROUP_BORDER) for the knob skirt — per-panel color coding. */
+  accent?: string;
   x: number;
   y: number;
 }

@@ -217,8 +217,10 @@ export const quantizeDef = (() => {
 // place the <Region>.
 // =========================================================================================
 
-/** Height (stage units) of the drum-machine section, directly below the pad section. */
-export const DRUM_SECTION_H = 300;
+/** Height (stage units) of the drum-machine section, directly below the pad section. Grown
+ *  from 300 so the 8×16 grid fills the sampler tab's vertical band with bigger, easier-to-hit
+ *  step cells instead of leaving a wide letterbox below the fold. */
+export const DRUM_SECTION_H = 600;
 
 /** Total scrollable sampler height below the 16:9 fold = pads + drum grid (320 + 300). */
 export const SAMPLER_TOTAL_H = PAD_SECTION_H + DRUM_SECTION_H;
@@ -237,26 +239,27 @@ export const DRUM_REGION = { x: 0, y: STAGE.h + PAD_SECTION_H, w: STAGE.w, h: DR
  * labels (every cell center sits to its right). Containment + non-overlap (colPitch ≥ cell,
  * rowPitch ≥ cell) are pinned in samplerLayout.test.ts.
  *
- * Rightmost column center = x0 + 15·colPitch = 200 + 690 = 890 (+cell/2 = 903 ≪ STAGE.w).
- * Bottom row center      = y0 +  7·rowPitch =  86 + 196 = 282 (+cell/2 = 295 < DRUM_SECTION_H).
+ * The grid spans most of the stage width (transport fills the strip to its right). Rightmost
+ * column center = x0 + 15·colPitch = 210 + 1260 = 1470 (+cell/2 = 1498 < STAGE.w). Bottom row
+ * center = y0 + 7·rowPitch = 100 + 448 = 548 (+cell/2 = 576 < DRUM_SECTION_H 600).
  */
 export const DRUM_GRID = {
-  x0: 200,
-  y0: 86,
-  colPitch: 46,
-  rowPitch: 28,
-  cell: 26,
-  labelGutter: 180,
+  x0: 210,
+  y0: 100,
+  colPitch: 84,
+  rowPitch: 64,
+  cell: 56,
+  labelGutter: 175,
 } as const;
 
 /** Y of the top beat-number / column-LED strip, under the y=24 title and above the grid. */
 export const DRUM_BEATROW_Y = 60;
 
 /**
- * Transport buttons, placed in the wide right half clear of the grid (which ends ~903).
+ * Transport buttons, in the strip to the right of the grid (which now ends ~1498).
  * Both x (plus a button footprint) stay < STAGE.w — pinned in the layout test.
  */
-export const DRUM_TRANSPORT = { runStopX: 1040, clearX: 1180, y: 150 } as const;
+export const DRUM_TRANSPORT = { runStopX: 1580, clearX: 1700, y: 260 } as const;
 
 /** CENTER x of column `step` (0..15). */
 export function columnX(step: number): number {

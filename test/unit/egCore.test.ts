@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EgCore, type EgConfig } from '../../src/engine/dsp/egCore';
+import { GATE_THRESHOLD_VV } from '../../src/engine/units';
 
 const FS = 48000;
 
@@ -148,5 +149,39 @@ describe('eg.worklet core (work order §7.6, D2)', () => {
       maxDelta = Math.max(maxDelta, Math.abs(buf[i]! - buf[i - 1]!));
     }
     expect(maxDelta).toBeLessThan(0.15); // vv per sample at 48 kHz
+  });
+
+  // ---- manual-spec locks (Workstream C) ------------------------------------------------
+
+  it('gate threshold = units.ts +2.5 vv: fires at 2.6, not at 2.4 (C3 dedup lock)', () => {
+    expect(GATE_THRESHOLD_VV).toBe(2.5);
+    const cfg: EgConfig = { ...monarchSustainOn, sustainMode: 'off', retrigInAttack: true, attackS: 0.001, decayS: 0.1 };
+    const below = renderEg(cfg, () => 2.4, 0.1); // sub-threshold gate never triggers
+    const above = renderEg(cfg, () => 2.6, 0.1); // supra-threshold triggers
+    expect(Math.max(...Array.from(below))).toBeLessThan(0.01);
+    expect(Math.max(...Array.from(above))).toBeGreaterThan(5);
+  });
+
+  it('Anvil VCA EG attack endpoints: FAST = 1 ms, SLOW = 100 ms (manual)', () => {
+    const base: EgConfig = {
+      attackS: 0.001, decayS: 5, sustainMode: 'off', retrigInAttack: true, attackCompletes: false, peakVv: 8,
+    };
+    const fast = renderEg(base, (t) => (t < 0.005 ? 5 : 0), 0.2);
+    const slow = renderEg({ ...base, attackS: 0.1 }, () => 5, 0.3);
+    // FAST: ~peak within ~1.5 ms (τ = A/4 = 0.25 ms)
+    expect(at(fast, 0.0015)).toBeGreaterThan(8 * 0.9);
+    // SLOW: barely risen at 1 ms; near peak only by ~100 ms
+    expect(at(slow, 0.001)).toBeLessThan(8 * 0.3);
+    expect(at(slow, 0.11)).toBeGreaterThan(8 * 0.9);
+  });
+
+  it('decay endpoints span 10 ms–10 s (manual)', () => {
+    const base: EgConfig = {
+      attackS: 0.001, decayS: 0.01, sustainMode: 'off', retrigInAttack: true, attackCompletes: false, peakVv: 8,
+    };
+    const dShort = renderEg(base, (t) => (t < 0.005 ? 5 : 0), 0.1);
+    const dLong = renderEg({ ...base, decayS: 10 }, (t) => (t < 0.005 ? 5 : 0), 1.0);
+    expect(at(dShort, 0.05)).toBeLessThan(8 * 0.05); // 10 ms decay essentially gone by 50 ms
+    expect(at(dLong, 0.2)).toBeGreaterThan(8 * 0.8); // 10 s decay barely moved at 200 ms
   });
 });

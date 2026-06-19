@@ -25,7 +25,7 @@ import { memo, useCallback } from 'react';
 import type { ReactElement } from 'react';
 import type { ControlDef, ModuleDef } from '../../../data/schema';
 import cascadeJson from '../../../data/cascade.json';
-import { COLORS, FONT_CONDENSED } from '../theme';
+import { COLORS, FONT_CONDENSED, GROUP_BORDER } from '../theme';
 import type { KnobSize, PanelSection } from '../types';
 import { Knob } from '../controls/Knob';
 import { Switch } from '../controls/Switch';
@@ -59,6 +59,8 @@ const CascadeLedRow = memo(function CascadeLedRow({ seq }: { seq: 0 | 1 }) {
 
 const moduleDef = cascadeJson as unknown as ModuleDef;
 const MODULE_ID = moduleDef.id; // 'cascade'
+/** Per-machine identity color (matches the patchbay group border + tab). */
+const ACCENT = GROUP_BORDER.cascade;
 
 // ---- fallbacks (store value wins; JSON default otherwise) -------------------------------
 
@@ -88,7 +90,9 @@ interface PlacedProps {
 /** knob / stepKnob: onInput -> immediate engine write, onCommit -> one store write. */
 const PanelKnob = memo(function PanelKnob({ def, x, y, size }: PlacedKnobProps) {
   const [value, onInput, onCommit] = useControl<number>(MODULE_ID, def.id, knobFallback(def));
-  return <Knob def={def} value={value} onInput={onInput} onCommit={onCommit} size={size} x={x} y={y} />;
+  return (
+    <Knob def={def} value={value} onInput={onInput} onCommit={onCommit} size={size} accent={ACCENT} x={x} y={y} />
+  );
 });
 
 /** switch: discrete — engine write + store commit together (no debounce). */
@@ -230,18 +234,18 @@ export function CascadePanel() {
         height={cascadeLayout.height}
         rx={8}
         fill={COLORS.panel}
-        stroke={COLORS.panelEdge}
+        stroke={ACCENT}
         strokeWidth={1.5}
       />
 
-      {/* plain-text functional title — no trade dress */}
+      {/* plain-text functional title, machine-tinted — no trade dress */}
       <text
-        x={16}
-        y={17}
+        x={14}
+        y={24}
         fontFamily={FONT_CONDENSED}
-        fontSize={13}
-        letterSpacing={2}
-        fill={COLORS.legend}
+        fontSize={18}
+        letterSpacing={2.5}
+        fill={ACCENT}
       >
         {cascadeLayout.title.toUpperCase()}
       </text>

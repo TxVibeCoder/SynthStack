@@ -17,9 +17,11 @@ import { SamplerModule } from '../../src/engine/modules/sampler';
 import { StudioEndpointRegistry } from '../../src/engine/modules/registry';
 import { buildJackIndex, RouterBinding } from '../../src/engine/router';
 import { CascadeClock } from '../../src/engine/sequencers/cascadeClock';
+import { MidiClock } from '../../src/engine/sequencers/midiClock';
 import { MonarchSequencer } from '../../src/engine/sequencers/monarchseq';
 import { AnvilSequencer } from '../../src/engine/sequencers/anvilseq';
 import { Scheduler, type TransportEvent } from '../../src/engine/scheduler';
+import { assignSourceValue } from '../../src/engine/assign';
 import type { ModuleDef } from '../../data/schema';
 import monarchDef from '../../data/monarch.json';
 import anvilDef from '../../data/anvil.json';
@@ -33,42 +35,10 @@ import {
   fftMag,
   zeroCrossFreq,
 } from '../helpers/spectral';
+import { SR, buildModule, envelope, risingEdges, type AudioTestResult } from './harness';
 
-const SR = 48000;
-
-export interface AudioTestResult {
-  name: string;
-  pass: boolean;
-  detail: string;
-}
-
-type Builder<M> = new (ctx: BaseAudioContext, def: ModuleDef) => M;
-
-async function buildModule<M extends MonarchModule | AnvilModule | CascadeModule>(
-  seconds: number,
-  Ctor: Builder<M>,
-  def: unknown,
-): Promise<{ ctx: OfflineAudioContext; mod: M; render: () => Promise<Float32Array> }> {
-  const ctx = new OfflineAudioContext(1, Math.ceil(seconds * SR), SR);
-  await loadWorklets(ctx);
-  const moduleDef = def as ModuleDef;
-  const mod = new Ctor(ctx, moduleDef);
-  const binding = new RouterBinding(buildJackIndex([moduleDef]), new StudioEndpointRegistry([mod]));
-  binding.applyAllNormals();
-  return {
-    ctx,
-    mod,
-    render: async () => (await ctx.startRendering()).getChannelData(0),
-  };
-}
-
-/** RMS envelope in winS windows. */
-function envelope(buf: Float32Array, winS = 0.005): number[] {
-  const win = Math.floor(winS * SR);
-  const out: number[] = [];
-  for (let off = 0; off + win <= buf.length; off += win) out.push(rms(buf, off, off + win));
-  return out;
-}
+// AudioTests.tsx imports AudioTestResult from here — keep it on this module's public surface.
+export type { AudioTestResult } from './harness';
 
 // ---- tests --------------------------------------------------------------------------
 
@@ -302,15 +272,6 @@ async function cascadeSeq2DrivesVco2(): Promise<AudioTestResult> {
   };
 }
 
-/** Sample indices of rising edges through the +2.5 vv gate threshold. */
-function risingEdges(buf: Float32Array): number[] {
-  const out: number[] = [];
-  for (let i = 1; i < buf.length; i++) {
-    if (buf[i - 1]! < 2.5 && buf[i]! >= 2.5) out.push(i);
-  }
-  return out;
-}
-
 async function monarchClocksAnvilLockstep(): Promise<AudioTestResult> {
   // Acceptance: with Monarch ASSIGN (clock) patched into Anvil
   // ADV/CLOCK, Anvil triggers coincide with Monarch steps WITHIN 1 SAMPLE. This
@@ -373,6 +334,170 @@ async function monarchClocksAnvilLockstep(): Promise<AudioTestResult> {
     name: 'Monarch ASSIGN clocks Anvil in lockstep — within 1 sample (§12 acceptance)',
     pass,
     detail: `assign=${assignEdges.length} trig=${trigEdges.length} edges, maxSkew=${maxSkew} samples`,
+  };
+}
+
+async function cascadeClocksMonarchTempo(): Promise<AudioTestResult> {
+  // B1 acceptance: Cascade CLOCK out patched into Monarch TEMPO IN steps the Monarch sequencer one
+  // step per edge (external "Single Clock Advance" mode). Monarch GATE out must pulse in lockstep
+  // with the Cascade clock — within 1 sample — via the same follower path studio.ts wires.
+  const seconds = 6;
+  const ctx = new OfflineAudioContext(2, seconds * SR, SR);
+  await loadWorklets(ctx);
+  const monarch = new MonarchModule(ctx, monarchDef as unknown as ModuleDef);
+  const cascade = new CascadeModule(ctx, cascadeDef as unknown as ModuleDef);
+  const binding = new RouterBinding(
+    buildJackIndex([monarchDef, cascadeDef] as unknown as ModuleDef[]),
+    new StudioEndpointRegistry([monarch, cascade]),
+  );
+  binding.applyAllNormals();
+
+  const monarchSeq = new MonarchSequencer();
+  monarchSeq.externalClock = true;
+  monarchSeq.endStep = 16;
+  const bindMonarch = (e: TransportEvent): void => {
+    if (e.type === 'gateOn') monarch.gateAt(true, e.time);
+    else if (e.type === 'gateOff') monarch.gateAt(false, e.time);
+  };
+
+  const cascadeClock = new CascadeClock();
+  cascadeClock.reset();
+  cascadeClock.tempoHz = 4; // 4 edges/s
+  let simNow = 0;
+  let lastEdge = -1;
+  const sched = new Scheduler(() => simNow);
+  sched.add(cascadeClock, (e) => {
+    if (e.type === 'clockOutPulse') {
+      const interval = lastEdge >= 0 ? e.time - lastEdge : undefined;
+      lastEdge = e.time;
+      cascade.clockPulseAt(e.time); // pulse CAS_CLOCK_OUT
+      for (const fe of monarchSeq.onExternalEdge(e.time, interval)) bindMonarch(fe);
+    }
+  });
+  cascadeClock.start(0.1);
+  while (simNow < seconds) {
+    sched.pump();
+    simNow += 0.025;
+  }
+
+  const merger = ctx.createChannelMerger(2);
+  cascade.outputTap('CAS_CLOCK_OUT').connect(merger, 0, 0);
+  monarch.outputTap('MON_GATE_OUT').connect(merger, 0, 1);
+  merger.connect(ctx.destination);
+  const rendered = await ctx.startRendering();
+  const clockEdges = risingEdges(rendered.getChannelData(0));
+  const gateEdges = risingEdges(rendered.getChannelData(1));
+  const countOk = gateEdges.length > 15 && clockEdges.length === gateEdges.length;
+  let maxSkew = -1;
+  if (countOk) maxSkew = Math.max(...clockEdges.map((s, i) => Math.abs(s - gateEdges[i]!)));
+  const pass = countOk && maxSkew <= 1;
+  return {
+    name: 'Cascade CLOCK steps Monarch via TEMPO IN — gate in lockstep within 1 sample (B1)',
+    pass,
+    detail: `clock=${clockEdges.length} gate=${gateEdges.length} edges, maxSkew=${maxSkew} samples`,
+  };
+}
+
+/** Drive the Monarch sequencer's ASSIGN out through the selected source and render MON_ASSIGN_OUT. */
+async function renderAssign(source: string, seconds: number): Promise<Float32Array> {
+  const { mod, ctx, render } = await buildModule(seconds, MonarchModule, monarchDef);
+  mod.setControl('MON_ASSIGN_SOURCE', source);
+  const seq = new MonarchSequencer();
+  seq.tempoBpm = 240; // 16th = 62.5 ms
+  seq.endStep = 16;
+  const bind = (e: TransportEvent): void => {
+    if (e.type !== 'assignPulse') return;
+    const d = e.data!;
+    const action = assignSourceValue(
+      mod.assignSource, // proves setControl wired the source
+      {
+        stepIndex: d['stepIndex'] as number,
+        endStep: d['endStep'] as number,
+        tickCount: d['tickCount'] as number,
+        accent: d['accent'] as boolean,
+        isStep1: d['isStep1'] as boolean,
+      },
+      0.5,
+    );
+    if (action.kind === 'pulse') mod.assignPulseAt(e.time);
+    else if (action.kind === 'level') mod.assignLevelAt(action.vv, e.time);
+  };
+  let simNow = 0;
+  const sched = new Scheduler(() => simNow);
+  sched.add(seq, bind);
+  seq.start(0.05);
+  while (simNow < seconds) {
+    sched.pump();
+    simNow += 0.025;
+  }
+  mod.outputTap('MON_ASSIGN_OUT').connect(ctx.destination);
+  return render();
+}
+
+async function monarchAssignClock2(): Promise<AudioTestResult> {
+  // B2: ASSIGN source CLOCK/2 emits half as many pulses as CLOCK (the clock-divider sources).
+  const clock = await renderAssign('CLOCK', 2.2);
+  const clock2 = await renderAssign('CLOCK_2', 2.2);
+  const nClock = risingEdges(clock).length;
+  const nClock2 = risingEdges(clock2).length;
+  const pass = nClock > 20 && Math.abs(nClock2 - nClock / 2) <= 2;
+  return {
+    name: 'Monarch ASSIGN source CLOCK/2 halves the pulse rate (B2)',
+    pass,
+    detail: `CLOCK=${nClock} pulses, CLOCK/2=${nClock2} (expect ~half)`,
+  };
+}
+
+async function monarchAssignRamp(): Promise<AudioTestResult> {
+  // B2: ASSIGN source STEP RAMP outputs a held CV that rises 0→+5 across the 16-step pattern (1.0 s
+  // at 240 BPM) and resets at step 1.
+  const buf = await renderAssign('STEP_RAMP', 2.4);
+  const early = buf[Math.floor(0.12 * SR)]!; // ~step 1 of pattern 1 (low)
+  const late = buf[Math.floor(0.92 * SR)]!; // ~step 14 of pattern 1 (high)
+  const reset = buf[Math.floor(1.12 * SR)]!; // ~step 1 of pattern 2 (reset low)
+  const pass = late > early + 2 && late > 3 && reset < late - 2;
+  return {
+    name: 'Monarch ASSIGN source STEP RAMP: held CV rises across the pattern, resets at step 1 (B2)',
+    pass,
+    detail: `level early=${early.toFixed(2)} late=${late.toFixed(2)} reset=${reset.toFixed(2)} vv`,
+  };
+}
+
+async function midiClockDrivesCascade(): Promise<AudioTestResult> {
+  // B3: a 24-PPQN MIDI clock drives the Cascade at 4 PPQN — every 6th tick advances the Cascade
+  // (an EG trigger per 16th). Proves the divider → Cascade routing headlessly (no MIDIAccess); the
+  // real device prompt + jitter are an operator hardware checkpoint.
+  const { mod, ctx, render } = await buildModule(2.5, CascadeModule, cascadeDef);
+  mod.setControl('CAS_VCO1_LEVEL', 0.8);
+  mod.setControl('CAS_CUTOFF', 6000);
+  mod.setControl('CAS_VCA_ATTACK', 0.002);
+  mod.setControl('CAS_VCA_DECAY', 0.06);
+  mod.setControl('CAS_VOLUME', 0.8);
+  const cascadeClock = new CascadeClock();
+  cascadeClock.reset();
+  cascadeClock.externalClock = true; // MIDI is the master
+  const bindCascade = (e: TransportEvent): void => {
+    if (e.type === 'egTrigger') mod.egTriggerAt(e.time);
+    else if (e.type === 'pitchUpdate') mod.applySeqStep(e.data!['seq'] as 0 | 1, e.data!['stepIndex'] as number, e.time);
+  };
+  const midi = new MidiClock();
+  midi.start();
+  const tickDur = 60 / (120 * 24); // 120 BPM, 24 PPQN
+  let sixteenths = 0;
+  for (let i = 0; i < 96; i++) {
+    const t = 0.1 + i * tickDur;
+    if (midi.onTick(t)) {
+      sixteenths++;
+      for (const e of cascadeClock.onExternalEdge(t)) bindCascade(e);
+    }
+  }
+  mod.outputTap('CAS_VCA_OUT').connect(ctx.destination);
+  const onsets = detectOnsets(await render(), SR, 0.05);
+  const pass = sixteenths === 16 && onsets.length >= 14; // 96 ticks ÷ 6 = 16 sixteenth edges
+  return {
+    name: 'MIDI clock 24 PPQN drives the Cascade at 4 PPQN (every 6th tick) (B3)',
+    pass,
+    detail: `sixteenths=${sixteenths} (96 ticks ÷6) onsets=${onsets.length} (expect ~16)`,
   };
 }
 
@@ -467,24 +592,38 @@ async function factoryKit(): Promise<AudioTestResult> {
   const closed = find('factory-hat-closed').getChannelData(0);
   const open = find('factory-hat-open').getChannelData(0);
   const kick = find('factory-kick').getChannelData(0);
-  const closedCentroid = spectralCentroidHz(fftMag(closed, SR, 4096, Math.floor(0.1 * SR)));
+  // Buffers now begin AT the transient (factorySamples trims the T0 lead), so these analysis
+  // windows drop the old +0.1 s lead offset — same content, measured from frame 0.
+  const closedCentroid = spectralCentroidHz(fftMag(closed, SR, 4096, 0));
   const closedEnv = envelope(closed);
   const openEnv = envelope(open);
   const closedDecay = closedEnv.length - closedEnv.indexOf(Math.max(...closedEnv));
   const openDecay = openEnv.length - openEnv.indexOf(Math.max(...openEnv));
-  const kickEarly = zeroCrossFreq(kick, SR, Math.floor(0.105 * SR), Math.floor(0.135 * SR));
-  const kickLate = zeroCrossFreq(kick, SR, Math.floor(0.2 * SR), Math.floor(0.3 * SR));
+  const kickEarly = zeroCrossFreq(kick, SR, Math.floor(0.005 * SR), Math.floor(0.035 * SR));
+  const kickLate = zeroCrossFreq(kick, SR, Math.floor(0.1 * SR), Math.floor(0.2 * SR));
   const closedBright = closedCentroid > 6000;
   const openLonger = openDecay > closedDecay;
   const kickSweep = kickEarly / Math.max(kickLate, 1) >= 1.5;
 
-  const pass = countOk && idsOk && nonSilent && normalized && closedBright && openLonger && kickSweep;
+  // REGRESSION (drum-timing fix): every factory buffer must START at its transient — no baked
+  // leading silence — or hits play late on the grid. Onset (first sample > 5% of peak) must
+  // fall within 20 ms of frame 0; before the trim it sat at ~100 ms (T0).
+  const onsetFrame = (d: Float32Array): number => {
+    for (let i = 0; i < d.length; i++) if (Math.abs(d[i]!) > 0.05) return i;
+    return d.length;
+  };
+  const maxOnsetFrame = Math.max(...kit.map((k) => onsetFrame(k.buffer.getChannelData(0))));
+  const onsetsAtStart = maxOnsetFrame < Math.floor(0.02 * SR);
+
+  const pass =
+    countOk && idsOk && nonSilent && normalized && closedBright && openLonger && kickSweep && onsetsAtStart;
   return {
-    name: 'Factory kit: 8 voices in FACTORY_KIT order, non-silent, peak ≤ 1.0',
+    name: 'Factory kit: 8 voices in FACTORY_KIT order, non-silent, peak ≤ 1.0, onset at frame 0',
     pass,
     detail:
       `count=${kit.length} ids=${idsOk} minPeak=${Math.min(...peaks).toFixed(3)} ` +
-      `maxPeak=${Math.max(...peaks).toFixed(3)} closedCentroid=${closedCentroid.toFixed(0)}Hz ` +
+      `maxPeak=${Math.max(...peaks).toFixed(3)} maxOnset=${((maxOnsetFrame / SR) * 1000).toFixed(1)}ms ` +
+      `closedCentroid=${closedCentroid.toFixed(0)}Hz ` +
       `closedDecay=${closedDecay} openDecay=${openDecay} kickSweep=${kickEarly.toFixed(0)}→${kickLate.toFixed(0)}Hz`,
   };
 }
@@ -498,6 +637,10 @@ export const BATTERY: { name: string; run: () => Promise<AudioTestResult> }[] = 
   { name: 'cascade-2v3', run: cascade2v3 },
   { name: 'cascade-seq2-vco2', run: cascadeSeq2DrivesVco2 },
   { name: 'monarch-clocks-anvil', run: monarchClocksAnvilLockstep },
+  { name: 'cascade-clocks-monarch', run: cascadeClocksMonarchTempo },
+  { name: 'monarch-assign-clock2', run: monarchAssignClock2 },
+  { name: 'monarch-assign-ramp', run: monarchAssignRamp },
+  { name: 'midi-clock-drives-cascade', run: midiClockDrivesCascade },
   { name: 'edge-detector', run: edgeDetector },
   { name: 'samp-trigger', run: sampTrigger },
   { name: 'factory-kit', run: factoryKit },

@@ -158,3 +158,27 @@ test('drum machine: on the sampler tab, cell round-trips, RUN plays, CLEAR zeroe
 
   expect(errors).toEqual([]);
 });
+
+test('drum grid runs and stops with the master transport (option C: runAll/stopAll)', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByTestId('power').click();
+  await page.waitForFunction(() => (window.__synthstackStudio as any)?.powered === true);
+  // The LIVE engine flag is what actually sounds; the PERSISTED flag is what the latch + save
+  // read. C must keep both in step whether the grid is started here or from the drum panel.
+  const liveRunning = () =>
+    page.evaluate(() => (window.__synthstackStudio as any).studioInstance.samplerSeq.isPlaying() as boolean);
+  const persistedRunning = () =>
+    page.evaluate(() => window.__synthstackStudio!.getDrumSeqRunning() as boolean);
+
+  // RUN ALL is the single master transport — it now starts the drum grid in the same gesture
+  // as the voices (the grid slaves to the Monarch phase, started together → locked, no
+  // who-started-first ambiguity). STOP ALL halts it again.
+  await page.evaluate(() => (window.__synthstackStudio as any).runAll());
+  await expect.poll(liveRunning).toBe(true);
+  expect(await persistedRunning()).toBe(true);
+  await page.evaluate(() => (window.__synthstackStudio as any).stopAll());
+  await expect.poll(liveRunning).toBe(false);
+  expect(await persistedRunning()).toBe(false);
+});

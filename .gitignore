@@ -11,6 +11,17 @@ docs/
 exports/
 scripts/
 
+# Local-only — manual-derived patchbay-fidelity validation harness. It is transcribed
+# from the hardware manuals (verbatim quotes/citations) and reads them from the gitignored
+# docs/ at run time, so it is BOTH local-by-dependency AND must stay out of the public repo
+# (scrub rule). The shippable features it validates (MIDI clock, ASSIGN, external clock) DO
+# ship; only this validation tooling stays local.
+data/fidelity/
+test/audio/normalsBattery.ts
+test/audio/recipeBattery.ts
+test/unit/fidelityLock.test.ts
+test/unit/recipes.test.ts
+
 # Local-only root docs: only README + CLAUDE live in the repo.
 /*.md
 !README.md

@@ -110,6 +110,14 @@ export class MasterRecorder {
     if (!this.isRecording || this.recorder === null) return Promise.resolve(null);
     return new Promise<Blob | null>((resolve) => {
       const rec = this.recorder!;
+      // Replace the start()-era onerror (which never resolves): if the recorder fires 'error'
+      // instead of 'stop' after rec.stop(), settle the promise so powerOff (which awaits this)
+      // can never hang. Single-slot handler assignment ensures only one resolver path runs.
+      rec.onerror = () => {
+        this.chunks = [];
+        this.recorder = null;
+        resolve(null);
+      };
       rec.onstop = () => {
         const type = rec.mimeType || this.mime;
         const blob = new Blob(this.chunks, type ? { type } : undefined);

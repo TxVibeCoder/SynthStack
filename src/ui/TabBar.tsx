@@ -84,7 +84,7 @@ export const TabBar = memo(function TabBar({
             aria-selected={selected}
             tabIndex={selected ? 0 : -1}
             data-testid={`tab-${id}`}
-            className={selected ? 'tab-bar__tab tab-bar__tab--active' : 'tab-bar__tab'}
+            className={`tab-bar__tab tab-bar__tab--${id}${selected ? ' tab-bar__tab--active' : ''}`}
             onClick={() => onTab(id)}
             onKeyDown={onKeyDown}
           >

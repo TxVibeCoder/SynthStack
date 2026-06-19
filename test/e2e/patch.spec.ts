@@ -129,3 +129,34 @@ test('patching: drag, fan-in rejection, removal, INIT reset', async ({ page }) =
 
   expect(errors).toEqual([]);
 });
+
+test('unplugging the HOLD cable releases hold (no stranded freeze)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('power').click();
+  await page.waitForFunction(() => (window.__synthstackStudio as any)?.powered === true);
+
+  const bridge = (fn: string, ...args: unknown[]) =>
+    page.evaluate(([f, a]) => (window.__synthstackStudio as any)[f as string](...(a as unknown[])), [fn, args] as const);
+  const holdActive = () =>
+    page.evaluate(() => (window.__synthstackStudio as any).studioInstance.monarchSeq.holdActive as boolean);
+  const setHold = (v: boolean) =>
+    page.evaluate((on) => { (window.__synthstackStudio as any).studioInstance.monarchSeq.holdActive = on; }, v);
+
+  // Patch a source into MON_HOLD_IN, then simulate that source having driven the gate HIGH.
+  // (The real edge worklet sets holdActive from a >=2.5 vv source; we set it directly so the
+  // assertion is deterministic and not tied to a live signal phase.)
+  await bridge('commitCables', [{ id: 'h1', from: 'MON_ASSIGN_OUT', to: 'MON_HOLD_IN', color: '#fff' }]);
+  await setHold(true);
+  expect(await holdActive()).toBe(true);
+
+  // UNPLUG: no cable = HOLD gate low = released. Before the fix this stranded holdActive=true
+  // (the falling-edge follower is torn down with the cable) and froze the sequence on one step.
+  await bridge('commitCables', []);
+  expect(await holdActive()).toBe(false);
+
+  // An UNRELATED patch edit must NOT clobber a panel-set HOLD (no HOLD cable was present, so
+  // the release branch stays inert).
+  await setHold(true);
+  await bridge('commitCables', [{ id: 'x1', from: 'MON_LFO_TRI_OUT', to: 'MON_VCF_CUTOFF_IN', color: '#fff' }]);
+  expect(await holdActive()).toBe(true);
+});

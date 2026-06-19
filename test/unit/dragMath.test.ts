@@ -180,20 +180,20 @@ describe('dragMath: stepKnob with lin taper is CONTINUOUS (sequencer step knobs)
 });
 
 describe('dragMath: dragDelta', () => {
-  it('mirrors the theme constants (150 px sweep, x0.1 fine)', () => {
-    expect(DRAG_FULL_SWEEP_PX).toBe(150);
+  it('mirrors the theme constants (200 px sweep, x0.1 fine)', () => {
+    expect(DRAG_FULL_SWEEP_PX).toBe(200);
     expect(FINE_DRAG_FACTOR).toBe(0.1);
   });
 
-  it('150 px = one full sweep, proportional below', () => {
-    expect(dragDelta(150, false)).toBe(1);
-    expect(dragDelta(15, false)).toBeCloseTo(0.1, 10);
-    expect(dragDelta(-75, false)).toBeCloseTo(-0.5, 10);
+  it('200 px = one full sweep, proportional below', () => {
+    expect(dragDelta(200, false)).toBe(1);
+    expect(dragDelta(20, false)).toBeCloseTo(0.1, 10);
+    expect(dragDelta(-100, false)).toBeCloseTo(-0.5, 10);
   });
 
   it('Shift fine-drag scales by 0.1', () => {
-    expect(dragDelta(15, true)).toBeCloseTo(0.01, 10);
-    expect(dragDelta(150, true)).toBeCloseTo(0.1, 10);
+    expect(dragDelta(20, true)).toBeCloseTo(0.01, 10);
+    expect(dragDelta(200, true)).toBeCloseTo(0.1, 10);
   });
 });
 
@@ -249,5 +249,26 @@ describe('dragMath: formatValue', () => {
     expect(formatValue(0.98, pulseWidth)).toBe('98%');
     // 0..100-calibrated '%' defs (Monarch SWING) are untouched
     expect(formatValue(62.4, knob({ min: 0, max: 100, unit: '%' }))).toBe('62%');
+  });
+});
+
+describe('dragMath: NaN / non-finite hardening', () => {
+  it('clamp01 coerces every non-finite input to 0', () => {
+    expect(clamp01(NaN)).toBe(0);
+    expect(clamp01(Infinity)).toBe(0);
+    expect(clamp01(-Infinity)).toBe(0);
+  });
+
+  it('valueToNorm / normToValue never emit a non-finite number', () => {
+    expect(valueToNorm(NaN, lin10)).toBe(0);
+    expect(Number.isFinite(normToValue(NaN, lin10))).toBe(true);
+    expect(normToValue(NaN, lin10)).toBe(0); // -> min
+    expect(Number.isFinite(normToValue(Infinity, exp20k))).toBe(true);
+  });
+
+  it('formatValue falls back to the default — never renders "NaN" / "Infinity"', () => {
+    expect(formatValue(NaN, lin10)).not.toContain('NaN');
+    expect(formatValue(Infinity, exp20k)).not.toContain('Infinity');
+    expect(formatValue(NaN, sub16)).not.toContain('NaN');
   });
 });
