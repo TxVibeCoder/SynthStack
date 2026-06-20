@@ -2,7 +2,19 @@
  * "Virtual volts" (vv) conventions and param adapter formulas.
  * Signals inside the engine carry the natural printed numeric values:
  * audio ±5, gates 0→+5, EGs 0→+7.5/+8, pitch CV 1 vv per octave.
- * This file is the ONLY place vv becomes Hz / seconds / gain.
+ *
+ * ⚠️ LIVE-PATH NOTE (control-fidelity audit 2026-06-19): the knob → natural-unit
+ * *adapters* below — `monarchVcoHz`, `cutoffHz`, `lfoRateHz`, `egTimeS`, `resonance01`,
+ * `mixPosition01`, `pulseWidth01`, `vcaGain`, `cascadeVcoKnobHz`, `cascadeSubDivider` —
+ * are **REFERENCE / TEST-ONLY**. They have zero importers in `src/`. The real UI→engine
+ * path is `Knob.tsx → dragMath.normToValue(norm, controlDef)`, which maps the 0..1 drag
+ * through the **data/*.json** `min/max/taper`; the resulting natural-unit value is written
+ * straight to the worklet AudioParam by each module's `setControl`. These adapters encode
+ * the same intended curves and are locked against the JSON by `test/unit/units.test.ts`
+ * (+ the JSON ranges themselves by `test/unit/fidelityLock.test.ts`) — but editing one of
+ * them does NOT change what a listener hears; edit the JSON for that. The CONSTANTS,
+ * `clamp`, `expKnob`/`expKnob01`, `anvilStepRateHz`, `cascade*`/`swing*`/`monarchStepDurS`
+ * helpers ARE used on the live path.
  */
 
 export const PITCH_REF_HZ = 261.63; // C4 at 0 vv
@@ -30,12 +42,13 @@ export function expKnob01(value: number, min: number, max: number): number {
   return clamp(Math.log(value / min) / Math.log(max / min), 0, 1);
 }
 
-/** Monarch VCO: f = 261.63 × 2^(knob + kbCv + drift + modCv); FREQUENCY knob spans −1..+1 vv. */
+/** @reference (test-only — see file header). Monarch VCO: f = 261.63 × 2^(knob + kbCv + drift + modCv); FREQUENCY knob spans −1..+1 vv. */
 export function monarchVcoHz(knobVv: number, kbCvVv: number, driftVv: number, modCvVv: number): number {
   return clamp(PITCH_REF_HZ * Math.pow(2, knobVv + kbCvVv + driftVv + modCvVv), 8, 8000);
 }
 
 /**
+ * @reference (test-only — see file header).
  * Filter cutoff (all three modules): knob exponential 20 Hz–20 kHz (≈10 octaves),
  * 1 vv = 1 octave of cutoff. f = 20 × 2^(10·knob01 + cv).
  */
@@ -43,17 +56,18 @@ export function cutoffHz(knob01: number, cvVv: number): number {
   return clamp(20 * Math.pow(2, 10 * clamp(knob01, 0, 1) + cvVv), 10, 24000);
 }
 
-/** Monarch resonance: knob01 + RES CV/10 (±5 vv = full sweep), clamp 0..1. */
+/** @reference (test-only — see file header). Monarch resonance: knob01 + RES CV/10 (±5 vv = full sweep), clamp 0..1. */
 export function resonance01(knob01: number, cvVv: number): number {
   return clamp(knob01 + cvVv / 10, 0, 1);
 }
 
-/** Monarch LFO rate: f = clamp(0.1 × 2^(11.77·knob01 + cv), 0.05, 600). */
+/** @reference (test-only — see file header). Monarch LFO rate: f = clamp(0.1 × 2^(11.77·knob01 + cv), 0.05, 600). */
 export function lfoRateHz(knob01: number, cvVv: number): number {
   return clamp(0.1 * Math.pow(2, 11.77 * clamp(knob01, 0, 1) + cvVv), 0.05, 600);
 }
 
 /**
+ * @reference (test-only — see file header).
  * Pulse width: knob in [min,max], CV sums with ±5 vv = full span.
  * Width hitting the rails silences the pulse — authentic, allow it.
  */
@@ -62,12 +76,13 @@ export function pulseWidth01(knobPw: number, cvVv: number, min = 0.02, max = 0.9
   return clamp(knobPw + (cvVv * span) / 10, min, max);
 }
 
-/** EG times: exponential knob between minS and maxS. */
+/** @reference (test-only — see file header). EG times: exponential knob between minS and maxS. */
 export function egTimeS(knob01: number, minS: number, maxS: number): number {
   return expKnob(knob01, minS, maxS);
 }
 
 /**
+ * @reference (test-only — see file header).
  * VCA gain in EG mode: perceptual curve (eg/7.5)^1.3, plus summed VCA CV.
  * Sum may exceed 1 — soft-clip with a tanh knee approaching 1.2.
  */
@@ -78,7 +93,7 @@ export function vcaGain(egVv: number, cvVv: number, peakVv = 7.5): number {
   return 1 + 0.2 * Math.tanh((summed - 1) / 0.2); // knee above 1.0, asymptote 1.2
 }
 
-/** MIX crossfade position from knob + CV (±5 vv = full sweep at center knob). */
+/** @reference (test-only — see file header). MIX crossfade position from knob + CV (±5 vv = full sweep at center knob). */
 export function mixPosition01(knob01: number, cvVv: number): number {
   return clamp(knob01 + cvVv / 10, 0, 1);
 }
@@ -115,12 +130,12 @@ export function anvilVelocityDecayScale(velocityVv: number): number {
   return 1 + 0.15 * (clamp(velocityVv, 0, 5) / 5);
 }
 
-/** Cascade VCO knob: exponential 262–4186 Hz (4 octaves, CCW = middle C). */
+/** @reference (test-only — see file header). Cascade VCO knob: exponential 262–4186 Hz (4 octaves, CCW = middle C). */
 export function cascadeVcoKnobHz(knob01: number): number {
   return PITCH_REF_HZ * Math.pow(2, 4 * clamp(knob01, 0, 1));
 }
 
-/** Cascade sub divider: N = clamp(round(knob + seq + cv·scale), 1, 16). */
+/** @reference (test-only — see file header). Cascade sub divider: N = clamp(round(knob + seq + cv·scale), 1, 16). */
 export function cascadeSubDivider(knobN: number, seqOffset: number, cvVv: number): number {
   return clamp(Math.round(knobN + seqOffset + cvVv * 1.5), 1, 16);
 }

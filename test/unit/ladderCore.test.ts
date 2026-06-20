@@ -104,6 +104,22 @@ describe('ladder.worklet core — Huovilainen (work order §7.3)', () => {
     expect(tail(0.9)).toBeGreaterThan(0.3); // robust self-oscillation by ~3 o'clock+
   });
 
+  it('per-module resonance scale moves the onset earlier (Cascade ≈ 2 o\'clock)', () => {
+    const tail = (knob: number, scale: number): number => {
+      const core = new LadderCore(FS);
+      core.setResonanceScale(scale);
+      core.setCutoffHz(1000);
+      core.setResonance01(knob);
+      const input = new Float32Array(3 * FS);
+      input[0] = 1; // tiny kick, then silence
+      return rms(processAll(core, input), 2 * FS, 3 * FS);
+    };
+    // With the Cascade's 1.43 scale, 0.70 ("above two o'clock") already self-oscillates —
+    // where the default 1.15 scale is still silent (asserted in the C2 test above).
+    expect(tail(0.7, 1.43)).toBeGreaterThan(0.3);
+    expect(tail(0.55, 1.43)).toBeLessThan(0.01); // still silent below the earlier onset
+  });
+
   it('cutoff sweep 100 Hz -> 8 kHz: centroid strictly increases, no NaN/Inf', () => {
     const core = new LadderCore(FS);
     core.setResonance01(0.2);

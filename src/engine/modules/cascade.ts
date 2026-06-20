@@ -4,7 +4,9 @@
  *
  * Pitch model: each VCO has a scheduled ConstantSource pitch bus in vv. Subs ride
  * their parent's bus plus a divider offset of −log2(N) vv (division in frequency =
- * subtraction in vv). Quantize applies to knob+sequencer values at event time
+ * subtraction in vv). A single global FINE TUNE node (±50¢, a Setup-mode parameter with
+ * no panel knob) is summed onto both pitch buses, so it shifts both oscillators and all
+ * four subs uniformly. Quantize applies to knob+sequencer values at event time
  * (CV jacks remain continuous/unquantized — authentic behavior). The sub-CV jacks go
  * through a WaveShaper whose curve maps CV to the *delta* divider offset around
  * the current knob+seq integer (curve rebuilt on control changes).
@@ -18,6 +20,13 @@ import { clamp, cascadeSeqOctRange, cascadeSeqToSubOffset } from '../units';
 import { quantizeVv, type QuantizeMode } from '../quantize';
 
 const PITCH_REF_HZ = 261.63;
+
+/**
+ * Cascade resonance scale. The Cascade self-oscillates earlier than the Monarch / Anvil —
+ * "above two o'clock" (≈0.70 of the knob) per the measured reference, vs the shared ladder
+ * default's ~0.87. 1.43 ≈ 1/0.70 puts the onset there.
+ */
+const CASCADE_RES_SCALE = 1.43;
 
 interface VcoSection {
   vco: AudioWorkletNode;
@@ -46,6 +55,10 @@ export class CascadeModule extends ModuleBase {
   private readonly vcfEgAmt: GainNode;
   private readonly vcaGainNode: GainNode;
   private readonly volume: GainNode;
+  /** Global FINE TUNE (Setup-mode param): a ±50¢ offset in vv summed onto BOTH oscillators'
+   *  pitch buses (subs ride the same bus, so they shift with it). No panel knob — matches
+   *  the hardware, where it is set by holding OSC 1 + OSC 2 and turning TEMPO. */
+  private readonly fineTune: ConstantSourceNode;
   private readonly egGate: ConstantSourceNode;
   private readonly triggerOut: ConstantSourceNode;
   private readonly clockOut: ConstantSourceNode;
@@ -73,6 +86,11 @@ export class CascadeModule extends ModuleBase {
     this.drift1 = new DriftSource(ctx);
     this.drift2 = new DriftSource(ctx);
 
+    // Global fine tune (vv). Created before the sections so buildSection can sum it onto
+    // each pitch bus; default 0 vv = no shift (CAS_FINE_TUNE seeds 0, so it is inaudible
+    // until set via state/preset).
+    this.fineTune = constant(ctx, 0);
+
     // VCO 1 CV input passes onward to VCO 2 until VCO 2 is patched: the pass-along
     // signal is itself an internal source the router can resolve.
     const vco1InSignal = gain(ctx, 1);
@@ -90,6 +108,7 @@ export class CascadeModule extends ModuleBase {
       numberOfInputs: 2,
       numberOfOutputs: 1,
       outputChannelCount: [1],
+      processorOptions: { resScale: CASCADE_RES_SCALE }, // earlier self-oscillation onset
     });
     this.ladder.parameters.get('mode')!.value = 0; // locked LP
     mixSum.connect(this.ladder, 0, 0);
@@ -143,6 +162,9 @@ export class CascadeModule extends ModuleBase {
     vcaCtl.connect(vcaClip);
     this.vcaGainNode = gain(ctx, 0);
     vcaClip.connect(this.vcaGainNode.gain);
+    // Control-fidelity audit 2026-06-19 (§6 fix 7, LOW confidence — unpublished): the VOLUME and
+    // the six VCO/SUB LEVEL knobs use a linear taper (real audio pots are usually log). Endpoints
+    // are correct; the curve between them is an assumption held pending a bench reference.
     this.volume = gain(ctx, 0.7);
     this.ladder.connect(this.vcaGainNode).connect(this.volume);
     this.volume.connect(this.outputTap('CAS_VCA_OUT'));
@@ -190,6 +212,7 @@ export class CascadeModule extends ModuleBase {
     const pitchSet = constant(ctx, 0);
     pitchSet.connect(pitchBus);
     drift.output.connect(pitchBus);
+    this.fineTune.connect(pitchBus); // global ±50¢ Setup-mode fine tune (subs inherit via pitchBus)
     const cvIn = this.inputBus(`CAS_VCO${n}_IN`);
     cvIn.connect(pitchBus);
     pitchBus.connect(vco, 0, 0);
@@ -344,6 +367,10 @@ export class CascadeModule extends ModuleBase {
         break;
       case 'CAS_VOLUME':
         this.volume.gain.value = num;
+        break;
+      case 'CAS_FINE_TUNE':
+        // ±50 cents -> vv (1 vv = 1 octave = 1200 cents). Drives both oscillators + subs.
+        this.fineTune.offset.value = num / 1200;
         break;
       case 'CAS_EG': {
         const held = value === 'HELD';

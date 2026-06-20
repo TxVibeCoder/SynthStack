@@ -45,6 +45,14 @@ export class LadderCore {
   private cutoffTargetHz = 1000;
   private cutoffSmoothedHz = 1000;
   private resonanceKnob = 0; // 0..1 panel value
+  /**
+   * Per-module resonance scale: maps panel 0..1 -> internal 0..resScale, so robust
+   * self-oscillation begins at knob ≈ 1/resScale. The default 1.15 puts the onset at
+   * ~0.87 ("above 3 o'clock"), matching the Monarch and Anvil. A unit that self-
+   * oscillates earlier (the Cascade, "above two o'clock" per the measured reference)
+   * sets a larger scale via the worklet's `resScale` processorOption.
+   */
+  private resScale = 1.15;
   drive = 1.0;
   mode: FilterMode = 'LP';
 
@@ -62,6 +70,11 @@ export class LadderCore {
   /** Panel resonance 0..1; self-oscillation in the top ~20% of the knob. */
   setResonance01(knob01: number): void {
     this.resonanceKnob = knob01 < 0 ? 0 : knob01 > 1 ? 1 : knob01;
+  }
+
+  /** Per-module resonance scale (see the field doc). Guards against a non-positive value. */
+  setResonanceScale(scale: number): void {
+    this.resScale = Number.isFinite(scale) && scale > 0 ? scale : 1.15;
   }
 
   reset(): void {
@@ -82,8 +95,8 @@ export class LadderCore {
     const fcr = 1.873 * fc3 + 0.4955 * fc2 - 0.649 * fc + 0.9988;
     this.acr = -3.9364 * fc2 + 1.8409 * fc + 0.9968;
     this.tune = (1.0 - Math.exp(-TWO_PI * f * fcr)) / THERMAL;
-    // map panel 0..1 -> internal 0..1.15 so robust self-oscillation begins ~0.87
-    const res = this.resonanceKnob * 1.15;
+    // map panel 0..1 -> internal 0..resScale so robust self-oscillation begins ~1/resScale
+    const res = this.resonanceKnob * this.resScale;
     this.resQuad = 4.0 * res * this.acr;
   }
 

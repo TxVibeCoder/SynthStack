@@ -3,8 +3,8 @@
   "displayName": "Anvil",
   "internalSources": ["ANV_SEQ_CLOCK", "ANV_SEQ_VELOCITY_ROW", "ANV_NOISE"],
   "controls": [
-    { "id": "ANV_VCO1_FREQUENCY", "panelLabel": "VCO 1 FREQUENCY", "type": "knob", "min": -3, "max": 3, "default": 0, "taper": "lin", "unit": "vv", "manualRef": "Anvil p.13", "notes": "no published Hz figure; −3..+3 vv around C4 assumed" },
-    { "id": "ANV_VCO2_FREQUENCY", "panelLabel": "VCO 2 FREQUENCY", "type": "knob", "min": -3, "max": 3, "default": 0, "taper": "lin", "unit": "vv", "manualRef": "Anvil p.13" },
+    { "id": "ANV_VCO1_FREQUENCY", "panelLabel": "VCO 1 FREQUENCY", "type": "knob", "min": -5, "max": 5, "default": 0, "taper": "lin", "unit": "vv", "manualRef": "Anvil p.13", "notes": "±5 vv = the documented 10-octave / ±5 V FREQUENCY range; matches the step-PITCH knobs' own ±5" },
+    { "id": "ANV_VCO2_FREQUENCY", "panelLabel": "VCO 2 FREQUENCY", "type": "knob", "min": -5, "max": 5, "default": 0, "taper": "lin", "unit": "vv", "manualRef": "Anvil p.13" },
     { "id": "ANV_VCO1_WAVE", "panelLabel": "VCO 1 WAVE", "type": "switch", "positions": ["TRI", "SQ"], "default": "SQ", "manualRef": "Anvil p.14" },
     { "id": "ANV_VCO2_WAVE", "panelLabel": "VCO 2 WAVE", "type": "switch", "positions": ["TRI", "SQ"], "default": "SQ", "manualRef": "Anvil p.14" },
     { "id": "ANV_HARD_SYNC", "panelLabel": "HARD SYNC", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Anvil p.15", "notes": "VCO 2 phase-locked to VCO 1" },

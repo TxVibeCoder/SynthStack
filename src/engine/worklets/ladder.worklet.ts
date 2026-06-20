@@ -6,6 +6,8 @@
  * Outputs: 0 = audio (vv)
  * Params:  cutoffHz (k-rate, smoothed in core), resonance (k-rate 0..1),
  *          drive (k-rate), mode (k-rate: 0 = LP, 1 = HP)
+ * Options: processorOptions.resScale (number, optional) — per-module resonance scale
+ *          (self-oscillation onset ≈ 1/resScale); defaults to the core's 1.15.
  */
 
 import { LadderCore } from '../dsp/ladderCore';
@@ -22,6 +24,14 @@ class SynthStackLadderProcessor extends AudioWorkletProcessor {
 
   private readonly core = new LadderCore(sampleRate);
   private readonly silence = new Float32Array(128);
+
+  constructor(options?: AudioWorkletNodeOptions) {
+    super(options);
+    // Optional per-module resonance scale (e.g. the Cascade's earlier self-oscillation onset).
+    // Omitted by Monarch/Anvil, which keep the core default (1.15).
+    const resScale = (options?.processorOptions as { resScale?: number } | undefined)?.resScale;
+    if (typeof resScale === 'number') this.core.setResonanceScale(resScale);
+  }
 
   process(
     inputs: Float32Array[][],

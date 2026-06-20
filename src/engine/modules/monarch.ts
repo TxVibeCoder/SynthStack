@@ -19,7 +19,17 @@ import {
   clamp,
 } from '../units';
 
-/** Linear FM depth, Hz per vv (no published figure — tunable). */
+/**
+ * Linear FM depth, Hz per vv (no published figure — tunable).
+ *
+ * Control-fidelity audit 2026-06-19 (§6 fix 7, LOW confidence — no published figures):
+ * this and the VCO/VCF MOD-amount maxima below (VCO MOD ≈ ±5 oct, VCF MOD ≈ 7.5 oct at
+ * amount=1, set by the ±5/±7.5 vv source levels into the 1 vv/oct pitch & cutoff buses) are
+ * "probably deeper than the hardware," and VOLUME is a linear taper where a real pot is
+ * usually log/audio-taper. These are held at their current values deliberately: there is no
+ * measured target to calibrate to, so changing them would trade one guess for another. Pin
+ * them against a bench reference (or a vendor spec) before adjusting.
+ */
 const LIN_FM_DEPTH_HZ_PER_VV = 150;
 
 export class MonarchModule extends ModuleBase {

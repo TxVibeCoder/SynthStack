@@ -58,7 +58,8 @@
     { "id": "CAS_TRIGGER_BTN", "panelLabel": "TRIGGER", "type": "button", "manualRef": "Cascade p.28", "notes": "EG ON: restart EGs; EG OFF: acts as held-open gate; EG HELD: no effect" },
     { "id": "CAS_RESET", "panelLabel": "RESET", "type": "button", "manualRef": "Cascade p.29", "notes": "hold = stay at step 1 while EGs keep triggering; NEXT advances during hold" },
     { "id": "CAS_NEXT", "panelLabel": "NEXT", "type": "button", "manualRef": "Cascade p.29", "notes": "advance without EG retrigger" },
-    { "id": "CAS_EG", "panelLabel": "EG", "type": "button", "positions": ["OFF", "ON", "HELD"], "default": "ON", "manualRef": "Cascade p.29", "notes": "HELD = long-press, blinking; EGs forced to max until exited" }
+    { "id": "CAS_EG", "panelLabel": "EG", "type": "button", "positions": ["OFF", "ON", "HELD"], "default": "ON", "manualRef": "Cascade p.29", "notes": "HELD = long-press, blinking; EGs forced to max until exited" },
+    { "id": "CAS_FINE_TUNE", "panelLabel": "FINE TUNE", "type": "knob", "min": -50, "max": 50, "default": 0, "taper": "lin", "unit": "cents", "manualRef": "Cascade p.41", "notes": "Global ±50¢ fine tune of BOTH oscillators (and their subs). A Setup-mode parameter — on the hardware it is set by holding OSC 1 + OSC 2 and turning TEMPO, NOT a front-panel knob; so it has no cascadeLayout position (engine + state + preset settable, like MON_ASSIGN_SOURCE). Stored at power-up on the real unit." }
   ],
   "jacks": [
     { "id": "CAS_VCO1_IN", "panelLabel": "VCO 1", "direction": "in", "signal": "cv", "rangeVv": [-5, 5], "normalledTo": null, "feedsInternal": "1 vv/oct; sums with FREQ knob + Seq-1 steps; also normalled onward into VCO 2 in", "manualRef": "Cascade p.31" },

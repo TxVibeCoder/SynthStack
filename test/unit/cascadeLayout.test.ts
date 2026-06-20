@@ -42,8 +42,14 @@ describe('cascadeLayout (Cascade panel layout)', () => {
     expect(cascadeLayout.width).toBeGreaterThan(cascadeLayout.height); // landscape
   });
 
-  it('places every control id from data/cascade.json', () => {
+  // Setup-mode parameters with NO front-panel control — true to the hardware, where the real
+  // Cascade sets these via a button combo, not a panel knob (engine + state + preset
+  // settable). CAS_FINE_TUNE is the global ±50¢ fine tune. Mirrors monarchLayout's SETUP_ONLY.
+  const SETUP_ONLY = new Set(['CAS_FINE_TUNE']);
+
+  it('places every panel control id from data/cascade.json (Setup-only params excluded)', () => {
     for (const c of cascade.controls) {
+      if (SETUP_ONLY.has(c.id)) continue;
       expect(cascadeLayout.controls[c.id], `control ${c.id} missing a position`).toBeDefined();
     }
   });

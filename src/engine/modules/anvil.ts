@@ -10,7 +10,16 @@ import { createNoiseSource } from '../noise';
 import { DriftSource } from '../drift';
 import { PITCH_REF_HZ, clamp } from '../units';
 
-/** Linear FM depth, Hz per vv of (scaled) VCO1 signal — tunable. */
+/**
+ * Linear FM depth, Hz per vv of (scaled) VCO1 signal — tunable.
+ *
+ * Control-fidelity audit 2026-06-19 (§6 fix 7, LOW confidence — unpublished): this FM depth,
+ * the VCO/VCA decay endpoints, the bipolar EG-amount full-throw excursion (the `5/8` pitch
+ * scale below ≈ ±5 oct), and the linear VOLUME taper are unsourced assumptions. They are held
+ * at their current values — no measured target exists to calibrate against — pending a bench
+ * reference. (The Anvil HP-resonance "underwhelming/EQ-like" character is a separate, harder
+ * deviation noted in the audit but not in its one-line fix set.)
+ */
 const ANV_FM_DEPTH_HZ_PER_VV = 200;
 /** Decay CV: seconds added per vv (linear v1 simplification). */
 const DECAY_CV_S_PER_VV = 0.3;
