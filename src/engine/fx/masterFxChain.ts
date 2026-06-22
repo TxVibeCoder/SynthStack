@@ -8,6 +8,11 @@
  * The chain mirrors the master-volume surface: StudioContext owns it, Studio forwards
  * setMasterFx*, the bridge writes the `effects.master` store slice. applyMasterEffects()
  * pushes a whole state slice on load/INIT/preset so the graph matches the store.
+ *
+ * The class is GENERIC (the FxUnit builders take any BaseAudioContext): Studio also
+ * instantiates one per voice, inserted on each voice→mixer edge, fed the matching
+ * `effects.voices[id]` slice. `MasterFxId`/`MasterEffectsState`/`applyMasterEffects` keep
+ * their names but are the shared 3-effect shape used by both master and per-voice chains.
  */
 
 import { buildDelay, buildFlanger, buildReverb, type FxUnit } from './effects';

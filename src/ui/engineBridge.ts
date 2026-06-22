@@ -58,6 +58,7 @@ import {
   QUANTIZE_DIVISIONS,
   type CableState,
   type EffectsState,
+  type VoiceFxId,
   type PadState,
   type QuantizeDivision,
   type StudioState,
@@ -559,6 +560,27 @@ class EngineBridge {
     if (this._powered) this.studio.setMasterFxParam(id, param, value);
     const s = this.store.getState();
     (s.effects.master[id] as unknown as Record<string, number | boolean>)[param] = value;
+    this.store.setState(s);
+  }
+
+  // ---- per-voice insert effects (EffectsPanel target = a voice) -----------------------------
+  // Mirror the master-FX surface exactly, writing the `effects.voices[voiceId]` store slice.
+
+  setVoiceFxOn(voiceId: VoiceFxId, id: MasterFxId, on: boolean): void {
+    if (this._powered) this.studio.setVoiceFxOn(voiceId, id, on);
+    const s = this.store.getState();
+    s.effects.voices[voiceId][id].on = on;
+    this.store.setState(s);
+  }
+
+  setVoiceFxParam(voiceId: VoiceFxId, id: MasterFxId, param: string, value: number): void {
+    if (this._powered) this.studio.setVoiceFxParam(voiceId, id, param, value);
+  }
+
+  commitVoiceFxParam(voiceId: VoiceFxId, id: MasterFxId, param: string, value: number): void {
+    if (this._powered) this.studio.setVoiceFxParam(voiceId, id, param, value);
+    const s = this.store.getState();
+    (s.effects.voices[voiceId][id] as unknown as Record<string, number | boolean>)[param] = value;
     this.store.setState(s);
   }
 

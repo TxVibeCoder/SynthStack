@@ -10,7 +10,7 @@
  */
 
 import { StudioContext } from './context';
-import type { MasterFxId } from './fx/masterFxChain';
+import { MasterFxChain, type MasterFxId } from './fx/masterFxChain';
 import { MonarchModule } from './modules/monarch';
 import { AnvilModule } from './modules/anvil';
 import { CascadeModule } from './modules/cascade';
@@ -36,9 +36,11 @@ import {
   coalesceSamplerState,
   defaultSamplerState,
   defaultPad,
+  VOICE_FX_IDS,
   type StudioState,
   type SamplerState,
   type QuantizeDivision,
+  type VoiceFxId,
 } from '../state/studioState';
 import { anvilStepRateHz, expKnob01 } from './units';
 import { assignSourceValue } from './assign';
@@ -87,6 +89,10 @@ export class Studio {
   /** Engine-side mirror of SAMP_QUANTIZE — the manual-launch alignment grid. */
   private samplerQuantize: QuantDivision = '1 BAR';
   tempoLink = false;
+
+  /** Per-voice insert-FX chains (flanger→delay→reverb), one per synth voice, sitting on
+   *  each voice→mixer edge. Built once at power-on (see the mixer-wiring loop). */
+  private readonly voiceFx = new Map<VoiceFxId, MasterFxChain>();
 
   /** Rendered factory one-shot buffers (peak-normalised ±1.0), keyed by 'factory-*'
    *  id. In-memory only — never serialized (D10); state stores only the sampleId ref. */
@@ -142,7 +148,17 @@ export class Studio {
     // (mainOutJack, mixerChannel) is read per-entry, reproducing the explicit connectInput
     // calls: (CAS_VCA_OUT,0) (ANV_VCA_OUT,1) (MON_VCA_OUT,2) (SAMP_MIX_OUT,3).
     for (const m of mixedModules) {
-      this.mixer.connectInput(instances.get(m.id)!.outputTap(m.mainOutJack!), m.mixerChannel!);
+      const tap = instances.get(m.id)!.outputTap(m.mainOutJack!);
+      if ((VOICE_FX_IDS as string[]).includes(m.id)) {
+        // Per-voice insert FX: voice out → [flanger→delay→reverb] → mixer channel. The
+        // patchbay VCA-OUT jack is a SEPARATE fan-out off `tap`, so cables stay dry (pre-FX).
+        const fx = new MasterFxChain(ctx);
+        tap.connect(fx.input);
+        this.mixer.connectInput(fx.output, m.mixerChannel!);
+        this.voiceFx.set(m.id as VoiceFxId, fx);
+      } else {
+        this.mixer.connectInput(tap, m.mixerChannel!);
+      }
     }
 
     // Registry membership == registry order; the def list (incl. samplerDef) makes all 17
@@ -719,6 +735,16 @@ export class Studio {
     this.context.setMasterFxParam(id, param, value);
   }
 
+  // ---- per-voice insert effects (the 3 voice→mixer edges) ----------------------------------
+
+  setVoiceFxOn(voiceId: VoiceFxId, id: MasterFxId, on: boolean): void {
+    this.voiceFx.get(voiceId)?.setOn(id, on);
+  }
+
+  setVoiceFxParam(voiceId: VoiceFxId, id: MasterFxId, param: string, value: number): void {
+    this.voiceFx.get(voiceId)?.setParam(id, param, value);
+  }
+
   // ---- master-output recording passthroughs (ADDITIVE; called by src/ui/engineBridge.ts)
   // The recorder is owned by StudioContext (it taps the private softClip); these only
   // delegate. powerOff (above) already routes through context.powerOff, which auto-stops
@@ -979,10 +1005,12 @@ export class Studio {
     this.samplerSeq.setPattern(samp.pattern);
     this.tempoLink = state.mixer.tempoLink;
     this.applyTempoLink();
-    // Master FX: push the whole effects.master slice into the graph (coalesce fills an
-    // older tree's missing `effects` -> all off). Effects are dry-only when off, so this
-    // is silent for a default tree; INIT/preset restores the exact wet/param state.
-    this.context.applyMasterEffects(coalesceEffectsState(state.effects).master);
+    // FX: push the whole effects slice into the graph (coalesce fills an older tree's missing
+    // `effects` / `effects.voices` -> all off). Effects are dry-only when off, so this is silent
+    // for a default tree; INIT/preset restores the exact wet/param state for master + each voice.
+    const fx = coalesceEffectsState(state.effects);
+    this.context.applyMasterEffects(fx.master);
+    for (const v of VOICE_FX_IDS) this.voiceFx.get(v)?.applyMasterEffects(fx.voices[v]);
   }
 
   getState(): StudioState {

@@ -110,8 +110,14 @@ export interface MasterEffectsState {
   delay: DelayState;
   reverb: ReverbState;
 }
+/** The three voices that carry their own insert-FX chain (same 3-effect shape as the master). */
+export type VoiceFxId = 'cascade' | 'anvil' | 'monarch';
+export const VOICE_FX_IDS: VoiceFxId[] = ['cascade', 'anvil', 'monarch'];
 export interface EffectsState {
   master: MasterEffectsState;
+  /** Per-voice insert FX (flanger→delay→reverb on each voice→mixer edge). The voice's
+   *  patchbay VCA-OUT jack stays dry — this chain is a mixer-channel insert. */
+  voices: Record<VoiceFxId, MasterEffectsState>;
 }
 
 export interface StudioState {
@@ -227,12 +233,22 @@ export function coalesceKeyboardState(raw: Partial<KeyboardState> | undefined): 
   return { octave };
 }
 
+/** A fresh all-off 3-effect chain — the shared default shape for the master AND each voice. */
+export function defaultFxChainState(): MasterEffectsState {
+  return {
+    flanger: { on: false, rate: 0.4, depth: 0.5, feedback: 0.3, mix: 0.5 },
+    delay: { on: false, time: 0.3, feedback: 0.35, mix: 0.4 },
+    reverb: { on: false, size: 0.6, mix: 0.3 },
+  };
+}
+
 export function defaultEffectsState(): EffectsState {
   return {
-    master: {
-      flanger: { on: false, rate: 0.4, depth: 0.5, feedback: 0.3, mix: 0.5 },
-      delay: { on: false, time: 0.3, feedback: 0.35, mix: 0.4 },
-      reverb: { on: false, size: 0.6, mix: 0.3 },
+    master: defaultFxChainState(),
+    voices: {
+      cascade: defaultFxChainState(),
+      anvil: defaultFxChainState(),
+      monarch: defaultFxChainState(),
     },
   };
 }
@@ -248,30 +264,42 @@ function num(v: unknown, def: number, lo: number, hi: number): number {
  * `effects` -> all effects off at their default params. Every field is validated so a
  * hand-edited bundle can't inject junk into an AudioParam.
  */
-export function coalesceEffectsState(raw: Partial<EffectsState> | undefined): EffectsState {
-  const d = defaultEffectsState().master;
-  const m = raw?.master;
+/** Coalesce one 3-effect chain slice (master or a voice) against the default shape. */
+function coalesceFxChain(
+  raw: Partial<MasterEffectsState> | undefined,
+  d: MasterEffectsState,
+): MasterEffectsState {
   const flag = (v: unknown, def: boolean) => (typeof v === 'boolean' ? v : def);
   return {
-    master: {
-      flanger: {
-        on: flag(m?.flanger?.on, d.flanger.on),
-        rate: num(m?.flanger?.rate, d.flanger.rate, 0.05, 8),
-        depth: num(m?.flanger?.depth, d.flanger.depth, 0, 1),
-        feedback: num(m?.flanger?.feedback, d.flanger.feedback, 0, 0.95),
-        mix: num(m?.flanger?.mix, d.flanger.mix, 0, 1),
-      },
-      delay: {
-        on: flag(m?.delay?.on, d.delay.on),
-        time: num(m?.delay?.time, d.delay.time, 0.02, 2),
-        feedback: num(m?.delay?.feedback, d.delay.feedback, 0, 0.95),
-        mix: num(m?.delay?.mix, d.delay.mix, 0, 1),
-      },
-      reverb: {
-        on: flag(m?.reverb?.on, d.reverb.on),
-        size: num(m?.reverb?.size, d.reverb.size, 0, 1),
-        mix: num(m?.reverb?.mix, d.reverb.mix, 0, 1),
-      },
+    flanger: {
+      on: flag(raw?.flanger?.on, d.flanger.on),
+      rate: num(raw?.flanger?.rate, d.flanger.rate, 0.05, 8),
+      depth: num(raw?.flanger?.depth, d.flanger.depth, 0, 1),
+      feedback: num(raw?.flanger?.feedback, d.flanger.feedback, 0, 0.95),
+      mix: num(raw?.flanger?.mix, d.flanger.mix, 0, 1),
+    },
+    delay: {
+      on: flag(raw?.delay?.on, d.delay.on),
+      time: num(raw?.delay?.time, d.delay.time, 0.02, 2),
+      feedback: num(raw?.delay?.feedback, d.delay.feedback, 0, 0.95),
+      mix: num(raw?.delay?.mix, d.delay.mix, 0, 1),
+    },
+    reverb: {
+      on: flag(raw?.reverb?.on, d.reverb.on),
+      size: num(raw?.reverb?.size, d.reverb.size, 0, 1),
+      mix: num(raw?.reverb?.mix, d.reverb.mix, 0, 1),
+    },
+  };
+}
+
+export function coalesceEffectsState(raw: Partial<EffectsState> | undefined): EffectsState {
+  const d = defaultFxChainState();
+  return {
+    master: coalesceFxChain(raw?.master, d),
+    voices: {
+      cascade: coalesceFxChain(raw?.voices?.cascade, d),
+      anvil: coalesceFxChain(raw?.voices?.anvil, d),
+      monarch: coalesceFxChain(raw?.voices?.monarch, d),
     },
   };
 }

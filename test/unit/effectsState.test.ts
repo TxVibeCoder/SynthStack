@@ -1,7 +1,7 @@
 /**
- * Master-effects state (Wave 2): the `effects` slice must default all-off, round-trip
- * through JSON, and coalesce any partial / older / junk tree to a complete, clamped
- * EffectsState (the load-safety net's contract — mirrors coalesceSamplerState).
+ * Effects state (Wave 2): the `effects` slice (master bus + per-voice insert chains) must
+ * default all-off, round-trip through JSON, and coalesce any partial / older / junk tree to a
+ * complete, clamped EffectsState (the load-safety net's contract — mirrors coalesceSamplerState).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -79,5 +79,36 @@ describe('effects state', () => {
     const out = coalesceStudioState({ effects: { master: { reverb: { on: true, size: 0.5, mix: 0.5 } } } });
     expect(out.effects.master.reverb.on).toBe(true);
     expect(out.effects.master.flanger.on).toBe(false); // missing -> default
+  });
+
+  it('defaults a per-voice insert chain for each voice, all off', () => {
+    const e = defaultEffectsState();
+    for (const v of ['cascade', 'anvil', 'monarch'] as const) {
+      expect(e.voices[v].flanger.on, v).toBe(false);
+      expect(e.voices[v].delay.on, v).toBe(false);
+      expect(e.voices[v].reverb.on, v).toBe(false);
+      expect(e.voices[v].reverb.size, v).toBeGreaterThan(0);
+    }
+  });
+
+  it('coalesces per-voice slices: keeps valid, fills missing, defaults absent voices', () => {
+    const raw = {
+      voices: { cascade: { delay: { on: true, time: 0.5, feedback: 0.6, mix: 0.5 } } },
+    } as unknown as Partial<EffectsState>;
+    const out = coalesceEffectsState(raw);
+    expect(out.voices.cascade.delay.on).toBe(true);
+    expect(out.voices.cascade.delay.time).toBe(0.5);
+    expect(out.voices.cascade.flanger.on).toBe(false); // missing effect -> default
+    expect(out.voices.anvil).toEqual(defaultEffectsState().voices.anvil); // absent voice -> all-off
+    expect(out.voices.monarch).toEqual(defaultEffectsState().voices.monarch);
+  });
+
+  it('a per-voice slice round-trips through the full load-safety net', () => {
+    const out = coalesceStudioState({
+      effects: { voices: { monarch: { flanger: { on: true, rate: 3, depth: 0.2, feedback: 0.4, mix: 0.6 } } } },
+    } as never);
+    expect(out.effects.voices.monarch.flanger.on).toBe(true);
+    expect(out.effects.voices.monarch.flanger.rate).toBe(3);
+    expect(out.effects.voices.cascade.flanger.on).toBe(false); // untouched voice stays default
   });
 });
