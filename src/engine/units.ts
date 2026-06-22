@@ -29,6 +29,9 @@ export const ACCENT_VCA_GAIN = 1.25;
 export const DRIFT_MAX_VV = 0.0025; // ±3 cents
 
 export function clamp(x: number, min: number, max: number): number {
+  // NaN slips past BOTH comparisons below and would propagate (a NaN tempo/rate/param silently
+  // wedges a transport or AudioParam). Default it to the low rail. ±Infinity already clamps right.
+  if (Number.isNaN(x)) return min;
   return x < min ? min : x > max ? max : x;
 }
 

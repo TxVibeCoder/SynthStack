@@ -59,6 +59,8 @@ export interface KnobProps {
   size?: KnobSize;
   /** Optional machine-accent color (GROUP_BORDER) for the knob skirt — per-panel color coding. */
   accent?: string;
+  /** Optional dim second line under the panel label (e.g. a live "≈ 120 BPM" tempo readout). */
+  subLabel?: string;
   x: number;
   y: number;
 }

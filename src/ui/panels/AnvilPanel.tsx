@@ -77,6 +77,27 @@ const PanelKnob = memo(function PanelKnob({
   );
 });
 
+/** ANV_TEMPO is a step-RATE knob in Hz; surface its 16th-note tempo (stepHz × 15 = BPM) as a
+ *  live dim sub-label under the knob, so a BPM-thinking player isn't stuck reading Hz. */
+const ANV_TEMPO_BPM = 15;
+const TempoKnob = memo(function TempoKnob({ def, x, y, size }: PlacedControl & { size?: KnobSize }) {
+  const [value, onInput, onCommit] = useControl<number>(MODULE_ID, def.id, numericDefault(def));
+  const bpm = Math.round((value || 0) * ANV_TEMPO_BPM);
+  return (
+    <Knob
+      def={def}
+      value={value}
+      onInput={onInput}
+      onCommit={onCommit}
+      size={size}
+      accent={ACCENT}
+      subLabel={`≈ ${bpm} BPM`}
+      x={x}
+      y={y}
+    />
+  );
+});
+
 /** switch — discrete: engine write + store commit together (no debounce). */
 const PanelSwitch = memo(function PanelSwitch({ def, x, y }: PlacedControl) {
   const [value, , onCommit] = useControl<string>(MODULE_ID, def.id, positionDefault(def));
@@ -183,6 +204,9 @@ function renderControl(def: ControlDef) {
   switch (def.type) {
     case 'knob':
     case 'stepKnob':
+      if (def.id === 'ANV_TEMPO') {
+        return <TempoKnob key={def.id} def={def} x={pos.x} y={pos.y} size={pos.size} />;
+      }
       return <PanelKnob key={def.id} def={def} x={pos.x} y={pos.y} size={pos.size} />;
     case 'switch':
       return <PanelSwitch key={def.id} def={def} x={pos.x} y={pos.y} />;

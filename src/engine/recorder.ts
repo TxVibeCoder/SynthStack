@@ -23,12 +23,18 @@ import {
   recordingExtForMime,
 } from './recordHelpers';
 
+/** Auto-stop a take after 10 minutes to bound the in-RAM Blob — a marathon record otherwise
+ *  accumulates chunks until the tab is discarded. The user still gets the capped file's download. */
+export const MAX_RECORD_MS = 10 * 60 * 1000;
+
 export class MasterRecorder {
   private streamDest: MediaStreamAudioDestinationNode | null = null;
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
   private startEpochMs = 0;
   private mime = '';
+  /** Auto-stop timer (UI timer, not an audio event); cleared on any stop. */
+  private capTimer: ReturnType<typeof setTimeout> | null = null;
   /** Computed once: the runtime actually has MediaRecorder + createMediaStreamDestination. */
   private readonly supported: boolean;
 
@@ -91,9 +97,12 @@ export class MasterRecorder {
       this.recorder.onerror = () => {
         this.chunks = [];
         this.recorder = null;
+        this.clearCapTimer();
       };
       this.recorder.start(); // no timeslice — one final dataavailable on stop()
       this.startEpochMs = this.nowMs();
+      // Bound RAM: auto-stop (assemble + download) after MAX_RECORD_MS; a manual stop cancels it.
+      this.capTimer = setTimeout(() => void this.stop(), MAX_RECORD_MS);
       return true;
     } catch {
       return false;
@@ -107,6 +116,7 @@ export class MasterRecorder {
    * blob assembly + download must complete BEFORE the context is suspended.
    */
   stop(): Promise<Blob | null> {
+    this.clearCapTimer(); // a manual stop (or the auto-stop firing) cancels the cap timer
     if (!this.isRecording || this.recorder === null) return Promise.resolve(null);
     return new Promise<Blob | null>((resolve) => {
       const rec = this.recorder!;
@@ -136,6 +146,13 @@ export class MasterRecorder {
         resolve(null);
       }
     });
+  }
+
+  private clearCapTimer(): void {
+    if (this.capTimer !== null) {
+      clearTimeout(this.capTimer);
+      this.capTimer = null;
+    }
   }
 
   /** The wall-clock read for the filename, isolated in the shell and PASSED INTO the

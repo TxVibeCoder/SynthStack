@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clamp,
   cutoffHz,
   anvilStepRateHz,
   equalPowerXfade,
@@ -93,6 +94,15 @@ describe('param adapters (work order §7.5, D8)', () => {
     expect(cascadeTempoHz(1)).toBeCloseTo(50, 1);
     expect(cascadeRhythmDivision(8, -5)).toBe(1);
     expect(cascadeSeqOctRange('OCT5')).toBe(5);
+  });
+
+  it('clamp guards NaN to the low rail (never propagate non-finite into a transport/param)', () => {
+    expect(clamp(NaN, 0.7, 700)).toBe(0.7);
+    expect(clamp(5, 0, 10)).toBe(5);
+    expect(clamp(-1, 0, 10)).toBe(0);
+    expect(clamp(99, 0, 10)).toBe(10);
+    expect(clamp(Infinity, 0, 10)).toBe(10); // ±Infinity already clamp correctly
+    expect(clamp(-Infinity, 0, 10)).toBe(0);
   });
 
   it('Monarch timing: step duration and swing offsets', () => {

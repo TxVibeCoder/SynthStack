@@ -87,7 +87,7 @@ function KnobLabel({ label, r }: { label: string; r: number }) {
   );
 }
 
-export function Knob({ def, value, onInput, onCommit, size = 'm', accent, x, y }: KnobProps) {
+export function Knob({ def, value, onInput, onCommit, size = 'm', accent, subLabel, x, y }: KnobProps) {
   // useId may contain ':' which breaks url(#...) references — strip to a safe id.
   const gradId = `knob-grad-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   /** Live value while dragging / keyboard-adjusting; null = render from props. */
@@ -349,6 +349,21 @@ export function Knob({ def, value, onInput, onCommit, size = 'm', accent, x, y }
       {/* label under, cream — long legends wrap to two lines at the last space
           (e.g. "VCO 1 EG AMOUNT"), then clamp, so neighbors never collide */}
       <KnobLabel label={def.panelLabel} r={r} />
+
+      {/* optional dim second line under the label (e.g. a live BPM readout for a Hz tempo knob) */}
+      {subLabel != null && (
+        <text
+          y={r + 27}
+          textAnchor="middle"
+          fontFamily={FONT_CONDENSED}
+          fontSize={8.5}
+          letterSpacing={0.3}
+          fill={COLORS.legendDim}
+          pointerEvents="none"
+        >
+          {subLabel}
+        </text>
+      )}
 
       {/* floating value readout, only while interacting */}
       {readout != null && (

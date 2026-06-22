@@ -56,7 +56,7 @@ const CHANNEL_SPECS: ReadonlyArray<{ channel: MixChannel; def: ControlDef; x: nu
   {
     channel: 3,
     x: 288,
-    def: { id: 'MIX_CH4_LEVEL', panelLabel: 'AUX', type: 'knob', min: 0, max: 1, default: 0 },
+    def: { id: 'MIX_CH4_LEVEL', panelLabel: 'Sampler', type: 'knob', min: 0, max: 1, default: 0 },
   },
 ];
 
@@ -115,7 +115,7 @@ const ChannelKnob = memo(function ChannelKnob({
 });
 
 /**
- * The four mixer CHANNEL faders (Cascade / Anvil / Monarch / AUX) as a standalone row,
+ * The four mixer CHANNEL faders (Cascade / Anvil / Monarch / Sampler) as a standalone row,
  * exported so the MasterRibbon can render them as chrome (out-of-stage) without dragging
  * in the whole MixerKnobs panel. Same store wiring as the in-panel knobs — each ChannelKnob
  * self-subscribes to its own mixer.channelLevels[ch] snapshot and writes via

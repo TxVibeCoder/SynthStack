@@ -94,6 +94,18 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(s.sampler.pads.map((p) => p.sampleName)).toEqual(FACTORY_KIT.map((e) => e.name));
   });
 
+  it('coalesceSamplerState aliases the retired bare factory-hat id to factory-hat-closed', () => {
+    const tree = {
+      pads: [{ sampleId: 'factory-hat', sampleName: 'Hat', level: 0.8, tuneSemis: 0, loop: false }],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    expect(coalesceSamplerState(tree).pads[0]!.sampleId).toBe('factory-hat-closed');
+    // a still-valid split id is untouched
+    const ok = coalesceSamplerState({
+      pads: [{ sampleId: 'factory-hat-open' }],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0]);
+    expect(ok.pads[0]!.sampleId).toBe('factory-hat-open');
+  });
+
   it('round-trips the sampler slice (sample references only, bytes-free)', () => {
     const store = new StudioStore();
     const s = store.getState();

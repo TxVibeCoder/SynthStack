@@ -200,8 +200,12 @@ export function coalesceSamplerState(raw: Partial<SamplerState> | undefined): Sa
     const tuneSemis = typeof p?.tuneSemis === 'number' && Number.isFinite(p.tuneSemis)
       ? Math.max(-24, Math.min(24, Math.round(p.tuneSemis)))
       : 0;
+    let sampleId = typeof p?.sampleId === 'string' ? p.sampleId : null;
+    // The bare `factory-hat` id was split into closed/open (DECISIONS.md "Factory sounds"). Alias
+    // any older preset/bundle still naming it so the pad resolves a buffer instead of going silent.
+    if (sampleId === 'factory-hat') sampleId = 'factory-hat-closed';
     return {
-      sampleId: typeof p?.sampleId === 'string' ? p.sampleId : null,
+      sampleId,
       sampleName: typeof p?.sampleName === 'string' ? p.sampleName : null,
       level,
       tuneSemis,

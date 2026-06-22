@@ -95,6 +95,27 @@ const PanelKnob = memo(function PanelKnob({ def, x, y, size }: PlacedKnobProps) 
   );
 });
 
+/** CAS_TEMPO is a tick-RATE knob in Hz (1 PPQ); surface its tempo (tickHz × 60 = BPM) as a live
+ *  dim sub-label under the knob, so a BPM-thinking player isn't stuck reading Hz. */
+const CAS_TEMPO_BPM = 60;
+const TempoKnob = memo(function TempoKnob({ def, x, y, size }: PlacedKnobProps) {
+  const [value, onInput, onCommit] = useControl<number>(MODULE_ID, def.id, knobFallback(def));
+  const bpm = Math.round((value || 0) * CAS_TEMPO_BPM);
+  return (
+    <Knob
+      def={def}
+      value={value}
+      onInput={onInput}
+      onCommit={onCommit}
+      size={size}
+      accent={ACCENT}
+      subLabel={`≈ ${bpm} BPM`}
+      x={x}
+      y={y}
+    />
+  );
+});
+
 /** switch: discrete — engine write + store commit together (no debounce). */
 const PanelSwitch = memo(function PanelSwitch({ def, x, y }: PlacedProps) {
   const [value, , onCommit] = useControl<string>(MODULE_ID, def.id, positionFallback(def));
@@ -205,6 +226,9 @@ function renderControl(def: ControlDef): ReactElement | null {
   switch (def.type) {
     case 'knob':
     case 'stepKnob':
+      if (def.id === 'CAS_TEMPO') {
+        return <TempoKnob key={def.id} def={def} x={x} y={y} size={placed.size} />;
+      }
       return <PanelKnob key={def.id} def={def} x={x} y={y} size={placed.size} />;
     case 'switch':
       return <PanelSwitch key={def.id} def={def} x={x} y={y} />;
