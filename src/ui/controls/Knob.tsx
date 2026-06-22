@@ -234,6 +234,33 @@ export function Knob({ def, value, onInput, onCommit, size = 'm', accent, x, y }
     onCommit(normToValue(s.norm, def));
   };
 
+  /**
+   * Discrete +/- step from the focused stepper buttons. One detent for stepped knobs, else 1%
+   * of range (Shift = 0.1%). Reuses the wheel's session + idle-commit so rapid clicks accumulate
+   * and commit once when the user stops (the value prop can lag a commit; the session is authoritative).
+   */
+  const nudge = (dir: 1 | -1, fine: boolean) => {
+    const s = drag.current;
+    const base = s.kbActive || s.pointerId !== -1 ? s.norm : valueToNorm(value, def);
+    const inc = detents != null ? 1 / (detents - 1) : fine ? 0.001 : 0.01;
+    const target = clamp01(base + dir * inc);
+    if (target === base) return; // already at a rail
+    s.norm = target;
+    s.kbActive = true;
+    const v = normToValue(target, def);
+    setLive(v);
+    onInput(v);
+    if (wheelTimer.current != null) clearTimeout(wheelTimer.current);
+    wheelTimer.current = window.setTimeout(() => {
+      wheelTimer.current = null;
+      const s2 = drag.current;
+      if (!s2.kbActive) return;
+      s2.kbActive = false;
+      setLive(null);
+      latest.current.onCommit(normToValue(s2.norm, latest.current.def));
+    }, 350);
+  };
+
   // Dial ticks: one per detent for stepped knobs (when legible), else min/center/max.
   const tickAngles =
     detents != null && detents <= 24
@@ -348,6 +375,43 @@ export function Knob({ def, value, onInput, onCommit, size = 'm', accent, x, y }
           </text>
         </g>
       )}
+
+      {/* +/- steppers: revealed once the knob is focused/clicked (a stable target, unlike a
+          hover overlay the pointer would leave on the way up). Flank the readout pill; each
+          click nudges one step. stopPropagation so the press never starts a knob drag. */}
+      {focused &&
+        ([-1, 1] as const).map((dir) => (
+          <g
+            key={dir}
+            className="knob-stepper"
+            transform={`translate(${dir < 0 ? -(readoutW / 2) - 10 : readoutW / 2 + 10} ${-(r + 27)})`}
+            style={{ cursor: 'pointer' }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              nudge(dir, e.shiftKey);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            role="button"
+            aria-label={`${dir < 0 ? 'decrease' : 'increase'} ${def.panelLabel}`}
+          >
+            <rect
+              x={-8}
+              y={-8.5}
+              width={16}
+              height={17}
+              rx={4}
+              fill={COLORS.panelShadow}
+              stroke={COLORS.panelEdge}
+              strokeWidth={1}
+              opacity={0.95}
+            />
+            <line x1={-4} y1={0} x2={4} y2={0} stroke={COLORS.focus} strokeWidth={1.5} strokeLinecap="round" />
+            {dir > 0 && (
+              <line x1={0} y1={-4} x2={0} y2={4} stroke={COLORS.focus} strokeWidth={1.5} strokeLinecap="round" />
+            )}
+          </g>
+        ))}
     </g>
   );
 }

@@ -151,9 +151,21 @@ export class WebMidiInput {
     }
 
     this.access = access;
-    access.onstatechange = () => this.reenumerate();
+    access.onstatechange = (e) => this.handleStateChange(e);
     this.reenumerate();
     return this.statusValue;
+  }
+
+  /**
+   * MIDIAccess statechange. A hot-unplug of an INPUT can strand a note held on that very device —
+   * its note-off can never be delivered — even while OTHER inputs remain connected (deviceCount
+   * stays > 0, so the count===0 flush in reenumerate() never runs). Flush the shared mono voice on
+   * ANY input disconnect, then re-enumerate to re-attach the survivors and refresh the snapshot.
+   */
+  private handleStateChange(e: MIDIConnectionEvent): void {
+    const port = e.port;
+    if (port && port.state === 'disconnected' && port.type === 'input') this.onAllNotesOff?.();
+    this.reenumerate();
   }
 
   /** (Re)attach onmidimessage to every input and recompute the status snapshot. */

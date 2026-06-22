@@ -1268,6 +1268,10 @@ class EngineBridge {
     this.liveSwingPct = null;
     this.livePitchVv.fill(null);
     this.liveVelocityVv.fill(null);
+    // A mixer/master drag that was mid-debounce when this INIT/preset/import landed would
+    // otherwise fire ~STORE_MIRROR_DEBOUNCE_MS later and overwrite the freshly-loaded mixer
+    // values with the stale drag's. Cancel the pending mirror and drop its staged values.
+    this.cancelStoreMirror();
     this.releaseAllNotes();
     this.keyboardOctave = coalesceKeyboardState(state.keyboard).octave;
     this.store.setState(state);
@@ -1476,6 +1480,20 @@ class EngineBridge {
       a.remove();
       URL.revokeObjectURL(url);
     }, 0);
+  }
+
+  /**
+   * Cancel a pending mixer/master store-mirror debounce and drop its staged values. Called by
+   * applyFullState so an INIT / preset / import load is never clobbered by a mixer drag that was
+   * still mid-debounce when the new tree landed.
+   */
+  private cancelStoreMirror(): void {
+    if (this.mirrorTimer !== null) {
+      clearTimeout(this.mirrorTimer);
+      this.mirrorTimer = null;
+    }
+    this.pendingLevels.fill(null);
+    this.pendingMaster = null;
   }
 
   /** Trailing-edge debounce: one setState carrying every pending mixer/master value. */
