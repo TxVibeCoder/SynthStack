@@ -218,6 +218,9 @@ class EngineBridge {
    *  cursor step + advances it (step-record). null = not recording. Runtime-only. */
   private monarchRecordHandler: ((noteVv: number) => void) | null = null;
 
+  /** The one in-flight sample-processor preview source (looped); replaced/stopped on demand. */
+  private previewSrc: AudioBufferSourceNode | null = null;
+
   // pending debounced store mirrors for mixer drags (engine writes are immediate)
   private readonly pendingLevels: [number | null, number | null, number | null, number | null] = [
     null,
@@ -976,6 +979,52 @@ class EngineBridge {
     if (prevId && prevId !== rec.id && this.isUserSampleUnreferenced(prevId, [s])) {
       void sampleBackend.delete(prevId);
     }
+  }
+
+  // ---- sample processor (feature: load → trim → click-free loop → pad) ----------------------
+  // Thin audio seam for SampleProcessor.tsx (the trim/fade/WAV math is the pure sampleEdit core).
+  // ASSIGN reuses loadPadSample (the processor wraps the edited buffer as a WAV File), so a
+  // processed loop persists / exports / round-trips exactly like any user sample.
+
+  /**
+   * Decode an audio File to an AudioBuffer using the studio context. Size-capped like
+   * loadPadSample; rejects when unpowered (no AudioContext yet) or on a non-audio file
+   * (decodeAudioData rejects). The processor reads the channels for the waveform + editing.
+   */
+  async decodeAudioFile(file: File): Promise<AudioBuffer> {
+    if (!this._powered) throw new Error('power on the studio first');
+    assertSampleSize(file.size);
+    const bytes = await file.arrayBuffer();
+    return this.studio.audioContextForDecode().decodeAudioData(bytes.slice(0));
+  }
+
+  /** Loop-preview processed channels through the studio context (replacing any prior preview). */
+  previewSample(channels: Float32Array[], sampleRate: number): void {
+    if (!this._powered) return;
+    const frames = channels[0]?.length ?? 0;
+    if (frames < 1) return;
+    const ctx = this.studio.audioContextForDecode();
+    const buf = ctx.createBuffer(Math.max(1, channels.length), frames, sampleRate);
+    channels.forEach((ch, i) => buf.copyToChannel(ch as Float32Array<ArrayBuffer>, i));
+    this.stopPreview();
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(ctx.destination);
+    src.start();
+    this.previewSrc = src;
+  }
+
+  /** Stop the sample-processor preview source if one is playing (idempotent). */
+  stopPreview(): void {
+    if (!this.previewSrc) return;
+    try {
+      this.previewSrc.stop();
+    } catch {
+      /* already stopped */
+    }
+    this.previewSrc.disconnect();
+    this.previewSrc = null;
   }
 
   /**

@@ -32,6 +32,7 @@ import { COLORS, FONT_CONDENSED } from '../theme';
 import { Knob } from '../controls/Knob';
 import { Switch } from '../controls/Switch';
 import { engineBridge } from '../engineBridge';
+import { SampleProcessor } from '../SampleProcessor';
 import { SampleTooLargeError } from '../../engine/sampleStore';
 import { FACTORY_KIT } from '../../engine/factorySamples';
 import type { PadState, QuantizeDivision } from '../../state/studioState';
@@ -414,6 +415,8 @@ export function SamplerPanel() {
   /** Pad the hidden picker currently targets (set just before input.click()). */
   const activePadRef = useRef<number>(0);
   const [error, setError] = useState<string | null>(null);
+  /** Sample-processor modal (load → trim → click-free loop → pad). */
+  const [processorOpen, setProcessorOpen] = useState(false);
   const quantize = useQuantize();
 
   /** Factory-picker menu: the pad it targets (null = closed) + its trigger's screen rect. */
@@ -502,6 +505,45 @@ export function SamplerPanel() {
           {samplerLayout.title.toUpperCase()}
         </text>
 
+        {/* PROCESS button — opens the sample processor (load → trim → click-free loop → pad) */}
+        <g
+          data-testid="sampler-process"
+          role="button"
+          tabIndex={0}
+          aria-label="Open the sample processor"
+          style={{ cursor: 'pointer' }}
+          onClick={() => setProcessorOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setProcessorOpen(true);
+            }
+          }}
+        >
+          <rect
+            x={118}
+            y={12}
+            width={104}
+            height={22}
+            rx={5}
+            fill={COLORS.panelRaised}
+            stroke={COLORS.panelEdge}
+            strokeWidth={1}
+          />
+          <text
+            x={170}
+            y={27}
+            textAnchor="middle"
+            fontFamily={FONT_CONDENSED}
+            fontSize={11}
+            letterSpacing={1}
+            fill={COLORS.legend}
+            pointerEvents="none"
+          >
+            PROCESS…
+          </text>
+        </g>
+
         {/* transient load-error message, top-right */}
         {error != null && (
           <text
@@ -551,6 +593,9 @@ export function SamplerPanel() {
           onClose={closeKitMenu}
         />
       )}
+
+      {/* sample processor — portals itself to document.body (outside the scaled stage) */}
+      {processorOpen && <SampleProcessor onClose={() => setProcessorOpen(false)} />}
     </>
   );
 }
