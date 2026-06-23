@@ -793,6 +793,25 @@ class EngineBridge {
   }
 
   /**
+   * Courier PITCH WHEEL: bipolar position -1..1 -> ±7 semitones onto ALL Courier oscillators (the
+   * hardware default bend = a perfect fifth; the panel chrome shows "PB UP +7 / PB DN -7").
+   * RUNTIME-ONLY — a sprung performance gesture, never serialized (like keyboardTarget). The
+   * on-screen wheel calls this directly (it lives on the Courier panel); the MIDI path gates on
+   * keyboardTarget. No-op until powered.
+   */
+  setCourierPitchBend(norm: number): void {
+    if (this._powered) this.studio.courierPitchBend(norm * 7);
+  }
+
+  /**
+   * Courier MOD WHEEL: unipolar position 0..1 scales LFO 2 depth into its selected destination.
+   * RUNTIME-ONLY — a live performance gesture, never serialized. No-op until powered.
+   */
+  setCourierModWheel(amount01: number): void {
+    if (this._powered) this.studio.courierModWheel(amount01);
+  }
+
+  /**
    * Enable Web MIDI (the ONE permission prompt). Wires the shell's note callbacks to THIS
    * bridge's noteOn/noteOff so MIDI shares the same mono voice as the on-screen keyboard —
    * a MIDI note-on/off and an on-screen key press feed the identical last-note stack. The
@@ -816,6 +835,16 @@ class EngineBridge {
         onStart: () => this.studio.onMidiClockStart(),
         onContinue: () => this.studio.onMidiClockContinue(),
         onStop: () => this.studio.onMidiClockStop(),
+      },
+      // MIDI wheels apply to whichever voice the keyboard targets (like notes); only Courier has
+      // wheel hooks, so gate on keyboardTarget — a bend/mod while Monarch is selected is dropped.
+      {
+        onPitchBend: (bend14) => {
+          if (this.keyboardTarget === 'courier') this.setCourierPitchBend((bend14 - 8192) / 8192);
+        },
+        onModWheel: (value01) => {
+          if (this.keyboardTarget === 'courier') this.setCourierModWheel(value01);
+        },
       },
     );
   }

@@ -31,8 +31,9 @@ import type { CourierModSource, ModAssignEntry } from '../../state/studioState';
 import { COURIER_MOD_SOURCES } from '../../state/studioState';
 
 /**
- * Courier resonance scale: onset of self-oscillation. Matches the Cascade's earlier
- * onset (no measured reference for the Courier specifically — tunable in a fidelity pass).
+ * Courier resonance scale: onset of self-oscillation. 1.43 places onset at knob ≈ 0.70 ("above two
+ * o'clock"), matching the measured hardware reference — an earlier onset than the 1.15 (~0.87)
+ * Monarch/Anvil default. Do NOT lower it; this value is test-locked (ladderCore.test.ts).
  */
 const COURIER_RES_SCALE = 1.43;
 
@@ -64,6 +65,7 @@ export class CourierModule extends ModuleBase {
   private readonly osc2Octave: ConstantSourceNode; // octave + OSC 2 FREQ detune, vv
   private readonly pitchBus: GainNode; // shared keyboard-note pitch bus (vv); mod 'pitch' target
   private readonly osc2Pitch: GainNode; // OSC 2 pitch sub-bus (vv); mod 'osc2pitch' target
+  private readonly pitchBend: ConstantSourceNode; // live pitch-wheel offset (vv), summed onto pitchBus
 
   // mixer
   private readonly mixOsc1: GainNode;
@@ -122,7 +124,12 @@ export class CourierModule extends ModuleBase {
   private osc2DetuneVv = 0;
   private lfo1DepthValue = 0;
   private lfo1Dest: Lfo1Dest = 'CUTOFF';
-  private lfo2DepthValue = 0;
+  // LFO 2 has no panel DEPTH knob on the hardware — its depth IS the mod wheel (the wheel alone
+  // determines LFO 2 depth). So the effective depth = base × wheel; wheel parked down (0) = no
+  // LFO 2, like a physical wheel at rest. lfo2BaseDepth stays a forward-compat hook for a future
+  // panel DEPTH knob.
+  private lfo2BaseDepth = 1; // full-scale LFO 2 depth base the mod wheel scales
+  private modWheel01 = 0; // unipolar mod-wheel 0..1; default 0 = parked down = LFO 2 silent
   private lfo2Dest: Lfo2Dest = 'PITCH';
   private modAmountValue = 0;
   private modDest: 'FM_1_2' | 'FENV_OSC2_FREQ' | 'FENV_OSC2_WAVE' | 'FENV_SUB_WAVE' = 'FM_1_2';
@@ -145,6 +152,10 @@ export class CourierModule extends ModuleBase {
     const pitchBus = gain(ctx, 1);
     this.pitchBus = pitchBus;
     this.kbCv.connect(pitchBus);
+    // Pitch wheel: a constant bend offset (vv) summed onto the bus, INDEPENDENT of kbCv so a bend
+    // adds to the held/scheduled note without clobbering setPitchAt's kbCv writes. (constant auto-starts.)
+    this.pitchBend = constant(ctx, 0);
+    this.pitchBend.connect(pitchBus);
 
     // ---- oscillators ---------------------------------------------------------
     const mkOsc = (): AudioWorkletNode =>
@@ -399,7 +410,8 @@ export class CourierModule extends ModuleBase {
     this.lfo1ToSubWave.gain.value = this.lfo1Dest === 'SUB_WAVE' ? 1 : 0;
   }
   private applyLfo2Dest(): void {
-    this.lfo2Depth.gain.value = this.lfo2DepthValue;
+    this.lfo2Depth.gain.value = this.lfo2BaseDepth * this.modWheel01; // mod wheel is the sole depth source
+
     this.lfo2ToPitch.gain.value = this.lfo2Dest === 'PITCH' ? 1 : 0;
     this.lfo2ToCutoff.gain.value = this.lfo2Dest === 'CUTOFF' ? 1 : 0;
     this.lfo2ToAmp.gain.value = this.lfo2Dest === 'AMP' ? 1 : 0;
@@ -632,6 +644,19 @@ export class CourierModule extends ModuleBase {
   /** Set the keyboard gate (0/5 vv) at an exact time. */
   gateAt(on: boolean, time: number): void {
     this.kbGate.offset.setValueAtTime(on ? 5 : 0, time);
+  }
+
+  /** PITCH WHEEL: live bend in SEMITONES (vv = semitones/12), summed onto the pitch bus so all
+   *  oscillators bend together (per the hardware reference). Runtime/transient; not scheduled. */
+  setPitchBend(semitones: number): void {
+    this.pitchBend.offset.setTargetAtTime(clamp(semitones, -24, 24) / 12, this.ctx.currentTime, 0.005);
+  }
+
+  /** MOD WHEEL (left-hand, unipolar 0..1): scales LFO 2 depth into the selected DEST. Wheel up (1)
+   *  = full programmed depth, down (0) = no LFO 2. Holds its value (non-spring). */
+  setModWheel(amount01: number): void {
+    this.modWheel01 = clamp(amount01, 0, 1);
+    this.applyLfo2Dest();
   }
 
   /** Internal clock out: one +10 vv pulse (2 ms) at `time`. */

@@ -377,6 +377,8 @@ interface BridgePrivates {
     monarchNoteOff(): void;
     courierNoteOn(noteVv: number, retrigger: boolean): void;
     courierNoteOff(): void;
+    courierPitchBend(semitones: number): void;
+    courierModWheel(amount01: number): void;
   } | null;
 }
 
@@ -672,5 +674,61 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     engineBridge.noteOn(62, 100); // now Monarch -> records
     expect(recorded).toEqual([noteToVv(62)]);
     engineBridge.setMonarchRecordHandler(null);
+  });
+});
+
+describe('engineBridge Courier wheels (pitch bend + mod wheel, runtime-only)', () => {
+  const priv = engineBridge as unknown as BridgePrivates;
+  let pitchBend: ReturnType<typeof vi.fn>;
+  let modWheel: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    void engineBridge.store;
+    const studio = priv.studioInstance!;
+    pitchBend = vi.fn();
+    modWheel = vi.fn();
+    vi.spyOn(studio, 'courierPitchBend').mockImplementation(pitchBend);
+    vi.spyOn(studio, 'courierModWheel').mockImplementation(modWheel);
+  });
+
+  afterEach(() => {
+    priv._powered = false;
+    vi.restoreAllMocks();
+  });
+
+  it('does nothing while unpowered (no throw, no engine call) — the runtime-only guard', () => {
+    priv._powered = false;
+    expect(() => engineBridge.setCourierPitchBend(0.5)).not.toThrow();
+    expect(() => engineBridge.setCourierModWheel(0.5)).not.toThrow();
+    expect(pitchBend).not.toHaveBeenCalled();
+    expect(modWheel).not.toHaveBeenCalled();
+  });
+
+  it('pitch wheel maps the bipolar position to ±7 semitones', () => {
+    priv._powered = true;
+    engineBridge.setCourierPitchBend(1);
+    expect(pitchBend).toHaveBeenLastCalledWith(7); // full up = +7 st (a perfect fifth)
+    engineBridge.setCourierPitchBend(-1);
+    expect(pitchBend).toHaveBeenLastCalledWith(-7); // full down = -7 st
+    engineBridge.setCourierPitchBend(0);
+    expect(pitchBend).toHaveBeenLastCalledWith(0); // center
+  });
+
+  it('mod wheel forwards the 0..1 position straight through', () => {
+    priv._powered = true;
+    engineBridge.setCourierModWheel(0);
+    expect(modWheel).toHaveBeenLastCalledWith(0);
+    engineBridge.setCourierModWheel(0.75);
+    expect(modWheel).toHaveBeenLastCalledWith(0.75);
+    engineBridge.setCourierModWheel(1);
+    expect(modWheel).toHaveBeenLastCalledWith(1);
+  });
+
+  it('writes NO serializable state (the wheels are performance gestures, not preset state)', () => {
+    priv._powered = true;
+    const before = JSON.stringify(engineBridge.store.getState());
+    engineBridge.setCourierPitchBend(0.4);
+    engineBridge.setCourierModWheel(0.6);
+    expect(JSON.stringify(engineBridge.store.getState())).toBe(before); // round-trip unchanged
   });
 });

@@ -28,10 +28,21 @@ describe('parseMidiMessage — pure MIDI decode (channel omni)', () => {
     expect(parseMidiMessage([0x8c, 48, 10])).toEqual({ type: 'noteOff', note: 48, velocity: 0 });
   });
 
-  it('maps CC / pitch-bend / active-sensing to "other"', () => {
-    expect(parseMidiMessage([0xb0, 7, 100]).type).toBe('other'); // control change (volume)
-    expect(parseMidiMessage([0xe0, 0, 64]).type).toBe('other'); // pitch bend
+  it('decodes Control Change (0xB0) with controller + value; active-sensing stays "other"', () => {
+    expect(parseMidiMessage([0xb0, 1, 100])).toEqual({ type: 'controlChange', note: 0, velocity: 0, controller: 1, value: 100 }); // mod wheel
+    expect(parseMidiMessage([0xb0, 7, 64])).toEqual({ type: 'controlChange', note: 0, velocity: 0, controller: 7, value: 64 }); // volume (shell ignores)
+    expect(parseMidiMessage([0xb0, 1, 0]).value).toBe(0);
+    expect(parseMidiMessage([0xb0, 1, 127]).value).toBe(127);
+    expect(parseMidiMessage([0xbf, 1, 50]).controller).toBe(1); // channel omni (status & 0xF0)
     expect(parseMidiMessage([0xfe, 0, 0]).type).toBe('other'); // active sensing (real-time, ignored)
+  });
+
+  it('decodes Pitch Bend (0xE0) into an assembled 14-bit value (LSB | MSB<<7)', () => {
+    expect(parseMidiMessage([0xe0, 0, 0x40])).toEqual({ type: 'pitchBend', note: 0, velocity: 0, bend14: 8192 }); // center
+    expect(parseMidiMessage([0xe0, 0, 0]).bend14).toBe(0); // full down
+    expect(parseMidiMessage([0xe0, 0x7f, 0x7f]).bend14).toBe(16383); // full up
+    expect(parseMidiMessage([0xef, 0, 0x40]).type).toBe('pitchBend'); // channel omni
+    expect(parseMidiMessage([0xe0, 0]).type).toBe('other'); // short message (len < 3) — defensive
   });
 
   it('decodes single-byte system real-time transport clock (before the length-3 guard)', () => {

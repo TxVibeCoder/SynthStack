@@ -10,9 +10,15 @@
  * back, Enter/Space, tabIndex, role=button). No store/engine access here.
  */
 
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
-import { memo } from 'react';
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from 'react';
+import { memo, useRef, useState } from 'react';
 import { COLORS, FONT_CONDENSED } from '../theme';
+import type { ControlDef } from '../../../data/schema';
+import { clamp01, dragDelta, normToValue, valueToNorm } from '../controls/dragMath';
 
 const LIT = COLORS.ledRed; // illuminated lamp fill (the editor lights its toggles warm)
 
@@ -415,12 +421,96 @@ export const DecorToggle = memo(function DecorToggle({ x, y, label, positions, i
   );
 });
 
-// ---- pitch / mod thumb-wheel (visual only) -----------------------------------------------
+// ---- pitch / mod thumb-wheel ------------------------------------------------------------
+// Decorative by default (no callbacks -> the original visual-only render, pointerEvents:none).
+// When wired, it drags like a Knob (controls/dragMath): PITCH is bipolar -1..1 and SPRINGS back
+// to center on release; MOD is unipolar 0..1 and HOLDS. The thumb line offsets by the value so
+// the wheel reads its travel. Synthetic ControlDefs reuse all the pure drag math (cf. Knob DEPTH_DEF).
 
-export const Wheel = memo(function Wheel({ x, y, w, h }: { x: number; y: number; w: number; h: number }) {
+const PITCH_WHEEL_DEF: ControlDef = { id: '__pitchwheel', panelLabel: 'PITCH', type: 'knob', min: -1, max: 1, default: 0 } as ControlDef;
+const MOD_WHEEL_DEF: ControlDef = { id: '__modwheel', panelLabel: 'MOD', type: 'knob', min: 0, max: 1, default: 0 } as ControlDef;
+
+export const Wheel = memo(function Wheel({
+  x,
+  y,
+  w,
+  h,
+  kind,
+  value,
+  onInput,
+  onCommit,
+}: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  kind?: 'pitch' | 'mod';
+  value?: number;
+  onInput?: (v: number) => void;
+  onCommit?: (v: number) => void;
+}) {
+  const interactive = onInput != null;
+  const def = kind === 'mod' ? MOD_WHEEL_DEF : PITCH_WHEEL_DEF;
+  const [live, setLive] = useState<number | null>(null);
+  const drag = useRef({ pointerId: -1, norm: 0, lastY: 0 });
   const ridges = Math.floor(h / 8);
+  const shown = live ?? value ?? 0;
+  // norm 0..1 (bottom..top) -> thumb offset; value 0 sits at center for a {−1,1} def, at the bottom for {0,1}.
+  const thumbY = (0.5 - valueToNorm(shown, def)) * (h - 12);
+
+  const onPointerDown = (e: ReactPointerEvent<SVGGElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.pointerType === 'touch' && !e.isPrimary) return; // 2nd finger: leave pinch-zoom alone
+    const s = drag.current;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    s.pointerId = e.pointerId;
+    s.lastY = e.clientY;
+    s.norm = valueToNorm(value ?? 0, def);
+    setLive(normToValue(s.norm, def));
+    e.preventDefault();
+  };
+  const onPointerMove = (e: ReactPointerEvent<SVGGElement>) => {
+    const s = drag.current;
+    if (s.pointerId !== e.pointerId) return;
+    const upPx = s.lastY - e.clientY; // up = increase
+    s.lastY = e.clientY;
+    s.norm = clamp01(s.norm + dragDelta(upPx, e.shiftKey));
+    const v = normToValue(s.norm, def);
+    setLive(v);
+    onInput?.(v);
+  };
+  const endDrag = (e: ReactPointerEvent<SVGGElement>) => {
+    const s = drag.current;
+    if (s.pointerId !== e.pointerId) return;
+    s.pointerId = -1;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    setLive(null);
+    if (kind === 'pitch') {
+      onInput?.(0); // PITCH springs to center on release
+      onCommit?.(0);
+    } else {
+      onCommit?.(normToValue(s.norm, def)); // MOD holds its value
+    }
+  };
+
+  const interactiveProps = interactive
+    ? {
+        onPointerDown,
+        onPointerMove,
+        onPointerUp: endDrag,
+        onPointerCancel: endDrag,
+        tabIndex: 0,
+        role: 'slider' as const,
+        'aria-label': kind === 'mod' ? 'Mod wheel' : 'Pitch bend',
+        'aria-valuemin': kind === 'mod' ? 0 : -1,
+        'aria-valuemax': 1,
+        'aria-valuenow': Number(shown.toFixed(3)),
+        style: { cursor: 'ns-resize' as const },
+      }
+    : { pointerEvents: 'none' as const };
+
   return (
-    <g transform={`translate(${x} ${y})`} pointerEvents="none">
+    <g transform={`translate(${x} ${y})`} {...interactiveProps}>
       {/* well */}
       <rect x={-w / 2 - 2} y={-h / 2 - 2} width={w + 4} height={h + 4} rx={w / 2 + 2} fill={COLORS.panelShadow} />
       {/* wheel face */}
@@ -431,7 +521,8 @@ export const Wheel = memo(function Wheel({ x, y, w, h }: { x: number; y: number;
         const t = Math.abs(ry) / (h / 2);
         return <line key={i} x1={-w / 2 + 4} x2={w / 2 - 4} y1={ry} y2={ry} stroke={COLORS.legendDim} strokeWidth={1} opacity={0.18 + 0.5 * (1 - t)} />;
       })}
-      <line x1={-w / 2 + 3} x2={w / 2 - 3} y1={0} y2={0} stroke={COLORS.legend} strokeWidth={1.5} opacity={0.55} />
+      {/* thumb position line — offset by the wheel's value so its travel is visible */}
+      <line x1={-w / 2 + 3} x2={w / 2 - 3} y1={thumbY} y2={thumbY} stroke={COLORS.legend} strokeWidth={1.5} opacity={0.55} />
     </g>
   );
 });

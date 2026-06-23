@@ -2,9 +2,9 @@
  * Thin Web MIDI input shell (feature: keyboard + MIDI). Two layers:
  *
  *  1. parseMidiMessage — PURE, exported, unit-tested in Node (NO MIDIAccess needed):
- *     decodes a raw MIDI status+data triplet into noteOn / noteOff / other. Channel is
- *     ignored (omni, v1). CC / pitch-bend / clock / active-sensing are 'other' and
- *     deferred (no clock sync in v1).
+ *     decodes a raw MIDI status+data triplet into noteOn / noteOff / clock+transport /
+ *     controlChange (the mod wheel is CC #1) / pitchBend (14-bit) / other. Channel is
+ *     ignored (omni). Active-sensing and unmapped CCs stay 'other'.
  *
  *  2. WebMidiInput — the THIN device shell (NOT unit-tested; the prompt + real-device
  *     delivery + hot-plug require a hardware checkpoint). It feature-
@@ -22,9 +22,14 @@
 
 /** Decoded message kind + payload. note/velocity are 0 for non-note kinds. */
 export interface ParsedMidiMessage {
-  type: 'noteOn' | 'noteOff' | 'clock' | 'start' | 'continue' | 'stop' | 'other';
+  type: 'noteOn' | 'noteOff' | 'clock' | 'start' | 'continue' | 'stop' | 'controlChange' | 'pitchBend' | 'other';
   note: number;
   velocity: number;
+  /** controlChange only: CC controller number + 0..127 value. */
+  controller?: number;
+  value?: number;
+  /** pitchBend only: assembled 14-bit value 0..16383 (center 8192). */
+  bend14?: number;
 }
 
 /**
@@ -57,7 +62,23 @@ export function parseMidiMessage(data: ArrayLike<number>): ParsedMidiMessage {
   if (command === 0x80 || (command === 0x90 && velocity === 0)) {
     return { type: 'noteOff', note, velocity: 0 };
   }
+  // Control Change (0xB0): data[1]=controller, data[2]=value (the mod wheel is CC #1).
+  if (command === 0xb0) {
+    return { type: 'controlChange', note: 0, velocity: 0, controller: note, value: velocity };
+  }
+  // Pitch Bend (0xE0): 14-bit, data[1]=LSB, data[2]=MSB; center 8192.
+  if (command === 0xe0) {
+    return { type: 'pitchBend', note: 0, velocity: 0, bend14: note | (velocity << 7) };
+  }
   return { type: 'other', note: 0, velocity: 0 };
+}
+
+/** Optional MIDI performance-wheel callbacks (pitch bend + mod wheel CC #1). */
+export interface MidiWheelHandlers {
+  /** raw 14-bit pitch-bend value 0..16383 (center 8192). */
+  onPitchBend?: (bend14: number) => void;
+  /** mod-wheel position normalised 0..1 (CC #1 value / 127). */
+  onModWheel?: (value01: number) => void;
 }
 
 /** Optional MIDI transport-clock callbacks (24-PPQN clock + Start/Continue/Stop). */
@@ -90,6 +111,8 @@ export class WebMidiInput {
   private onAllNotesOff: (() => void) | null = null;
   /** Optional transport-clock callbacks (24-PPQN clock + Start/Continue/Stop). */
   private clock: MidiClockHandlers | null = null;
+  /** Optional performance-wheel callbacks (pitch bend + mod wheel CC #1). */
+  private wheels: MidiWheelHandlers | null = null;
   /** Inputs we have attached onmidimessage to, so disable()/re-enumerate can detach cleanly. */
   private attached: MIDIInput[] = [];
   /** In-flight enable() (the permission prompt is async); concurrent calls share it. */
@@ -108,11 +131,13 @@ export class WebMidiInput {
     onNoteOff: NoteOffHandler,
     onAllNotesOff?: () => void,
     clock?: MidiClockHandlers,
+    wheels?: MidiWheelHandlers,
   ): Promise<MidiStatus> {
     this.onNoteOn = onNoteOn;
     this.onNoteOff = onNoteOff;
     this.onAllNotesOff = onAllNotesOff ?? null;
     this.clock = clock ?? null;
+    this.wheels = wheels ?? null;
 
     // Idempotent: already enabled -> return current status, no second prompt.
     if (this.access && this.statusValue.state === 'enabled') {
@@ -197,7 +222,11 @@ export class WebMidiInput {
     else if (msg.type === 'start') this.clock?.onStart?.();
     else if (msg.type === 'continue') this.clock?.onContinue?.();
     else if (msg.type === 'stop') this.clock?.onStop?.();
-    // 'other' (CC / bend / active-sensing / garbage) -> ignored
+    else if (msg.type === 'pitchBend') this.wheels?.onPitchBend?.(msg.bend14 ?? 8192);
+    else if (msg.type === 'controlChange' && msg.controller === 1 && msg.value !== undefined) {
+      this.wheels?.onModWheel?.(msg.value / 127); // CC #1 = mod wheel
+    }
+    // other CC / active-sensing / garbage -> ignored
   }
 
   private detachInputs(): void {

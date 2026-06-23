@@ -857,6 +857,16 @@ export class Studio {
     this.courier.gateAt(false, this.context.audioContext.currentTime + 0.03);
   }
 
+  /** Courier PITCH WHEEL: live bend in semitones (all oscillators). */
+  courierPitchBend(semitones: number): void {
+    this.courier.setPitchBend(semitones);
+  }
+
+  /** Courier MOD WHEEL (0..1): scales LFO 2 depth into its selected destination. */
+  courierModWheel(amount01: number): void {
+    this.courier.setModWheel(amount01);
+  }
+
   anvilRun(): void {
     this.anvilSeq.start(this.context.audioContext.currentTime + 0.03);
   }

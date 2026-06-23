@@ -510,6 +510,9 @@ function CourierKeybed() {
 
 export function CourierPanel() {
   const [armed, setArmed] = useState<CourierModSource | null>(null);
+  // Mod-wheel position (0..1, holds). Runtime-only — not a preset value; resets to parked-down on
+  // reload, matching the engine default and a physical wheel at rest. Pitch wheel is sprung (no state).
+  const [modWheel, setModWheel] = useState(0);
   const arm = useCallback((source: CourierModSource) => setArmed((cur) => (cur === source ? null : source)), []);
   const disarm = useCallback(() => setArmed(null), []);
   const ctx = useMemo<CourierAssignCtx>(() => ({ armed, arm, disarm }), [armed, arm, disarm]);
@@ -614,10 +617,41 @@ export function CourierPanel() {
           ))}
         </g>
 
-        {/* pitch / mod wheels */}
-        {COURIER_WHEELS.map((w, i) => (
-          <Wheel key={`w${i}`} x={w.x} y={w.y} w={w.w} h={w.h} />
-        ))}
+        {/* pitch / mod wheels — PITCH bends all oscillators ±7 st then springs to center; MOD scales
+            LFO 2 depth and holds. Both write the engine imperatively (runtime-only performance gestures). */}
+        {COURIER_WHEELS.map((w, i) =>
+          w.kind === 'mod' ? (
+            <Wheel
+              key={`w${i}`}
+              x={w.x}
+              y={w.y}
+              w={w.w}
+              h={w.h}
+              kind="mod"
+              value={modWheel}
+              onInput={(v) => {
+                setModWheel(v);
+                engineBridge.setCourierModWheel(v);
+              }}
+              onCommit={(v) => {
+                setModWheel(v);
+                engineBridge.setCourierModWheel(v);
+              }}
+            />
+          ) : (
+            <Wheel
+              key={`w${i}`}
+              x={w.x}
+              y={w.y}
+              w={w.w}
+              h={w.h}
+              kind="pitch"
+              value={0}
+              onInput={(v) => engineBridge.setCourierPitchBend(v)}
+              onCommit={(v) => engineBridge.setCourierPitchBend(v)}
+            />
+          ),
+        )}
 
         {/* patch-button row (visual) */}
         <g pointerEvents="none">
