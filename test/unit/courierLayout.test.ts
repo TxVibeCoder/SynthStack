@@ -46,19 +46,10 @@ describe('courierLayout (Courier panel layout)', () => {
   // the main CourierPanel voice layout — they belong to the step-editor / transport surface (a
   // separate region the UI step owns), so they are exempt from this panel-placement invariant
   // exactly as Setup-only params would be.
-  const SETUP_ONLY = new Set<string>([
-    'COU_TEMPO',
-    'COU_CLOCK_DIV',
-    'COU_SEQ_LENGTH',
-    'COU_GATE_LENGTH',
-    'COU_SWING',
-    'COU_SEQ_MODE',
-    'COU_ARP_MODE',
-    'COU_ARP_OCTAVE',
-    'COU_ARP_RHYTHM',
-    'COU_RUN_STOP',
-    'COU_RESET',
-  ]);
+  // The full-face replica surfaces most seq settings onto the panel (TEMPO, CLOCK DIV, ARP
+  // PATTERN/OCTAVE, SWING, GATE LENGTH, SEQ/ARP). What remains Setup-only lives on the
+  // step-editor / transport surface and is exempt from the panel-placement invariant.
+  const SETUP_ONLY = new Set<string>(['COU_SEQ_LENGTH', 'COU_ARP_RHYTHM', 'COU_RUN_STOP', 'COU_RESET']);
 
   it('places every panel control id from data/courier.json (Setup-only params excluded)', () => {
     for (const c of courier.controls) {
@@ -82,10 +73,17 @@ describe('courierLayout (Courier panel layout)', () => {
     }
   });
 
-  it('keeps every pair of control centers at least 40 units apart', () => {
+  // Faithful-replica spacing: gold KNOBS need room for their below-labels (≥44), but the
+  // dense editor packs small selectors / lamp buttons closer, so any two control centres need
+  // only clear 16 (no overlap).
+  const KNOB_TYPES = new Set(['knob', 'stepKnob']);
+  const typeById = new Map(courier.controls.map((c) => [c.id, c.type]));
+  it('keeps knob centres ≥44 apart and every control centre ≥16 apart', () => {
     for (const [a, b] of pairs(placedControls)) {
       const d = Math.hypot(a.x - b.x, a.y - b.y);
-      expect(d, `${a.id} <-> ${b.id} only ${d.toFixed(1)} apart`).toBeGreaterThanOrEqual(40);
+      const bothKnobs = KNOB_TYPES.has(typeById.get(a.id) ?? '') && KNOB_TYPES.has(typeById.get(b.id) ?? '');
+      const min = bothKnobs ? 44 : 16;
+      expect(d, `${a.id} <-> ${b.id} only ${d.toFixed(1)} apart (min ${min})`).toBeGreaterThanOrEqual(min);
     }
   });
 
