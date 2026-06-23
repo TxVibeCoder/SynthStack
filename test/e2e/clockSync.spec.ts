@@ -79,3 +79,55 @@ test('cross-module clock patches and TEMPO LINK sync as specified', async ({ pag
   expect(rates.anvilHz).toBeCloseTo((240 / 60) * 4, 5); // 16 steps/s (16ths)
   expect(rates.cascadeHz).toBeCloseTo(240 / 60, 5); // 4 Hz (1 PPQ)
 });
+
+/**
+ * Courier external CLOCK IN end-to-end: a cable in COU_CLOCK_IN flips the Courier sequencer into
+ * external-clock mode (internal lookahead suppressed) and steps it one step per source edge. Same
+ * production path as the Anvil/Cascade/Monarch clock-ins above, through the real bridge + AudioContext.
+ */
+test('external CLOCK IN drives the Courier sequencer 1:1 with the source', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('/');
+  await page.getByTestId('power').click();
+  await page.waitForFunction(() => (window.__synthstackStudio as any)?.powered === true);
+
+  const bridge = (fn: string, ...args: unknown[]) =>
+    page.evaluate(([f, a]) => (window.__synthstackStudio as any)[f as string](...(a as unknown[])), [fn, args] as const);
+
+  const readPair = () =>
+    page.evaluate(() => {
+      const studio = (window.__synthstackStudio as any).studioInstance;
+      return {
+        monarch: studio.monarchSeq.currentStep as number,
+        courier: studio.courierSeq.currentStep as number,
+        courierExternal: studio.courierSeq.externalClock as boolean,
+      };
+    });
+
+  // Monarch ASSIGN -> Courier CLOCK IN: one Courier step per Monarch step (mirrors the proven
+  // Monarch ASSIGN -> Anvil ADV/CLOCK lock in test 1, exercising the COU_CLOCK_IN follower).
+  await bridge('commitCables', [{ id: 'cc1', from: 'MON_ASSIGN_OUT', to: 'COU_CLOCK_IN', color: '#fff' }]);
+  expect((await readPair()).courierExternal).toBe(true); // the cable flipped Courier to external clock
+
+  await bridge('applyControlCommit', 'monarch', 'MON_TEMPO', 120); // 8 steps/s
+  await bridge('courierRun'); // engage Courier — internal lookahead stays suppressed while clocked
+  await bridge('monarchRun');
+  await page.waitForTimeout(400); // let the lookahead settle
+
+  // wrap-aware advance count over a 3 s window (both default to endStep 16).
+  const sums = { monarch: 0, courier: 0 };
+  let prev = await readPair();
+  const t0 = Date.now();
+  while (Date.now() - t0 < 3000) {
+    await page.waitForTimeout(150);
+    const cur = await readPair();
+    sums.monarch += (cur.monarch - prev.monarch + 16) % 16;
+    sums.courier += (cur.courier - prev.courier + 16) % 16;
+    prev = cur;
+  }
+  await bridge('monarchStop');
+  await bridge('courierStop');
+
+  expect(sums.monarch).toBeGreaterThan(15); // the source actually ran
+  expect(Math.abs(sums.courier - sums.monarch)).toBeLessThanOrEqual(2); // 1:1 lock (± polling edges)
+});
