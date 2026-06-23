@@ -78,6 +78,10 @@ export class CourierModule extends ModuleBase {
   private readonly cutoffCvSum: GainNode;
   private readonly filterEgAmt: GainNode; // bipolar EG -> cutoff
   private readonly osc2ToCutoff: GainNode; // OSC 2 audio-rate FM of cutoff
+  private readonly kbToCutoff: GainNode; // KB TRACKING: keyboard pitch (1 vv/oct) -> cutoff CV
+  private readonly modFenvOsc2Freq: GainNode; // MOD DEST: filter EG -> OSC 2 pitch
+  private readonly modFenvOsc2Wave: GainNode; // MOD DEST: filter EG -> OSC 2 waveshape
+  private readonly modFenvSubWave: GainNode; // MOD DEST: filter EG -> SUB waveshape
 
   // FM / sync between oscillators
   private readonly fmAmount: GainNode;
@@ -90,6 +94,7 @@ export class CourierModule extends ModuleBase {
 
   // LFO 1 wave selectors + destination amount gains
   private readonly lfo1WaveSel: { tri: GainNode; saw: GainNode; ramp: GainNode; sq: GainNode };
+  private readonly lfo1Oscs: OscillatorNode[]; // the 4 real LFO 1 wave cores (RATE writes all four)
   private readonly lfo1Depth: GainNode; // bipolar depth
   private readonly lfo1ToCutoff: GainNode;
   private readonly lfo1ToOsc2Freq: GainNode;
@@ -131,6 +136,7 @@ export class CourierModule extends ModuleBase {
   private lfo2BaseDepth = 1; // full-scale LFO 2 depth base the mod wheel scales
   private modWheel01 = 0; // unipolar mod-wheel 0..1; default 0 = parked down = LFO 2 silent
   private lfo2Dest: Lfo2Dest = 'PITCH';
+  multiTrig = false; // MULTI-TRIG: retrigger both EGs on every keypress (read by studio.courierNoteOn)
   private modAmountValue = 0;
   private modDest: 'FM_1_2' | 'FENV_OSC2_FREQ' | 'FENV_OSC2_WAVE' | 'FENV_SUB_WAVE' = 'FM_1_2';
   glideTimeS = 0.001;
@@ -241,6 +247,11 @@ export class CourierModule extends ModuleBase {
     // OSC 2 -> cutoff audio-rate FM (depth knob, 0..1)
     this.osc2ToCutoff = gain(ctx, 0);
     this.osc2.connect(this.osc2ToCutoff, 0).connect(this.cutoffCvSum);
+    // KB TRACKING: keyboard pitch (kbCv, 1 vv/oct) summed into the cutoff CV so the filter follows
+    // the keyboard. Gated 0/1 by the switch (default ON, set on first applyState). ladderCore reads
+    // input-1 CV as 1 vv/oct, so gain 1 = full 1 V/oct tracking.
+    this.kbToCutoff = gain(ctx, 1);
+    this.kbCv.connect(this.kbToCutoff).connect(this.cutoffCvSum);
 
     // ---- EGs ----------------------------------------------------------------
     const mkEg = (): AudioWorkletNode => {
@@ -275,16 +286,35 @@ export class CourierModule extends ModuleBase {
     this.filterEgAmt = gain(ctx, 0);
     this.filterEg.connect(this.filterEgAmt).connect(this.cutoffCvSum);
 
-    // ---- LFO 1 (panel mod) --------------------------------------------------
-    this.lfo1 = ctx.createOscillator();
-    this.lfo1.type = 'triangle';
-    this.lfo1.frequency.value = 2;
-    this.lfo1.start();
-    const lfo1Out = gain(ctx, 5); // native ±1 -> ±5 vv
-    this.lfo1.connect(lfo1Out);
-    // wave selectors (TRI/SAW/RAMP/SQ): native osc type approximations, gated 0/1
-    // (the native oscillator gives TRI; SAW/RAMP/SQ are wave-select positions that pick
-    //  which scaled tap feeds the mod path — a fidelity pass can swap in true wave cores.)
+    // MOD DEST filter-EG destinations (independent of the Phase-B mod-assign matrix). Each routes
+    // the filter EG (0..peakVv=8) to a target, gated by applyModDest at a scale × MOD AMOUNT. These
+    // are the three non-FM positions of the MOD DESTINATION switch that were previously dead.
+    this.modFenvOsc2Freq = gain(ctx, 0);
+    this.filterEg.connect(this.modFenvOsc2Freq).connect(this.osc2Pitch);
+    this.modFenvOsc2Wave = gain(ctx, 0);
+    this.filterEg.connect(this.modFenvOsc2Wave).connect(this.osc2.parameters.get('waveshape')!);
+    this.modFenvSubWave = gain(ctx, 0);
+    this.filterEg.connect(this.modFenvSubWave).connect(this.sub.parameters.get('subWave')!);
+
+    // ---- LFO 1 (panel mod) — four REAL wave cores, one per WAVE position, gated 0/1 --------
+    // The WAVESHAPE switch selects triangle / sawtooth / ramp (falling saw) / square. Each is a
+    // native OscillatorNode scaled to ±5 vv; only the selected position's gain is 1, so switching
+    // WAVE actually changes the shape (previously all four tapped one triangle = no change).
+    const mkLfo1 = (type: OscillatorType, vvScale: number): { osc: OscillatorNode; out: GainNode } => {
+      const osc = ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = 2;
+      osc.start();
+      const out = gain(ctx, vvScale); // native ±1 -> ±5 vv (ramp = inverted saw)
+      osc.connect(out);
+      return { osc, out };
+    };
+    const lfo1Tri = mkLfo1('triangle', 5);
+    const lfo1Saw = mkLfo1('sawtooth', 5);
+    const lfo1Ramp = mkLfo1('sawtooth', -5); // RAMP = falling saw (inverted)
+    const lfo1Sq = mkLfo1('square', 5);
+    this.lfo1 = lfo1Tri.osc; // primary handle (the four share one RATE, written to all of lfo1Oscs)
+    this.lfo1Oscs = [lfo1Tri.osc, lfo1Saw.osc, lfo1Ramp.osc, lfo1Sq.osc];
     this.lfo1WaveSel = {
       tri: gain(ctx, 1),
       saw: gain(ctx, 0),
@@ -292,10 +322,10 @@ export class CourierModule extends ModuleBase {
       sq: gain(ctx, 0),
     };
     const lfo1Sel = gain(ctx, 1);
-    lfo1Out.connect(this.lfo1WaveSel.tri).connect(lfo1Sel);
-    lfo1Out.connect(this.lfo1WaveSel.saw).connect(lfo1Sel);
-    lfo1Out.connect(this.lfo1WaveSel.ramp).connect(lfo1Sel);
-    lfo1Out.connect(this.lfo1WaveSel.sq).connect(lfo1Sel);
+    lfo1Tri.out.connect(this.lfo1WaveSel.tri).connect(lfo1Sel);
+    lfo1Saw.out.connect(this.lfo1WaveSel.saw).connect(lfo1Sel);
+    lfo1Ramp.out.connect(this.lfo1WaveSel.ramp).connect(lfo1Sel);
+    lfo1Sq.out.connect(this.lfo1WaveSel.sq).connect(lfo1Sel);
     this.lfo1Depth = gain(ctx, 0); // bipolar depth
     lfo1Sel.connect(this.lfo1Depth);
     // destination router (only the selected destination gain is non-zero)
@@ -416,13 +446,15 @@ export class CourierModule extends ModuleBase {
     this.lfo2ToCutoff.gain.value = this.lfo2Dest === 'CUTOFF' ? 1 : 0;
     this.lfo2ToAmp.gain.value = this.lfo2Dest === 'AMP' ? 1 : 0;
   }
-  /** MOD AMOUNT + MOD DEST: FM 1->2, or filter-EG into OSC 2 freq / OSC 2 wave / SUB wave. */
+  /** MOD AMOUNT + MOD DEST: FM 1->2, or filter-EG into OSC 2 freq / OSC 2 wave / SUB wave. Only the
+   *  selected destination's gain is non-zero; MOD AMOUNT (bipolar) scales it. The filter-EG scales
+   *  (1/4 to pitch ≈ ±2 oct at full; 1/8 to a wave param = 0..1 morph) are by-ear-tunable depths. */
   private applyModDest(): void {
     const amt = this.modAmountValue;
-    // FM 1->2 amount only when that destination is selected
     this.fmAmount.gain.value = this.modDest === 'FM_1_2' ? amt : 0;
-    // (the FENV_* destinations are graph-shell stubs — the filter EG is summed to its own
-    //  targets through dedicated nodes in a later pass; here MOD AMOUNT only drives FM.)
+    this.modFenvOsc2Freq.gain.value = this.modDest === 'FENV_OSC2_FREQ' ? amt * (1 / 4) : 0;
+    this.modFenvOsc2Wave.gain.value = this.modDest === 'FENV_OSC2_WAVE' ? amt * (1 / 8) : 0;
+    this.modFenvSubWave.gain.value = this.modDest === 'FENV_SUB_WAVE' ? amt * (1 / 8) : 0;
   }
 
   /** OSC octave foot setting (16'/8'/4'/2') -> vv offset. 8' is the 0-reference. */
@@ -441,7 +473,7 @@ export class CourierModule extends ModuleBase {
     switch (id) {
       // ---- LFO 1 ----
       case 'COU_LFO1_RATE':
-        this.lfo1.frequency.value = num;
+        for (const o of this.lfo1Oscs) o.frequency.value = num;
         break;
       case 'COU_LFO1_WAVE':
         this.lfo1WaveSel.tri.gain.value = value === 'TRI' ? 1 : 0;
@@ -539,7 +571,7 @@ export class CourierModule extends ModuleBase {
         this.ladder.parameters.get('resBass')!.value = value === 'ON' ? 1 : 0;
         break;
       case 'COU_KB_TRACKING':
-        // graph shell: keyboard->cutoff tracking is a binding-time sum (deferred).
+        this.kbToCutoff.gain.value = value === 'ON' ? 1 : 0; // 1 vv/oct keyboard -> cutoff tracking
         break;
       case 'COU_FILTER_MODE':
         // LP4=0, HP=1, LP2=2, BP=3 (ladder MODE_TABLE encoding)
@@ -585,9 +617,11 @@ export class CourierModule extends ModuleBase {
       case 'COU_A_ENV_LOOP':
         break; // see COU_F_ENV_LOOP
       case 'COU_MULTI_TRIG':
-        // multi-trig (retrigger on every key) -> EG retrigInAttack config.
-        this.filterEg.port.postMessage({ type: 'configure', config: { retrigInAttack: value === 'ON' } });
-        this.ampEg.port.postMessage({ type: 'configure', config: { retrigInAttack: value === 'ON' } });
+        // multi-trig (retrigger on every key): the flag drives studio.courierNoteOn to force a gate
+        // edge on legato (a held-gate keypress); retrigInAttack covers a rising edge mid-attack.
+        this.multiTrig = value === 'ON';
+        this.filterEg.port.postMessage({ type: 'configure', config: { retrigInAttack: this.multiTrig } });
+        this.ampEg.port.postMessage({ type: 'configure', config: { retrigInAttack: this.multiTrig } });
         break;
 
       // ---- global ----
@@ -723,7 +757,7 @@ export class CourierModule extends ModuleBase {
         this.volume.gain.setValueAtTime(value, time);
         break;
       case 'COU_LFO1_RATE':
-        this.lfo1.frequency.setValueAtTime(value, time);
+        for (const o of this.lfo1Oscs) o.frequency.setValueAtTime(value, time);
         break;
       case 'COU_LFO2_RATE':
         this.lfo2.frequency.setValueAtTime(value, time);

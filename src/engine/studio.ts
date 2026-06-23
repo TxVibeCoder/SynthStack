@@ -849,7 +849,14 @@ export class Studio {
   courierNoteOn(noteVv: number, retrigger: boolean): void {
     const t = this.context.audioContext.currentTime + 0.03;
     this.courier.setPitchAt(noteVv, t, true);
-    if (retrigger) this.courier.gateAt(true, t);
+    if (retrigger) {
+      this.courier.gateAt(true, t);
+    } else if (this.courier.multiTrig) {
+      // MULTI-TRIG: a legato keypress (gate already high) forces a discrete down→up edge so both
+      // EGs restart their attack. The 1 ms gap spans render blocks so the worklet sees the edge.
+      this.courier.gateAt(false, t);
+      this.courier.gateAt(true, t + 0.001);
+    }
   }
 
   /** Courier live-play NOTE OFF: drop the gate (mirrors monarchNoteOff). */
