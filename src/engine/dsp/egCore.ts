@@ -8,6 +8,11 @@
  *   velocity input scales peak and stretches decay (×(1+0.15·v/5)).
  * - Cascade: sustainMode 'gateHold', retrigInAttack false (documented quirk),
  *   attackCompletes true (a trigger pulse completes the Attack stage — manual p.34).
+ * - Courier: sustainMode 'adsr' — a full four-stage envelope (attack, decay-to-SUSTAIN
+ *   LEVEL, hold-at-sustain while gated, independent RELEASE after gate-off), with an
+ *   optional ENV LOOP that re-attacks at the end of decay so the gated envelope free-runs
+ *   as an LFO. The other three modes are untouched by the 'adsr' branch, so their behavior
+ *   (and tests) are byte-for-byte unchanged.
  *
  * Exponential segments: one-pole toward target, time constant = time/4, so the
  * segment visibly completes (~98%) at the nominal time.
@@ -15,7 +20,7 @@
 
 import { GATE_THRESHOLD_VV } from '../units';
 
-export type SustainMode = 'off' | 'on' | 'gateHold';
+export type SustainMode = 'off' | 'on' | 'gateHold' | 'adsr';
 
 export interface EgConfig {
   attackS: number;
@@ -26,6 +31,12 @@ export interface EgConfig {
   /** Gate-off during Attack: finish the attack first (true, Cascade) or release immediately (false, Monarch). */
   attackCompletes: boolean;
   peakVv: number; // 7.5 (Monarch) or 8 (Anvil/Cascade)
+  /** ADSR only: held-decay target as a fraction of peak (0..1). Default 1 = no sustain drop (A-D feel). */
+  sustainLevel?: number;
+  /** ADSR only: release time (s) for the post-gate-off fall to 0. Default 0 ≈ instant. */
+  releaseS?: number;
+  /** ADSR only: loop the attack-decay segment while gated (envelope-as-LFO). Default false. */
+  loop?: boolean;
 }
 
 // Single source of truth: the +2.5 vv rising-edge gate threshold lives in units.ts (D8). Kept over
@@ -35,7 +46,7 @@ const GATE_THRESHOLD = GATE_THRESHOLD_VV;
 const ATTACK_DONE = 0.99;
 const IDLE_FLOOR = 1e-4;
 
-type Stage = 'idle' | 'attack' | 'hold' | 'decay';
+type Stage = 'idle' | 'attack' | 'hold' | 'decay' | 'release';
 
 export class EgCore {
   private readonly sampleRate: number;
@@ -59,10 +70,12 @@ export class EgCore {
     this.cfg = { ...this.cfg, ...partial };
   }
 
-  /** Allocation-free time update — safe to call from worklet process(). */
-  setTimes(attackS: number, decayS: number): void {
+  /** Allocation-free time update — safe to call from worklet process(). releaseS is k-rate too
+   *  (ADSR only); left untouched when omitted so the A-D voices need not pass it. */
+  setTimes(attackS: number, decayS: number, releaseS?: number): void {
     this.cfg.attackS = attackS;
     this.cfg.decayS = decayS;
+    if (releaseS !== undefined) this.cfg.releaseS = releaseS;
   }
 
   setVelocity(velocityVv: number): void {
@@ -104,10 +117,14 @@ export class EgCore {
     }
 
     if (falling && this.stage !== 'idle') {
+      const adsr = this.cfg.sustainMode === 'adsr';
       if (this.stage === 'hold') {
-        this.stage = 'decay';
+        this.stage = adsr ? 'release' : 'decay'; // ADSR has an independent release; others fall via decay
+      } else if (this.stage === 'decay') {
+        if (adsr) this.stage = 'release'; // gate fell mid-decay-to-sustain -> release toward 0
       } else if (this.stage === 'attack') {
         if (this.cfg.attackCompletes) this.releasePending = true;
+        else if (adsr) this.stage = 'release';
         else if (this.cfg.sustainMode !== 'off') this.stage = 'decay';
         // sustainMode 'off': attack continues into decay on its own
       }
@@ -133,21 +150,58 @@ export class EgCore {
         this.level += this.coef(this.cfg.attackS) * (peak * 1.02 - this.level);
         if (this.level >= peak * ATTACK_DONE) {
           this.level = Math.min(this.level, peak);
-          const sustain =
-            (this.cfg.sustainMode === 'on' || this.cfg.sustainMode === 'gateHold') &&
-            this.gateHigh &&
-            !this.releasePending;
-          this.stage = sustain ? 'hold' : 'decay';
+          if (this.cfg.sustainMode === 'adsr') {
+            // ADSR: attack always flows into the decay-to-sustain; a release that came due
+            // mid-attack (attackCompletes) takes over once the peak is reached.
+            this.stage = this.releasePending ? 'release' : 'decay';
+          } else {
+            const sustain =
+              (this.cfg.sustainMode === 'on' || this.cfg.sustainMode === 'gateHold') &&
+              this.gateHigh &&
+              !this.releasePending;
+            this.stage = sustain ? 'hold' : 'decay';
+          }
           this.releasePending = false;
         }
         break;
       }
       case 'hold':
-        this.level = peak;
-        if (!this.gateHigh) this.stage = 'decay';
+        if (this.cfg.sustainMode === 'adsr') {
+          this.level = peak * (this.cfg.sustainLevel ?? 1);
+          if (!this.gateHigh) this.stage = 'release';
+        } else {
+          this.level = peak;
+          if (!this.gateHigh) this.stage = 'decay';
+        }
         break;
       case 'decay': {
-        this.level += this.coef(this.cfg.decayS * this.decayTimeScale) * (0 - this.level);
+        if (this.cfg.sustainMode === 'adsr') {
+          const looping = (this.cfg.loop ?? false) && this.gateHigh;
+          // LOOP ignores SUSTAIN and falls to 0 so the gated envelope re-attacks as an LFO;
+          // otherwise decay settles onto the sustain level and holds there.
+          const target = looping ? 0 : peak * (this.cfg.sustainLevel ?? 1);
+          this.level += this.coef(this.cfg.decayS * this.decayTimeScale) * (target - this.level);
+          if (looping) {
+            if (this.level < IDLE_FLOOR) {
+              this.level = 0;
+              this.stage = 'attack';
+            }
+          } else if (this.level <= target + IDLE_FLOOR) {
+            this.level = target;
+            this.stage = this.gateHigh ? 'hold' : 'release';
+          }
+        } else {
+          this.level += this.coef(this.cfg.decayS * this.decayTimeScale) * (0 - this.level);
+          if (this.level < IDLE_FLOOR) {
+            this.level = 0;
+            this.stage = 'idle';
+          }
+        }
+        break;
+      }
+      case 'release': {
+        // ADSR post-gate-off fall to 0 over RELEASE (releaseS ≈ 0 -> ~instant).
+        this.level += this.coef(this.cfg.releaseS ?? 0) * (0 - this.level);
         if (this.level < IDLE_FLOOR) {
           this.level = 0;
           this.stage = 'idle';
