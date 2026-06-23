@@ -9,18 +9,38 @@
  * length-wrap / no-lock restore automatic with zero wrap detection.
  */
 import { describe, expect, it } from 'vitest';
-import { diffParamLock } from '../../src/engine/modRouter';
+import {
+  COURIER_LOCKABLE,
+  COURIER_LOCKABLE_IDS,
+  COURIER_MOD_TARGETS,
+  diffParamLock,
+  isCourierLockable,
+} from '../../src/engine/modRouter';
 import { CourierSequencer } from '../../src/engine/sequencers/courierSeq';
 import { Scheduler, type TransportEvent } from '../../src/engine/scheduler';
 
-/** data/courier.json defaults for the six lockable targets (restore fallback when store has none). */
+/** data/courier.json defaults for the lockable targets (restore fallback when store has none). */
 const JSON_DEFAULT: Record<string, number> = {
+  // the six mod targets
   COU_CUTOFF: 2000,
   COU_TUNE: 0,
   COU_OSC2_FREQ: 0,
   COU_OSC1_WAVESHAPE: 0,
   COU_OSC2_WAVESHAPE: 0,
   COU_SUB_WAVE: 0,
+  // the twelve lock-only continuous controls
+  COU_RESONANCE: 0,
+  COU_EG_AMOUNT: 0,
+  COU_OSC2_CUTOFF: 0,
+  COU_MIX_OSC1: 0.8,
+  COU_MIX_OSC2: 0.8,
+  COU_MIX_SUB: 0,
+  COU_MIX_NOISE: 0,
+  COU_VOLUME: 0.7,
+  COU_LFO1_RATE: 2,
+  COU_LFO1_DEPTH: 0,
+  COU_LFO2_RATE: 4,
+  COU_GLIDE: 0.001,
 };
 
 /** A harness mirroring the binder's owned state + injected callbacks. `storeBase` is the
@@ -94,12 +114,39 @@ describe('diffParamLock — apply + restore', () => {
     expect([...h.active]).toEqual(['COU_CUTOFF']);
   });
 
-  it('gates the allow-list: a non-MOD_TARGET id and garbage id are safe no-ops', () => {
+  it('gates the allow-list: a non-lockable switch id and garbage id are safe no-ops', () => {
     const h = makeHarness({});
-    h.step({ COU_RESONANCE: 0.9, NOT_A_CONTROL: 42 });
-    expect(h.applied).toEqual([]); // neither passes findModTarget
+    // COU_FILTER_MODE is a switch (not in the lockable set); NOT_A_CONTROL is garbage.
+    h.step({ COU_FILTER_MODE: 1, NOT_A_CONTROL: 42 });
+    expect(h.applied).toEqual([]); // neither passes isCourierLockable
     expect(h.active.size).toBe(0);
     expect(h.base.size).toBe(0);
+  });
+
+  it('applies + restores a newly-lockable continuous control (COU_RESONANCE)', () => {
+    const h = makeHarness({ COU_RESONANCE: 0.3 }); // store base
+    h.step({ COU_RESONANCE: 0.9 });
+    expect(h.applied).toEqual([{ id: 'COU_RESONANCE', value: 0.9, restoring: false }]);
+    expect(h.active.has('COU_RESONANCE')).toBe(true);
+
+    h.applied.length = 0;
+    h.step({}); // restore to store base
+    expect(h.applied).toEqual([{ id: 'COU_RESONANCE', value: 0.3, restoring: true }]);
+    expect(h.active.size).toBe(0);
+  });
+
+  it('locks multiple NEW targets independently (mixer + volume + LFO rate)', () => {
+    const h = makeHarness({}); // all fall back to JSON defaults
+    h.step({ COU_MIX_OSC1: 0.2, COU_VOLUME: 0.9, COU_LFO1_RATE: 8 });
+    expect(h.active.size).toBe(3);
+    h.applied.length = 0;
+    h.step({ COU_VOLUME: 0.9 }); // drop two -> restore them to JSON defaults; volume stays
+    expect(h.applied).toEqual([
+      { id: 'COU_VOLUME', value: 0.9, restoring: false },
+      { id: 'COU_MIX_OSC1', value: 0.8, restoring: true },
+      { id: 'COU_LFO1_RATE', value: 2, restoring: true },
+    ]);
+    expect([...h.active]).toEqual(['COU_VOLUME']);
   });
 
   it('a mid-sequence step-jump that lands on a no-lock step restores everything', () => {
@@ -175,5 +222,43 @@ describe('flushCourierParamLocks semantics (STOP / PANIC)', () => {
     ]);
     expect(h.active.size).toBe(0);
     expect(h.base.size).toBe(0);
+  });
+});
+
+describe('COURIER_LOCKABLE allow-list shape (widened to 18)', () => {
+  const EXPECTED: string[] = [
+    'COU_CUTOFF', 'COU_TUNE', 'COU_OSC2_FREQ', 'COU_OSC1_WAVESHAPE', 'COU_OSC2_WAVESHAPE',
+    'COU_SUB_WAVE', 'COU_RESONANCE', 'COU_EG_AMOUNT', 'COU_OSC2_CUTOFF', 'COU_MIX_OSC1',
+    'COU_MIX_OSC2', 'COU_MIX_SUB', 'COU_MIX_NOISE', 'COU_VOLUME', 'COU_LFO1_RATE',
+    'COU_LFO1_DEPTH', 'COU_LFO2_RATE', 'COU_GLIDE',
+  ];
+
+  it('is exactly the 18 lockable controls in slot order', () => {
+    expect(COURIER_LOCKABLE_IDS).toEqual(EXPECTED);
+    expect(COURIER_LOCKABLE.map((e) => e.controlId)).toEqual(EXPECTED);
+  });
+
+  it('gives every lockable control a short non-empty caption', () => {
+    for (const e of COURIER_LOCKABLE) {
+      expect(e.cap.length).toBeGreaterThan(0);
+      expect(e.cap.length).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it('is a strict superset of the six MOD_TARGETS (mod-assign unchanged)', () => {
+    // Mod-assign must stay EXACTLY the six; the lockable set adds twelve more on top.
+    expect(COURIER_MOD_TARGETS).toEqual([
+      'COU_CUTOFF', 'COU_TUNE', 'COU_OSC2_FREQ',
+      'COU_OSC1_WAVESHAPE', 'COU_OSC2_WAVESHAPE', 'COU_SUB_WAVE',
+    ]);
+    for (const id of COURIER_MOD_TARGETS) expect(COURIER_LOCKABLE_IDS).toContain(id);
+    expect(COURIER_LOCKABLE_IDS.length).toBe(18);
+    expect(COURIER_MOD_TARGETS.length).toBe(6);
+  });
+
+  it('isCourierLockable is true for all 18 and false for switches / garbage', () => {
+    for (const id of EXPECTED) expect(isCourierLockable(id)).toBe(true);
+    for (const id of ['COU_FILTER_MODE', 'COU_SYNC', 'COU_RES_BASS', 'NOT_A_CONTROL', ''])
+      expect(isCourierLockable(id)).toBe(false);
   });
 });

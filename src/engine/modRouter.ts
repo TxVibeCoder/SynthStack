@@ -42,27 +42,73 @@ export const COURIER_MOD_TARGETS: string[] = MOD_TARGETS.map((t) => t.controlId)
  * MOD_TARGETS so the lockable set and its labels never drift. (Phase C param-locks.)
  */
 const SHORT_CAP: Record<string, string> = {
+  // the six mod targets (also lockable; slots 0-5)
   COU_CUTOFF: 'CUTOFF',
   COU_TUNE: 'TUNE',
   COU_OSC2_FREQ: 'OSC2 FRQ',
   COU_OSC1_WAVESHAPE: 'O1 WAVE',
   COU_OSC2_WAVESHAPE: 'O2 WAVE',
   COU_SUB_WAVE: 'SUB WAVE',
+  // the twelve lock-only continuous controls (slots 6-17)
+  COU_RESONANCE: 'RESO',
+  COU_EG_AMOUNT: 'EG AMT',
+  COU_OSC2_CUTOFF: 'O2>CUT',
+  COU_MIX_OSC1: 'MIX O1',
+  COU_MIX_OSC2: 'MIX O2',
+  COU_MIX_SUB: 'MIX SUB',
+  COU_MIX_NOISE: 'MIX NSE',
+  COU_VOLUME: 'VOLUME',
+  COU_LFO1_RATE: 'L1 RATE',
+  COU_LFO1_DEPTH: 'L1 DEPTH',
+  COU_LFO2_RATE: 'L2 RATE',
+  COU_GLIDE: 'GLIDE',
 };
 
 /**
- * THE shared per-step param-lock allow-list (Phase C-Full part 1). Both the engine binder
- * (which validates each lock via findModTarget) and the UI matrix (which renders one button
- * per entry) import THIS so the lockable set can never drift. It is a strict superset-equal of
- * MOD_TARGETS — derived from it, so adding a mod target automatically makes it lockable. The
- * UI resolves each control's min/max/taper from data/courier.json (the single range source).
+ * THE shared per-step param-lock allow-list (Phase C-Full part 2). Both the engine binder
+ * (which validates each lock via isCourierLockable) and the UI matrix (which renders one button
+ * per entry) import THIS so the lockable set can never drift. It is a strict SUPERSET of
+ * MOD_TARGETS: the six mod targets first (slots 0-5, kept stable so existing locks/tests do not
+ * churn), then twelve lock-only continuous controls (slots 6-17). It is INDEPENDENT of mod-assign
+ * — param-locks are settable-at-a-time control writes, not mod-bus routes — so widening this list
+ * never touches MOD_TARGETS / findModTarget / setModAssign (the mod-matrix stays exactly the six).
+ * The UI resolves each control's min/max/taper from data/courier.json (the single range source).
  */
-export const COURIER_LOCKABLE: { controlId: string; cap: string }[] = MOD_TARGETS.map((t) => ({
-  controlId: t.controlId,
-  cap: SHORT_CAP[t.controlId] ?? t.controlId,
-}));
+export const COURIER_LOCKABLE_IDS: string[] = [
+  // slots 0-5: the six mod targets (order preserved)
+  'COU_CUTOFF',
+  'COU_TUNE',
+  'COU_OSC2_FREQ',
+  'COU_OSC1_WAVESHAPE',
+  'COU_OSC2_WAVESHAPE',
+  'COU_SUB_WAVE',
+  // slots 6-17: lock-only continuous controls (every one is cleanly settable in courier.ts)
+  'COU_RESONANCE',
+  'COU_EG_AMOUNT',
+  'COU_OSC2_CUTOFF',
+  'COU_MIX_OSC1',
+  'COU_MIX_OSC2',
+  'COU_MIX_SUB',
+  'COU_MIX_NOISE',
+  'COU_VOLUME',
+  'COU_LFO1_RATE',
+  'COU_LFO1_DEPTH',
+  'COU_LFO2_RATE',
+  'COU_GLIDE',
+];
 
-/** Look up a target spec by control id; undefined for a non-modulatable control (e.g. a switch). */
+export const COURIER_LOCKABLE: { controlId: string; cap: string }[] = COURIER_LOCKABLE_IDS.map(
+  (id) => ({ controlId: id, cap: SHORT_CAP[id] ?? id }),
+);
+
+/** True iff `id` may be per-step param-locked. The binder's allow-list gate (NOT findModTarget,
+ *  which is the narrower mod-assign gate). */
+export function isCourierLockable(id: string): boolean {
+  return COURIER_LOCKABLE_IDS.includes(id);
+}
+
+/** Look up a target spec by control id; undefined for a non-modulatable control (e.g. a switch).
+ *  This is the MOD-ASSIGN gate (the six MOD_TARGETS) — NOT the wider param-lock gate. */
 export function findModTarget(controlId: string): ModTargetSpec | undefined {
   return MOD_TARGETS.find((t) => t.controlId === controlId);
 }
@@ -84,11 +130,11 @@ export function modGain(depth: number, spec: ModTargetSpec): number {
  * map in place and drives the live engine only through the injected callbacks:
  *   - `readBase(id)`  -> the un-locked base to restore to (the binder reads the STORE here).
  *   - `apply(id,val)` -> schedule/write the value on the live engine.
- * Behavior: (1) APPLY — for each id in `lock` that passes the allow-list (findModTarget),
+ * Behavior: (1) APPLY — for each id in `lock` that passes the allow-list (isCourierLockable),
  * capture-base-if-new then apply the locked value; (2) RESTORE — for each currently-active id NOT
  * in `lock`, apply its captured base and clear it. Because every step calls this with its full map,
  * length-wrap and RESET-jump restore for free (a no-lock step's empty map releases everything).
- * Stray / non-MOD_TARGET ids are a safe no-op (never applied, never tracked).
+ * Stray / non-lockable ids are a safe no-op (never applied, never tracked).
  */
 export function diffParamLock(
   lock: Record<string, number>,
@@ -98,7 +144,7 @@ export function diffParamLock(
   apply: (id: string, value: number, restoring: boolean) => void,
 ): void {
   for (const id of Object.keys(lock)) {
-    if (!findModTarget(id)) continue; // allow-list gate (the six MOD_TARGETS only)
+    if (!isCourierLockable(id)) continue; // allow-list gate (the 18 lockable controls)
     if (!active.has(id)) base.set(id, readBase(id)); // lazy base capture on first override
     apply(id, lock[id]!, false);
     active.add(id);

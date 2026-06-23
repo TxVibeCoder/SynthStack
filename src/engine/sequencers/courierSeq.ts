@@ -357,7 +357,7 @@ export class CourierSequencer implements Transport {
     //   set-diff in the shell, with NO separate restore event and NO wrap detection here. Fires
     //   BEFORE the rest return — a lock is a knob value, independent of the gate, so it applies on
     //   rests too. PURE: the seq forwards the map by reference; it does NOT validate control ids,
-    //   clamp values, or know the lockable allow-list (that lives in the binder via findModTarget).
+    //   clamp values, or know the lockable allow-list (that lives in the binder via isCourierLockable).
     events.push({ time, type: 'paramLock', data: { lock: step.lock ?? {} } });
 
     // 2. REST: no gate, no pitch (CV holds).

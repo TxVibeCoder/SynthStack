@@ -30,7 +30,7 @@
  * width — see styles.css `.master-ribbon`.
  */
 
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { COLORS, FONT_CONDENSED } from './theme';
 import { Button } from './controls/Button';
@@ -55,6 +55,9 @@ export const RIBBON_VB_H = 80;
  *  one row; the elements were authored with their own internal offsets, so we pick a
  *  single baseline that centers them in the 90-tall box. */
 const ROW_Y = 30;
+/** Lower visual row baseline (the dim MASTER sublabel sits at y≈62). Caps placed here sit
+ *  under the top-row cluster — used by the keyboard-voice selector. */
+const ROW2_Y = 60;
 
 const RUN_ALL_DEF: ControlDef = { id: 'MIX_RUN_ALL', panelLabel: 'RUN ALL', type: 'button' };
 const STOP_ALL_DEF: ControlDef = { id: 'MIX_STOP_ALL', panelLabel: 'STOP ALL', type: 'button' };
@@ -190,6 +193,71 @@ const PanicCap = memo(function PanicCap({ x, y }: { x: number; y: number }) {
         fill={COLORS.panelShadow}
       >
         PANIC
+      </text>
+    </g>
+  );
+});
+
+/** KBD TARGET — selects which voice the on-screen piano + Web MIDI play ('monarch' = the
+ *  original keyboard voice; 'courier' = the Courier voice). Click flips it through the bridge.
+ *  keyboardTarget is a RUNTIME-ONLY bridge field with no store slice/notifier and this cap is
+ *  its ONLY UI writer, so local state owns the displayed value (seeded from the bridge at
+ *  mount, updated in the same click handler). The bridge already releases the held note on a
+ *  real flip and is idempotent, so the handler needs no extra guards. Filled (ledGreen) when on
+ *  Courier so the non-default target reads at a glance; outlined when on the Monarch default. */
+const KbdTargetCap = memo(function KbdTargetCap({ x, y }: { x: number; y: number }) {
+  const [target, setTarget] = useState<'monarch' | 'courier'>(() =>
+    engineBridge.getKeyboardTarget(),
+  );
+  const onToggle = useCallback(() => {
+    const next = target === 'monarch' ? 'courier' : 'monarch';
+    engineBridge.setKeyboardTarget(next); // bridge gates off the old voice + is idempotent
+    setTarget(next);
+  }, [target]);
+  const onKeyDown = useCallback(
+    (e: ReactKeyboardEvent<SVGGElement>) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      onToggle();
+    },
+    [onToggle],
+  );
+  const onCourier = target === 'courier';
+  const label = onCourier ? 'KBD: COURIER' : 'KBD: MONARCH';
+  const other = onCourier ? 'Monarch' : 'Courier';
+  const current = onCourier ? 'Courier' : 'Monarch';
+  return (
+    <g
+      className="control"
+      role="button"
+      tabIndex={0}
+      aria-label={`Keyboard plays: ${current} — click to switch to ${other}`}
+      data-testid="kbd-target"
+      onClick={onToggle}
+      onKeyDown={onKeyDown}
+    >
+      <title>Which synth the on-screen keys + MIDI play (click to switch)</title>
+      <rect
+        x={x - 51}
+        y={y - 12}
+        width={102}
+        height={24}
+        rx={5}
+        fill={onCourier ? COLORS.ledGreen : COLORS.panelShadow}
+        stroke={onCourier ? COLORS.ledGreen : COLORS.panelEdge}
+        strokeWidth={1.2}
+      />
+      <text
+        x={x}
+        y={y + 4}
+        textAnchor="middle"
+        fontFamily={FONT_CONDENSED}
+        fontSize={11}
+        letterSpacing={1}
+        fill={onCourier ? COLORS.panelShadow : COLORS.legend}
+        pointerEvents="none"
+      >
+        {label}
       </text>
     </g>
   );
@@ -348,6 +416,10 @@ export const MasterRibbon = memo(function MasterRibbon({
 
         {/* TEMPO LINK — self-subscribes; updates on tab switch for free. */}
         <TempoLinkButton x={650} y={ROW_Y} />
+
+        {/* KBD TARGET — selects which voice the on-screen keys + MIDI play. Lower row under the
+         * transport cluster (semantically apt: it governs what the keys play). Runtime-only. */}
+        <KbdTargetCap x={510} y={ROW2_Y} />
 
         {/* INIT — double-click factory reset. */}
         <InitCap x={744} y={32} />

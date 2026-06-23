@@ -647,18 +647,30 @@ export class CourierModule extends ModuleBase {
    * here (the binder allow-lists via findModTarget). `value` is engine-native (Hz for CUTOFF,
    * semitones for TUNE/OSC2_FREQ, 0..1 morphs) — exactly what setControl expects, no conversion.
    *
-   * FOUR targets are clean single-AudioParam writes -> sample-accurate setValueAtTime. TWO are
-   * NOT (COU_TUNE / COU_OSC2_FREQ recompute combined pitch buses via applyOsc*Pitch(), which write
-   * AudioParam .value immediately and can't be cheaply scheduled here); for those we fall back to
-   * the IMMEDIATE setControl. CAVEAT: a TUNE / OSC2_FREQ lock therefore lands at bind time, up to
-   * the lookahead early — audible only on fast sequences; the four most-used targets (CUTOFF + the
-   * two waveshapes + sub) are sample-accurate. (See the build contract for the scope ruling.)
+   * Most lockable targets are clean single-AudioParam (or single GainNode.gain) writes ->
+   * sample-accurate setValueAtTime. The exceptions recompute a combined bus from cached JS fields
+   * (COU_TUNE / COU_OSC2_FREQ via applyOsc*Pitch, COU_LFO1_DEPTH via applyLfo1Dest) or store a
+   * plain JS scalar (COU_GLIDE); for those we fall back to the IMMEDIATE setControl. CAVEAT: those
+   * fallback locks land at bind time, up to the lookahead early (~100 ms) — audible only on fast
+   * sequences; GLIDE additionally only takes effect on the NEXT note. All the high-traffic targets
+   * (cutoff, resonance, the waveshapes, mixers, volume, EG amount, LFO rates) are sample-accurate.
    */
   setControlAt(id: string, value: number, time: number): void {
     switch (id) {
+      // ---- filter (sample-accurate AudioParams) ----
       case 'COU_CUTOFF':
         this.ladder.parameters.get('cutoffHz')!.setValueAtTime(value, time);
         break;
+      case 'COU_RESONANCE':
+        this.ladder.parameters.get('resonance')!.setValueAtTime(value, time);
+        break;
+      case 'COU_EG_AMOUNT':
+        this.filterEgAmt.gain.setValueAtTime(value, time);
+        break;
+      case 'COU_OSC2_CUTOFF':
+        this.osc2ToCutoff.gain.setValueAtTime(value * OSC2_CUTOFF_DEPTH, time);
+        break;
+      // ---- oscillator waveshapes (sample-accurate AudioParams) ----
       case 'COU_OSC1_WAVESHAPE':
         this.osc1.parameters.get('waveshape')!.setValueAtTime(value, time);
         break;
@@ -668,9 +680,37 @@ export class CourierModule extends ModuleBase {
       case 'COU_SUB_WAVE':
         this.sub.parameters.get('subWave')!.setValueAtTime(value, time);
         break;
-      // COU_TUNE / COU_OSC2_FREQ recompute combined pitch buses; immediate fallback (~lookahead early).
+      // ---- mixer (sample-accurate GainNode.gain) ----
+      case 'COU_MIX_OSC1':
+        this.mixOsc1.gain.setValueAtTime(value, time);
+        break;
+      case 'COU_MIX_OSC2':
+        this.mixOsc2.gain.setValueAtTime(value, time);
+        break;
+      case 'COU_MIX_SUB':
+        this.mixSub.gain.setValueAtTime(value, time);
+        break;
+      case 'COU_MIX_NOISE':
+        this.mixNoise.gain.setValueAtTime(value, time);
+        break;
+      // ---- global / LFO rates (sample-accurate) ----
+      case 'COU_VOLUME':
+        this.volume.gain.setValueAtTime(value, time);
+        break;
+      case 'COU_LFO1_RATE':
+        this.lfo1.frequency.setValueAtTime(value, time);
+        break;
+      case 'COU_LFO2_RATE':
+        this.lfo2.frequency.setValueAtTime(value, time);
+        break;
+      // ---- immediate fallback (recompute-a-bus / JS-scalar targets; ~lookahead early) ----
+      // COU_TUNE / COU_OSC2_FREQ recompute combined pitch buses; COU_LFO1_DEPTH recomputes via
+      // applyLfo1Dest; COU_GLIDE stores a JS scalar (effective next note). All routed through the
+      // immediate setControl, mirroring the pitch-bus pattern.
       case 'COU_TUNE':
       case 'COU_OSC2_FREQ':
+      case 'COU_LFO1_DEPTH':
+      case 'COU_GLIDE':
       default:
         this.setControl(id, value);
     }

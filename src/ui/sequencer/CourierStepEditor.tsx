@@ -598,9 +598,11 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
 
         {/* ===== PARAM-RECORD MATRIX (18-slot 9×2 grid) =====
             Arm a lockable param, then author its per-step value with the lock-value knob above.
-            6 slots are wired from the shared COURIER_LOCKABLE allow-list (cannot drift from the
-            engine binder); the other 12 are disabled placeholders for a future widened set. A
-            burnt-orange dot overlays any wired slot the SELECTED step locks. */}
+            All 18 slots are wired from the shared COURIER_LOCKABLE allow-list (cannot drift from
+            the engine binder): the six mod targets (slots 0-5) plus twelve lock-only continuous
+            controls (slots 6-17). The disabled-placeholder branch below is a no-op safety net for
+            any future short list. A burnt-orange dot overlays any wired slot the SELECTED step
+            locks. */}
         <text x={26} y={MATRIX_Y - 16} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.5}
           fill={COLORS.legendDim}>
           PARAM REC
