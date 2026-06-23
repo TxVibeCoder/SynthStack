@@ -79,6 +79,7 @@ import { CascadePanel } from './panels/CascadePanel';
 import { CourierPanel } from './panels/CourierPanel';
 import { JackFieldPanel } from './panels/JackFieldPanel';
 import { MonarchStepEditor } from './sequencer/MonarchStepEditor';
+import { CourierStepEditor, COURIER_SEQ_STRIP } from './sequencer/CourierStepEditor';
 import { CableLayer } from './cables/CableLayer';
 import { SamplerPanel } from './panels/SamplerPanel';
 import { SamplerJacks } from './panels/SamplerJacks';
@@ -176,8 +177,23 @@ function union(...bs: RegionBox[]): RegionBox {
  * tabs carry no cables, so a narrower-than-STAGE bbox is safe (same as before).
  */
 const CASCADE_BOX: RegionBox = { x: 0, y: 0, w: cascadeLayout.width, h: cascadeLayout.height };
-const COURIER_BOX: RegionBox = { x: 0, y: 0, w: courierLayout.width, h: courierLayout.height };
 const ANVIL_BOX: RegionBox = { x: 0, y: 0, w: anvilLayout.width, h: anvilLayout.height };
+
+/**
+ * Courier tab = the controls panel on top + the 64-step editor strip beneath it (Phase C),
+ * composed into one landscape canvas — same stacked spirit as the Monarch tab. The seq strip
+ * keeps its native COURIER_SEQ_STRIP aspect, full panel width, so no letterbox.
+ */
+const CUR_GAP = 16;
+const CUR_CONTROLS_BOX: RegionBox = { x: 0, y: 0, w: courierLayout.width, h: courierLayout.height };
+const CUR_SEQ_W = courierLayout.width;
+const CUR_SEQ_H = (CUR_SEQ_W * COURIER_SEQ_STRIP.h) / COURIER_SEQ_STRIP.w;
+const CUR_SEQ_BOX: RegionBox = {
+  x: (courierLayout.width - CUR_SEQ_W) / 2,
+  y: courierLayout.height + CUR_GAP,
+  w: CUR_SEQ_W,
+  h: CUR_SEQ_H,
+};
 /** FX tab — its own landscape canvas (UI-only master effects), decoupled like the voices. */
 const FX_BOX: RegionBox = { x: 0, y: 0, w: FX_W, h: FX_H };
 
@@ -229,8 +245,8 @@ const BBOX: Record<ModuleTabId, RegionBox> = {
   cascade: CASCADE_BOX,
   anvil: ANVIL_BOX,
   monarch: union(MON_CONTROLS_BOX, MON_SEQ_BOX, MON_KB_BOX),
-  // Courier fill-zooms to its OWN landscape canvas (the densest voice control field).
-  courier: COURIER_BOX,
+  // Courier fill-zooms to the union of its control panel + the 64-step seq strip beneath it.
+  courier: union(CUR_CONTROLS_BOX, CUR_SEQ_BOX),
   patchbay: union(JACKFIELD_BOX, SAMPLER_PATCH_BOX),
   sampler: union(SAMPLER_REGION, DRUM_REGION),
   fx: FX_BOX,
@@ -384,13 +400,20 @@ export function App() {
               </>
             )}
 
-            {/* ===== COURIER TAB: the Courier voice controls only (landscape canvas).
-             * The densest voice; its 64-step param-lock seq/arp is deferred, so the panel
-             * is controls-only (no seq strip / keyboard here). ===== */}
+            {/* ===== COURIER TAB: the Courier voice controls + the 64-step editor strip
+             * (Phase C MVP). The strip carries its own PLAY/STOP + RESET + REC transport
+             * (Courier has no panel transport). New testid "courier-seq-strip" (seq-strip/
+             * future-strip are reserved for Monarch). The shared keyboard plays Courier when
+             * keyboardTarget==='courier', so no keyboard strip mounts here. ===== */}
             {isCourier && (
-              <Region box={COURIER_BOX} testId="tier-courier" dimmed={dim}>
-                <CourierPanel />
-              </Region>
+              <>
+                <Region box={CUR_CONTROLS_BOX} testId="tier-courier" dimmed={dim}>
+                  <CourierPanel />
+                </Region>
+                <Region box={CUR_SEQ_BOX} testId="courier-seq-strip" dimmed={dim}>
+                  <CourierStepEditor />
+                </Region>
+              </>
             )}
 
             {/* The old in-stage utility strip Region (REGIONS.utilityStrip) and the in-

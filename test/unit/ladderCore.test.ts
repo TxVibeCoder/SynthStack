@@ -209,7 +209,9 @@ describe('ladder.worklet core — Huovilainen (work order §7.3)', () => {
     const off = lowEnergy(false);
     const on = lowEnergy(true);
     expect(on).toBeGreaterThan(off * 1.2); // RES BASS measurably re-adds low end
-  });
+    // two full 4 s @48 kHz LadderCore renders + FFTs are genuinely compute-heavy
+    // (~7 s here), so this test needs more than vitest's 5 s default timeout.
+  }, 20000);
 
   it('saturation: drive increases odd-harmonic distortion (analog-ism #2)', () => {
     const measure3rd = (drive: number): number => {

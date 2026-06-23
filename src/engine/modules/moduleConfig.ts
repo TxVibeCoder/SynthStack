@@ -142,7 +142,7 @@ export const MODULES: ModuleConfig[] = [
     mainOutJack: 'COU_AUDIO_OUT', // main out (post-VOLUME) -> mixer ch5
     mixerChannel: 4, // mixer.connectInput(courier.outputTap('COU_AUDIO_OUT'), 4)
     ownsControlDefaults: true,
-    hasTransport: false, // Phase A: sequencer/arp deferred — no transport yet
+    hasTransport: true, // Phase C: the Courier step sequencer/arp is the 6th scheduler citizen
   },
 ];
 

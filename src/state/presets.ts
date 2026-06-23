@@ -13,6 +13,7 @@
 
 import {
   coalesceCourierModAssignState,
+  coalesceCourierSequencerState,
   coalesceEffectsState,
   coalesceKeyboardState,
   coalesceSamplerState,
@@ -224,12 +225,19 @@ export function coalesceStudioState(raw: unknown): StudioState {
     isObject(raw.effects) ? (raw.effects as Parameters<typeof coalesceEffectsState>[0]) : undefined,
   );
 
-  // 12. courier.modAssign — strict coalesce; older trees lacking `courier` default all-null.
+  // 12. courier.modAssign + courier.seq — strict coalesce; older trees lacking `courier` (or
+  //     the seq sub-slice) default to all-null routes / a fresh 64-step sequencer (running:false).
   base.courier = {
     modAssign: coalesceCourierModAssignState(
       isObject(raw.courier) && isObject((raw.courier as Record<string, unknown>).modAssign)
         ? ((raw.courier as Record<string, { modAssign: unknown }>)
             .modAssign as Parameters<typeof coalesceCourierModAssignState>[0])
+        : undefined,
+    ),
+    seq: coalesceCourierSequencerState(
+      isObject(raw.courier) && isObject((raw.courier as Record<string, unknown>).seq)
+        ? ((raw.courier as Record<string, { seq: unknown }>)
+            .seq as Parameters<typeof coalesceCourierSequencerState>[0])
         : undefined,
     ),
   };

@@ -140,7 +140,7 @@ export interface StudioState {
   keyboard: KeyboardState;
   effects: EffectsState;
   /** Courier per-voice structured slice (namespaced so it can grow beyond modAssign). */
-  courier: { modAssign: CourierModAssignState };
+  courier: { modAssign: CourierModAssignState; seq: CourierSequencerState };
 }
 
 export function defaultMonarchStep(): MonarchStepState {
@@ -367,6 +367,101 @@ export function coalesceCourierModAssignState(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Courier sequencer slice (Phase C MVP). 64 steps (4 pages x 16) of per-step note +
+// gate + tie + rest, with a forward-compatible param-lock slot. Lives under
+// state.courier.seq (NOT state.transport) so all Courier persistence stays on the
+// one coalesce path Phase B owns. Additive slice — version stays 1.
+// ---------------------------------------------------------------------------
+
+export type CourierSeqMode = 'SEQ' | 'ARP';
+export type CourierArpModeState = 'OFF' | 'UP' | 'DOWN';
+
+export interface CourierStepState {
+  noteVv: number; // -1 = unauthored; else 1vv/oct relative to C5
+  gateLength: number; // 0.05..1.0; >=1 == TIE
+  rest: boolean;
+  glide: boolean;
+  lock: Record<string, number> | null; // C-FULL param-lock map (controlId->value). MVP: ALWAYS null.
+}
+
+export interface CourierSequencerState {
+  steps: CourierStepState[]; // exactly 64 (4 pages x 16)
+  endStep: number; // 1..64 (LENGTH)
+  swingPct: number; // 0..100
+  gateLenScale: number; // 0.05..1.0 global GATE LENGTH
+  clockDivIdx: number; // 0..5 index into COURIER_CLOCK_DIVS
+  mode: CourierSeqMode; // 'SEQ' | 'ARP'
+  arpMode: CourierArpModeState; // 'OFF' | 'UP' | 'DOWN'
+  running: boolean; // FORCED false on every load path
+}
+
+export function defaultCourierStep(): CourierStepState {
+  return { noteVv: -1, gateLength: 0.5, rest: false, glide: false, lock: null };
+}
+
+export function defaultCourierSequencerState(): CourierSequencerState {
+  return {
+    steps: Array.from({ length: 64 }, defaultCourierStep),
+    endStep: 16,
+    swingPct: 50,
+    gateLenScale: 1,
+    clockDivIdx: 3,
+    mode: 'SEQ',
+    arpMode: 'OFF',
+    running: false,
+  };
+}
+
+/**
+ * Normalize a possibly-partial / older-shape Courier sequencer slice to a complete
+ * CourierSequencerState. Mirrors coalesceCourierModAssignState: PURE, never mutates `raw`.
+ * Steps are ALWAYS rebuilt as a strict 64-entry array (raw lengths never trusted); every
+ * field is validated/clamped so a hand-edited bundle can't inject junk into an AudioParam.
+ * A non-null `lock` is preserved (forward-compatible with C-FULL param-locks). `running`
+ * is ALWAYS forced false (a restored preset never spontaneously sounds).
+ */
+export function coalesceCourierSequencerState(
+  raw: Partial<CourierSequencerState> | undefined,
+): CourierSequencerState {
+  const d = defaultCourierSequencerState();
+  const rs = Array.isArray(raw?.steps) ? raw!.steps : [];
+  const steps = Array.from({ length: 64 }, (_, i) => {
+    const s = rs[i] as Partial<CourierStepState> | undefined;
+    const ds = defaultCourierStep();
+    if (s == null || typeof s !== 'object') return ds;
+    return {
+      noteVv: typeof s.noteVv === 'number' && Number.isFinite(s.noteVv) ? s.noteVv : ds.noteVv,
+      gateLength:
+        typeof s.gateLength === 'number' && Number.isFinite(s.gateLength)
+          ? Math.max(0.05, Math.min(1, s.gateLength))
+          : ds.gateLength,
+      rest: typeof s.rest === 'boolean' ? s.rest : ds.rest,
+      glide: typeof s.glide === 'boolean' ? s.glide : ds.glide,
+      // preserve a C-FULL param-lock map if a future tree carries one; else null
+      lock: s.lock && typeof s.lock === 'object' ? (s.lock as Record<string, number>) : null,
+    };
+  });
+  const clampInt = (v: unknown, lo: number, hi: number, dv: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.max(lo, Math.min(hi, v))) : dv;
+  return {
+    steps,
+    endStep: clampInt(raw?.endStep, 1, 64, d.endStep),
+    swingPct:
+      typeof raw?.swingPct === 'number' && Number.isFinite(raw.swingPct)
+        ? Math.max(0, Math.min(100, raw.swingPct))
+        : d.swingPct,
+    gateLenScale:
+      typeof raw?.gateLenScale === 'number' && Number.isFinite(raw.gateLenScale)
+        ? Math.max(0.05, Math.min(1, raw.gateLenScale))
+        : d.gateLenScale,
+    clockDivIdx: clampInt(raw?.clockDivIdx, 0, 5, d.clockDivIdx),
+    mode: raw?.mode === 'ARP' ? 'ARP' : 'SEQ',
+    arpMode: raw?.arpMode === 'UP' || raw?.arpMode === 'DOWN' ? raw.arpMode : 'OFF',
+    running: false, // ALWAYS false on load (a restored preset never spontaneously sounds)
+  };
+}
+
 export function defaultStudioState(): StudioState {
   return {
     version: 1,
@@ -390,7 +485,7 @@ export function defaultStudioState(): StudioState {
     sampler: defaultSamplerState(),
     keyboard: defaultKeyboardState(),
     effects: defaultEffectsState(),
-    courier: { modAssign: defaultCourierModAssignState() },
+    courier: { modAssign: defaultCourierModAssignState(), seq: defaultCourierSequencerState() },
   };
 }
 

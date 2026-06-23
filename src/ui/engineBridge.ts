@@ -50,6 +50,7 @@ import { Studio } from '../engine/studio';
 import type { MasterFxId } from '../engine/fx/masterFxChain';
 import {
   coalesceCourierModAssignState,
+  coalesceCourierSequencerState,
   coalesceKeyboardState,
   coalesceSamplerState,
   defaultCourierModAssignState,
@@ -184,6 +185,7 @@ export interface TransportFlags {
   anvilRunning: boolean;
   cascadePlaying: boolean;
   drumRunning: boolean;
+  courierRunning: boolean;
 }
 
 /** Store mirror for continuous mixer/master drags — debounced ≥100 ms (CONVENTIONS.md). */
@@ -229,6 +231,10 @@ class EngineBridge {
   /** Set by the MonarchStepEditor while REC is armed: each keyboard/MIDI note ON writes the
    *  cursor step + advances it (step-record). null = not recording. Runtime-only. */
   private monarchRecordHandler: ((noteVv: number) => void) | null = null;
+  /** Courier step-record arm (Phase C), the exact parallel of monarchRecordHandler. Set by the
+   *  CourierStepEditor while REC is armed; each keyboard/MIDI note ON (with the keyboard target on
+   *  'courier') writes the cursor step + advances it. null = not recording. Runtime-only. */
+  private courierRecordHandler: ((noteVv: number) => void) | null = null;
 
   /** The one in-flight sample-processor preview source (looped); replaced/stopped on demand. */
   private previewSrc: AudioBufferSourceNode | null = null;
@@ -474,6 +480,20 @@ class EngineBridge {
     if (this._powered) this.studio.monarchHold(down);
   }
 
+  // ---- Courier transport (Phase C) — mirror monarchRun/Stop/Reset, no-op while unpowered ----
+
+  courierRun(): void {
+    if (this._powered) this.studio.courierRun();
+  }
+
+  courierStop(): void {
+    if (this._powered) this.studio.courierStop();
+  }
+
+  courierReset(): void {
+    if (this._powered) this.studio.courierReset();
+  }
+
   anvilRun(): void {
     if (this._powered) this.studio.anvilRun();
   }
@@ -682,6 +702,11 @@ class EngineBridge {
     if (this.keyboardTarget === 'monarch') {
       this.monarchRecordHandler?.(noteToVv(noteNumber) + this.keyboardOctave);
     }
+    // Courier LIVE step-record: the SAME hardware-style step-record arm, but on the Courier grid.
+    // Gated on the Courier target so a note never bleeds into the Monarch grid (and vice-versa).
+    if (this.keyboardTarget === 'courier') {
+      this.courierRecordHandler?.(noteToVv(noteNumber) + this.keyboardOctave);
+    }
   }
 
   /** Note OFF from the keyboard / MIDI. Drives the mono allocator -> applyVoiceAction. */
@@ -722,7 +747,11 @@ class EngineBridge {
   setCourierModAssign(source: CourierModSource, entry: ModAssignEntry | null): void {
     if (this._powered) this.studio.courier.setModAssign(source, entry);
     const s = this.store.getState();
-    s.courier = { modAssign: coalesceCourierModAssignState(s.courier?.modAssign) }; // heal older tree
+    // heal older tree but preserve the sibling seq slice (Phase C) — only the modAssign sub-slice is rebuilt here
+    s.courier = {
+      modAssign: coalesceCourierModAssignState(s.courier?.modAssign),
+      seq: coalesceCourierSequencerState(s.courier?.seq),
+    };
     s.courier.modAssign.routes[source] = entry;
     this.store.setState(s);
   }
@@ -851,19 +880,27 @@ class EngineBridge {
       // samplerSeq is an eagerly-constructed readonly field (like monarchSeq); isPlaying() is
       // false on the fresh instance, so this is safe to read before power-on.
       drumRunning: s.samplerSeq.isPlaying(),
+      // courierSeq is likewise an eagerly-constructed readonly field; running is false fresh.
+      courierRunning: s.courierSeq.running,
     };
   }
 
   // ---- step-LED chase (stage 3, work order §9.1 rAF drain) ----------------------------
 
-  private readonly stepPositions = { monarch: -1, anvil: -1, cascade: [-1, -1] as [number, number], drum: -1 };
+  private readonly stepPositions = {
+    monarch: -1,
+    anvil: -1,
+    cascade: [-1, -1] as [number, number],
+    drum: -1,
+    courier: -1,
+  };
   private readonly stepListeners = new Set<() => void>();
   private rafId: number | null = null;
 
   /** Current chase position for a machine (−1 = none yet). Stable primitives. */
-  getStepPosition(machine: 'monarch' | 'anvil' | 'drum'): number;
+  getStepPosition(machine: 'monarch' | 'anvil' | 'drum' | 'courier'): number;
   getStepPosition(machine: 'cascade', seq: 0 | 1): number;
-  getStepPosition(machine: 'monarch' | 'anvil' | 'cascade' | 'drum', seq?: 0 | 1): number {
+  getStepPosition(machine: 'monarch' | 'anvil' | 'cascade' | 'drum' | 'courier', seq?: 0 | 1): number {
     if (machine === 'cascade') return this.stepPositions.cascade[seq ?? 0];
     return this.stepPositions[machine];
   }
@@ -894,6 +931,13 @@ class EngineBridge {
             if (e.data && 'pitchVv' in e.data) {
               if (this.stepPositions.anvil !== idx) {
                 this.stepPositions.anvil = idx;
+                changed = true;
+              }
+            } else if (e.data && '__courier' in e.data) {
+              // bindCourierEvent tags the Courier step event so it never collides with the
+              // (payload-identical) Monarch step in this disambiguation.
+              if (this.stepPositions.courier !== idx) {
+                this.stepPositions.courier = idx;
                 changed = true;
               }
             } else if (this.stepPositions.monarch !== idx) {
@@ -967,6 +1011,34 @@ class EngineBridge {
    * transport slice, but the armed FLAG never serializes (parity with MIDI-enabled). */
   setMonarchRecordHandler(fn: ((noteVv: number) => void) | null): void {
     this.monarchRecordHandler = fn;
+  }
+
+  // ---- Courier step editing + step-record (Phase C) — mirror the Monarch trio above ----------
+  // One store commit per edit; Studio.syncTransportConfig mirrors state.courier.seq into the live
+  // sequencer on every store notification, so no direct engine write is needed here.
+
+  updateCourierStep(
+    index: number,
+    patch: Partial<StudioState['courier']['seq']['steps'][number]>,
+  ): void {
+    if (index < 0 || index > 63) return;
+    const s = this.store.getState();
+    const step = s.courier.seq.steps[index];
+    if (!step) return;
+    Object.assign(step, patch);
+    this.store.setState(s);
+  }
+
+  setCourierEndStep(endStep: number): void {
+    const s = this.store.getState();
+    s.courier.seq.endStep = Math.min(64, Math.max(1, Math.round(endStep)));
+    this.store.setState(s);
+  }
+
+  /** CourierStepEditor REC arm — exact parallel of setMonarchRecordHandler. While set, a
+   *  keyboard/MIDI note ON (Courier keyboard target) writes the cursor step + advances it. */
+  setCourierRecordHandler(fn: ((noteVv: number) => void) | null): void {
+    this.courierRecordHandler = fn;
   }
 
   // ---- patching (stage 2, work order §8.2) -------------------------------------------

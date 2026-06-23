@@ -42,10 +42,21 @@ describe('courierLayout (Courier panel layout)', () => {
     expect(courierLayout.width).toBeGreaterThan(courierLayout.height); // landscape
   });
 
-  // No Setup-only params on Courier (Phase A): every authored control has a front-panel
-  // position. The sequencer/arp controls are deferred to a later phase and not in the JSON
-  // controls[] yet, so there is nothing to exempt here.
-  const SETUP_ONLY = new Set<string>([]);
+  // Phase C added the sequencer/arp SETTINGS controls to data/courier.json. These do NOT live on
+  // the main CourierPanel voice layout — they belong to the step-editor / transport surface (a
+  // separate region the UI step owns), so they are exempt from this panel-placement invariant
+  // exactly as Setup-only params would be.
+  const SETUP_ONLY = new Set<string>([
+    'COU_TEMPO',
+    'COU_CLOCK_DIV',
+    'COU_SEQ_LENGTH',
+    'COU_GATE_LENGTH',
+    'COU_SWING',
+    'COU_SEQ_MODE',
+    'COU_ARP_MODE',
+    'COU_RUN_STOP',
+    'COU_RESET',
+  ]);
 
   it('places every panel control id from data/courier.json (Setup-only params excluded)', () => {
     for (const c of courier.controls) {

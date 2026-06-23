@@ -25,6 +25,7 @@ import { Scheduler, type TransportEvent } from './scheduler';
 import { MonarchSequencer } from './sequencers/monarchseq';
 import { AnvilSequencer } from './sequencers/anvilseq';
 import { CascadeClock } from './sequencers/cascadeClock';
+import { CourierSequencer } from './sequencers/courierSeq';
 import { MidiClock } from './sequencers/midiClock';
 import { SamplerLoopClock } from './sequencers/samplerLoops';
 import { SamplerStepSeq } from './sequencers/samplerSeq';
@@ -76,6 +77,10 @@ export class Studio {
   readonly monarchSeq = new MonarchSequencer();
   readonly anvilSeq = new AnvilSequencer();
   readonly cascadeClock = new CascadeClock();
+  /** Courier step sequencer / minimal arp (6th scheduler citizen, Phase C MVP). Pure
+   *  internal-clock state machine; mirrored from state.courier.seq by syncTransportConfig.
+   *  tempoBpm follows LINK (applyTempoLink) like the Monarch clock. */
+  readonly courierSeq = new CourierSequencer();
   /** External MIDI transport clock (24-PPQN ÷6 → 16ths). When running it is the studio master:
    *  it clocks the Cascade (4 PPQN, manual priority MIDI > analog) and the Monarch (unless
    *  its analog TEMPO IN is patched — Monarch priority analog > MIDI). Fed by the bridge from Web MIDI. */
@@ -190,6 +195,10 @@ export class Studio {
     // column per master 16th and re-seats onto the live grid on a stopped→running edge.
     this.samplerSeq.setPhaseProvider(() => this.monarchSeq.phaseRef());
     this.scheduler.add(this.samplerSeq, (e) => this.bindSamplerStepEvent(e));
+    // 6th citizen: the Courier step sequencer / arp. Internal clock (like the Monarch),
+    // so unlike the sampler clocks it idles at nextEventTime=Infinity until start() and
+    // needs no phase provider. The binder drives the Courier voice's pitch/gate surface.
+    this.scheduler.add(this.courierSeq, (e) => this.bindCourierEvent(e));
     this.scheduler.start();
 
     this.store.subscribe(() => this.syncTransportConfig());
@@ -281,6 +290,38 @@ export class Studio {
         break;
     }
     this.feedFollowers('cascadeclock', e);
+  }
+
+  /**
+   * Courier step-sequencer binder: drives the Courier voice's pitch/gate surface from the
+   * pure seq's events (the SAME setPitchAt/gateAt the keyboard live-play uses). Courier has
+   * NO accent / ASSIGN / ratchet out, so only step/pitch/gateOn/gateOff are handled.
+   *
+   * The 'step' event is a UI-only LED-chase marker (no engine action). It rides
+   * scheduler.uiQueue; its payload is just {stepIndex} — identical to the Monarch step event —
+   * so we tag it `__courier:true` HERE (bind runs on the same object reference the scheduler
+   * then pushes to uiQueue, see scheduler.pump) to let the rAF chase route it to the Courier
+   * channel without a payload-sniff collision.
+   */
+  private bindCourierEvent(e: TransportEvent): void {
+    switch (e.type) {
+      case 'step':
+        if (e.data) e.data['__courier'] = true; // UI-chase disambiguation only — no engine call
+        break;
+      case 'pitch':
+        this.courier.setPitchAt(e.data!['noteVv'] as number, e.time, e.data!['glide'] as boolean);
+        break;
+      case 'gateOn':
+        this.courier.gateAt(true, e.time);
+        break;
+      case 'gateOff':
+        this.courier.gateAt(false, e.time);
+        break;
+    }
+    // Courier has a COU_CLOCK_OUT jack — keep follower parity so a patched clock-out can drive
+    // downstream followers (the feedingFollowers guard prevents loops). No INTERNAL_CLOCK_EVENTS
+    // entry exists yet, so today this is inert; it costs nothing and mirrors the other binders.
+    this.feedFollowers('courierseq', e);
   }
 
   /**
@@ -512,6 +553,9 @@ export class Studio {
     // SAME gesture as the Monarch (the drum grid slaves to the Monarch phase, so a simultaneous
     // start locks them with no "who started first" ambiguity). An empty grid is a silent no-op.
     this.samplerSeq.start(now);
+    // 6th transport: the Courier step seq joins the master START ALL (its internal clock follows
+    // LINK like the Monarch). An all-rest / empty pattern is a silent no-op.
+    this.courierSeq.start(now);
   }
 
   stopAll(): void {
@@ -519,8 +563,10 @@ export class Studio {
     this.anvilSeq.stop();
     this.cascadeClock.stop();
     this.samplerSeq.stop(); // STOP ALL halts the drum grid too (mirrors runAll)
+    this.courierSeq.stop();
     const t = this.context.audioContext.currentTime;
     this.monarch.gateAt(false, t);
+    this.courier.gateAt(false, t); // drop a possibly-hung Courier gate (mirrors the Monarch drop)
   }
 
   /**
@@ -541,9 +587,11 @@ export class Studio {
     this.anvilSeq.stop();
     this.cascadeClock.stop();
     this.samplerSeq.stop();
+    this.courierSeq.stop();
     this.samplerLoops.panicAll(); // clear the loop SCHEDULE so nothing re-launches...
     for (let i = 0; i < 8; i++) this.sampler.stopLoop(i, t); // ...and stop the sounding voices
     this.monarch.gateAt(false, t);
+    this.courier.gateAt(false, t);
   }
 
   /** TEMPO LINK: slave Anvil step rate and Cascade tick rate to Monarch BPM. */
@@ -552,6 +600,7 @@ export class Studio {
     const bpm = this.monarchSeq.tempoBpm;
     this.anvilSeq.rateHz = (bpm / 60) * 4; // 16th steps
     this.cascadeClock.tempoHz = bpm / 60; // 1 PPQ
+    this.courierSeq.tempoBpm = bpm; // both are BPM — Courier follows Monarch exactly under LINK
   }
 
   // ---- external MIDI transport clock (fed by the bridge from Web MIDI) -----------------------
@@ -633,6 +682,21 @@ export class Studio {
   /** HOLD button: true on pointerdown, false on release (sequencer stays on its step). */
   monarchHold(down: boolean): void {
     this.monarchSeq.holdActive = down;
+  }
+
+  // ---- Courier transport (Phase C) — exact parallel of monarchRun/Stop/Reset ----------------
+
+  courierRun(): void {
+    this.courierSeq.start(this.context.audioContext.currentTime + 0.03);
+  }
+
+  courierStop(): void {
+    this.courierSeq.stop();
+    this.courier.gateAt(false, this.context.audioContext.currentTime + 0.03); // no hung gate
+  }
+
+  courierReset(): void {
+    this.courierSeq.reset();
   }
 
   /**
@@ -966,6 +1030,18 @@ export class Studio {
     this.monarchSeq.swingPct = s.transport.monarch.swingPct;
     this.monarchSeq.steps = s.transport.monarch.steps.map((st) => ({ ...st }));
     this.anvilSeq.steps = s.transport.anvil.steps.map((st) => ({ ...st }));
+    // Courier seq slice -> live sequencer (state.courier.seq, NOT state.transport). Coalesce
+    // guarantees the slice exists on every load path. CourierStepState is structurally identical
+    // to the engine's CourierStep, so a shallow per-step copy needs no translation.
+    const c = s.courier.seq;
+    this.courierSeq.steps = c.steps.map((st) => ({ ...st }));
+    this.courierSeq.endStep = c.endStep;
+    this.courierSeq.swingPct = c.swingPct;
+    this.courierSeq.gateLenScale = c.gateLenScale;
+    this.courierSeq.clockDivIdx = c.clockDivIdx;
+    // mode SEQ/ARP gates whether the arp runs: force arpMode OFF unless mode is ARP.
+    this.courierSeq.arpMode =
+      c.mode === 'ARP' ? (c.arpMode === 'UP' ? 'UP' : c.arpMode === 'DOWN' ? 'DOWN' : 'OFF') : 'OFF';
   }
 
   /** Resolve a control-bearing module instance by id (the named voice fields). Called only
@@ -996,6 +1072,9 @@ export class Studio {
         mod.setControl(controlId, value);
         if (controlId === 'MON_TEMPO' && typeof value === 'number') {
           this.monarchSeq.tempoBpm = value;
+        }
+        if (controlId === 'COU_TEMPO' && typeof value === 'number') {
+          this.courierSeq.tempoBpm = value; // independent Courier BPM when LINK is OFF
         }
         if (controlId === 'ANV_TEMPO' && typeof value === 'number') {
           this.anvilSeq.rateHz = anvilStepRateHz(expKnob01(value, 0.7, 700), 0);

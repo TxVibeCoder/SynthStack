@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   coalesceCourierModAssignState,
+  coalesceCourierSequencerState,
   coalesceKeyboardState,
   coalesceSamplerState,
   defaultCourierModAssignState,
+  defaultCourierSequencerState,
+  defaultCourierStep,
   defaultKeyboardState,
   defaultPattern,
   defaultStudioState,
@@ -12,6 +15,7 @@ import {
   QUANTIZE_DIVISIONS,
   StudioStore,
   type CourierModAssignState,
+  type CourierSequencerState,
 } from '../../src/state/studioState';
 import { QUANT_CYCLE } from '../../src/engine/quantGrid';
 import { FACTORY_KIT } from '../../src/engine/factorySamples';
@@ -394,5 +398,127 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(out.routes.fEnv).toEqual({ controlId: 'COU_TUNE', depth: -1 });
     expect(out.routes.aEnv).toBeNull();
     expect(out.routes.lfo1).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Courier sequencer slice (Phase C MVP) — mirrors the modAssign block above.
+  // -------------------------------------------------------------------------
+
+  it('default state carries courier.seq with 64 default steps and version stays 1', () => {
+    const s = defaultStudioState();
+    expect(s.courier.seq).toEqual(defaultCourierSequencerState());
+    expect(s.courier.seq.steps).toHaveLength(64);
+    expect(s.courier.seq.steps[0]).toEqual({
+      noteVv: -1,
+      gateLength: 0.5,
+      rest: false,
+      glide: false,
+      lock: null,
+    });
+    expect(s.courier.seq.endStep).toBe(16);
+    expect(s.courier.seq.clockDivIdx).toBe(3);
+    expect(s.courier.seq.mode).toBe('SEQ');
+    expect(s.courier.seq.arpMode).toBe('OFF');
+    expect(s.courier.seq.running).toBe(false);
+    expect(s.version).toBe(1); // additive slice — no version bump
+  });
+
+  it('defaultCourierStep() is an unauthored half-gate step with a null lock', () => {
+    expect(defaultCourierStep()).toEqual({
+      noteVv: -1,
+      gateLength: 0.5,
+      rest: false,
+      glide: false,
+      lock: null,
+    });
+  });
+
+  it('JSON round-trips a courier.seq edit (step note + endStep + arp) across the store', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.courier.seq.steps[0]!.noteVv = 0.25;
+    s.courier.seq.steps[17]!.gateLength = 1.0; // tie on a later page
+    s.courier.seq.steps[17]!.glide = true;
+    s.courier.seq.endStep = 32;
+    s.courier.seq.clockDivIdx = 1;
+    s.courier.seq.mode = 'ARP';
+    s.courier.seq.arpMode = 'UP';
+    store.setState(s);
+    expect(store.getState()).toEqual(s);
+    expect(store.getState().courier.seq.steps[17]).toEqual({
+      noteVv: -1,
+      gateLength: 1.0,
+      rest: false,
+      glide: true,
+      lock: null,
+    });
+  });
+
+  it('coalesceCourierSequencerState(undefined) yields the 64-step default', () => {
+    expect(coalesceCourierSequencerState(undefined)).toEqual(defaultCourierSequencerState());
+  });
+
+  it('coalesceCourierSequencerState coalesces a pre-feature tree missing courier.seq to defaults', () => {
+    const preFeatureTree: Partial<ReturnType<typeof defaultStudioState>> = defaultStudioState();
+    delete (preFeatureTree.courier as { seq?: unknown }).seq;
+    const seq = (preFeatureTree.courier as { seq?: Partial<CourierSequencerState> }).seq;
+    expect(coalesceCourierSequencerState(seq)).toEqual(defaultCourierSequencerState());
+  });
+
+  it('coalesceCourierSequencerState rebuilds a missing/short steps array to exactly 64', () => {
+    const out = coalesceCourierSequencerState({
+      steps: [{ noteVv: 1, gateLength: 0.5, rest: false, glide: false, lock: null }],
+    } as Partial<CourierSequencerState>);
+    expect(out.steps).toHaveLength(64);
+    expect(out.steps[0]!.noteVv).toBe(1);
+    expect(out.steps[1]).toEqual(defaultCourierStep()); // gap filled with a default step
+  });
+
+  it('coalesceCourierSequencerState clamps endStep/clockDivIdx and validates mode/arpMode', () => {
+    const out = coalesceCourierSequencerState({
+      endStep: 999, // clamp -> 64
+      clockDivIdx: 50, // clamp -> 5
+      swingPct: 200, // clamp -> 100
+      gateLenScale: 9, // clamp -> 1
+      mode: 'NOPE' as unknown as 'SEQ',
+      arpMode: 'SIDEWAYS' as unknown as 'OFF',
+      running: true, // FORCED false
+    } as Partial<CourierSequencerState>);
+    expect(out.endStep).toBe(64);
+    expect(out.clockDivIdx).toBe(5);
+    expect(out.swingPct).toBe(100);
+    expect(out.gateLenScale).toBe(1);
+    expect(out.mode).toBe('SEQ');
+    expect(out.arpMode).toBe('OFF');
+    expect(out.running).toBe(false);
+  });
+
+  it('coalesceCourierSequencerState forces running:false even when the raw says true', () => {
+    expect(coalesceCourierSequencerState({ running: true } as Partial<CourierSequencerState>).running).toBe(
+      false,
+    );
+  });
+
+  it('coalesceCourierSequencerState clamps a per-step gateLength and defaults junk fields', () => {
+    const out = coalesceCourierSequencerState({
+      steps: [
+        { noteVv: 'x', gateLength: 5, rest: 'yes', glide: 1, lock: null },
+        { noteVv: NaN, gateLength: -1, rest: false, glide: false, lock: null },
+      ],
+    } as unknown as Partial<CourierSequencerState>);
+    expect(out.steps[0]!.noteVv).toBe(-1); // non-number -> default
+    expect(out.steps[0]!.gateLength).toBe(1); // clamp to 1
+    expect(out.steps[0]!.rest).toBe(false); // non-boolean -> default
+    expect(out.steps[0]!.glide).toBe(false);
+    expect(out.steps[1]!.noteVv).toBe(-1); // NaN -> default
+    expect(out.steps[1]!.gateLength).toBe(0.05); // clamp to floor
+    expect(JSON.parse(JSON.stringify(out))).toEqual(out);
+  });
+
+  it('coalesceCourierSequencerState preserves a forward-compat per-step lock map', () => {
+    const out = coalesceCourierSequencerState({
+      steps: [{ noteVv: 0, gateLength: 0.5, rest: false, glide: false, lock: { COU_CUTOFF: 0.7 } }],
+    } as Partial<CourierSequencerState>);
+    expect(out.steps[0]!.lock).toEqual({ COU_CUTOFF: 0.7 });
   });
 });

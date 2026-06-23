@@ -53,7 +53,17 @@
     { "id": "COU_VOLUME", "panelLabel": "VOLUME", "type": "knob", "min": 0, "max": 1, "default": 0.7, "taper": "lin", "manualRef": "Courier p.19" },
     { "id": "COU_GLIDE", "panelLabel": "GLIDE", "type": "knob", "min": 0.001, "max": 10, "default": 0.001, "taper": "exp", "unit": "s", "manualRef": "Courier p.19", "notes": "portamento time" },
     { "id": "COU_LFO2_RATE", "panelLabel": "LFO 2 RATE", "type": "knob", "min": 0.05, "max": 12, "default": 4, "taper": "exp", "unit": "Hz", "manualRef": "Courier p.19", "notes": "left-hand modulation LFO" },
-    { "id": "COU_LFO2_DEST", "panelLabel": "LFO 2 DEST", "type": "switch", "positions": ["PITCH", "CUTOFF", "AMP"], "default": "PITCH", "manualRef": "Courier p.19" }
+    { "id": "COU_LFO2_DEST", "panelLabel": "LFO 2 DEST", "type": "switch", "positions": ["PITCH", "CUTOFF", "AMP"], "default": "PITCH", "manualRef": "Courier p.19" },
+
+    { "id": "COU_TEMPO", "panelLabel": "TEMPO", "type": "knob", "min": 20, "max": 300, "default": 120, "taper": "lin", "unit": "BPM", "manualRef": "Courier p.22", "notes": "sequencer tempo in BPM; the COU LINK master input (clean parity with MON TEMPO)" },
+    { "id": "COU_CLOCK_DIV", "panelLabel": "CLOCK DIV", "type": "button", "positions": ["1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32"], "default": "1/16", "manualRef": "Courier p.22", "notes": "step length as a clock division; index maps to COURIER_CLOCK_DIVS / seq.clockDivIdx" },
+    { "id": "COU_SEQ_LENGTH", "panelLabel": "LENGTH", "type": "knob", "min": 1, "max": 64, "default": 16, "taper": "stepped", "steps": 64, "unit": "step", "manualRef": "Courier p.22", "notes": "sequence length 1..64; mirrors seq.endStep" },
+    { "id": "COU_GATE_LENGTH", "panelLabel": "GATE LENGTH", "type": "knob", "min": 0.05, "max": 1, "default": 1, "taper": "lin", "manualRef": "Courier p.22", "notes": "global gate-length multiplier on top of each step's gate; mirrors seq.gateLenScale" },
+    { "id": "COU_SWING", "panelLabel": "SWING", "type": "knob", "min": 0, "max": 100, "default": 50, "taper": "lin", "unit": "%", "manualRef": "Courier p.22", "notes": "even-step swing; mirrors seq.swingPct" },
+    { "id": "COU_SEQ_MODE", "panelLabel": "SEQ MODE", "type": "switch", "positions": ["SEQ", "ARP"], "default": "SEQ", "manualRef": "Courier p.23", "notes": "step sequencer vs arpeggiator; mirrors seq.mode" },
+    { "id": "COU_ARP_MODE", "panelLabel": "ARP MODE", "type": "switch", "positions": ["OFF", "UP", "DOWN"], "default": "OFF", "manualRef": "Courier p.23", "notes": "minimal arp order (MVP); mirrors seq.arpMode" },
+    { "id": "COU_RUN_STOP", "panelLabel": "RUN/STOP", "type": "button", "manualRef": "Courier p.22", "notes": "momentary; routed by transportAction to engineBridge.courierRun/Stop (NOT applyControlInput)" },
+    { "id": "COU_RESET", "panelLabel": "RESET", "type": "button", "manualRef": "Courier p.22", "notes": "momentary; routed by transportAction to engineBridge.courierReset" }
   ],
   "jacks": [
     { "id": "COU_CLOCK_IN", "panelLabel": "CLOCK", "direction": "in", "signal": "clock", "rangeVv": [0, 10], "normalledTo": null, "feedsInternal": "Rising edges replace the internal clock", "manualRef": "Courier p.20" },
@@ -72,8 +82,8 @@
     "paramLock": true,
     "modes": ["SEQ", "ARP"],
     "tempoHz": { "min": 0.05, "max": 50, "default": 2 },
-    "behavior": "64-step parameter-lock sequencer / arpeggiator. Each step can lock per-step pitch plus parameter values. Phase-A authors the sound engine only; sequencer/arp controls are deferred to a later phase.",
-    "deferred": "step controls and arp mode switches authored in a later phase",
+    "behavior": "64-step parameter-lock sequencer / arpeggiator. Each step can lock per-step pitch plus parameter values. Phase-C MVP authors a pure note sequencer (per-step note/GATE/TIE/REST/GLIDE), clock division, length, gate length, swing, and a minimal OFF/UP/DOWN arp; the SETTINGS controls live in this controls block. seq.tempoBpm (COU_TEMPO, BPM) supersedes this tempoHz descriptor for the MVP.",
+    "deferred": "C-FULL: per-step parameter locks, the param-record matrix UI, probability, the full arp pattern set + octave modes + pendulum, and advanced swing.",
     "manualRef": "Courier pp.22-24"
   }
 }
