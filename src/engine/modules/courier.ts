@@ -13,11 +13,10 @@
  * carries the keyboard note in vv on a shared pitch bus; OSC octave switches and
  * TUNE / OSC 2 FREQ detune are summed onto each oscillator's own pitch sub-bus.
  *
- * NOTE (graph shell — Phase A): the sequencer/arp is deferred. The amp/filter EG
- * RELEASE, SUSTAIN level, and ENV LOOP panel controls are accepted by setControl and
- * stored, but the shared EgCore is an A-D-with-sustain-mode generator (no independent
- * release segment, sustain *level*, or loop) — see issues. What the core supports
- * (attack, decay, velocity, sustain on/off) is wired through.
+ * EG model: both EGs run the shared eg worklet in 'adsr' mode — full attack, decay-to-SUSTAIN
+ * level, hold while gated, an independent RELEASE on gate-off, and an optional ENV LOOP that
+ * re-attacks the gated envelope as an LFO. (Velocity scaling of the EGs — F/A ENV VEL — still
+ * awaits a Courier velocity bus; those two toggles remain stored-only for now.)
  */
 
 import type { ModuleDef } from '../../../data/schema';
@@ -262,14 +261,19 @@ export class CourierModule extends ModuleBase {
         processorOptions: {
           attackS: 0.005,
           decayS: 0.3,
-          sustainMode: 'gateHold',
+          sustainMode: 'adsr', // Courier runs the full four-stage envelope (see egCore)
           retrigInAttack: false,
           attackCompletes: true,
           peakVv: 8,
+          sustainLevel: 0.8,
+          releaseS: 0.2,
         },
       });
-      // the worklet re-applies the attackS AudioParam (default 0.01) every block — pin it.
+      // The worklet reads the k-rate AudioParams (attackS/releaseS) every block, which would
+      // otherwise override the processorOptions seed with the param default — pin both to the
+      // panel defaults until the SUSTAIN/RELEASE controls write through on applyState.
       eg.parameters.get('attackS')!.value = 0.005;
+      eg.parameters.get('releaseS')!.value = 0.2;
       return eg;
     };
     this.filterEg = mkEg();
@@ -587,18 +591,17 @@ export class CourierModule extends ModuleBase {
         this.filterEg.parameters.get('decayS')!.value = num;
         break;
       case 'COU_F_RELEASE':
-        // EgCore has no independent release segment (A-D + sustain mode) — stored for a later
-        // core extension; no-op on the graph for now. See issues.
+        this.filterEg.parameters.get('releaseS')!.value = num;
         break;
       case 'COU_F_SUSTAIN':
-        // sustain *level* unsupported by EgCore (it sustains at peak in gateHold) — no-op. See issues.
+        this.filterEg.port.postMessage({ type: 'configure', config: { sustainLevel: num } });
         break;
       case 'COU_F_ENV_VEL':
-        // velocity routing: when ON, the velocity input scales the EG (Anvil-style).
-        // Velocity bus is patched at binding time; this toggle is stored as graph state.
+        // velocity routing: when ON, the velocity input would scale the EG (Anvil-style). Courier
+        // has no velocity bus yet, so this toggle is stored-only — see the velocity workstream.
         break;
       case 'COU_F_ENV_LOOP':
-        // EG loop/LFO mode unsupported by EgCore — no-op. See issues.
+        this.filterEg.port.postMessage({ type: 'configure', config: { loop: value === 'ON' } });
         break;
 
       // ---- amp EG ----
@@ -609,13 +612,16 @@ export class CourierModule extends ModuleBase {
         this.ampEg.parameters.get('decayS')!.value = num;
         break;
       case 'COU_A_RELEASE':
-        break; // see COU_F_RELEASE
+        this.ampEg.parameters.get('releaseS')!.value = num;
+        break;
       case 'COU_A_SUSTAIN':
-        break; // see COU_F_SUSTAIN
+        this.ampEg.port.postMessage({ type: 'configure', config: { sustainLevel: num } });
+        break;
       case 'COU_A_ENV_VEL':
-        break; // see COU_F_ENV_VEL
+        break; // see COU_F_ENV_VEL (Courier velocity bus deferred to the velocity workstream)
       case 'COU_A_ENV_LOOP':
-        break; // see COU_F_ENV_LOOP
+        this.ampEg.port.postMessage({ type: 'configure', config: { loop: value === 'ON' } });
+        break;
       case 'COU_MULTI_TRIG':
         // multi-trig (retrigger on every key): the flag drives studio.courierNoteOn to force a gate
         // edge on legato (a held-gate keypress); retrigInAttack covers a rising edge mid-attack.
