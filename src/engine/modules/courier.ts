@@ -26,6 +26,9 @@ import { constant, gain, shaper } from './helpers';
 import { createNoiseSource } from '../noise';
 import { DriftSource } from '../drift';
 import { PITCH_REF_HZ, clamp } from '../units';
+import { MOD_TARGETS, modGain, type ModBus } from '../modRouter';
+import type { CourierModSource, ModAssignEntry } from '../../state/studioState';
+import { COURIER_MOD_SOURCES } from '../../state/studioState';
 
 /**
  * Courier resonance scale: onset of self-oscillation. Matches the Cascade's earlier
@@ -59,6 +62,8 @@ export class CourierModule extends ModuleBase {
   private readonly kbGate: ConstantSourceNode; // internal KB gate 0/5
   private readonly osc1Octave: ConstantSourceNode; // octave + master TUNE, vv
   private readonly osc2Octave: ConstantSourceNode; // octave + OSC 2 FREQ detune, vv
+  private readonly pitchBus: GainNode; // shared keyboard-note pitch bus (vv); mod 'pitch' target
+  private readonly osc2Pitch: GainNode; // OSC 2 pitch sub-bus (vv); mod 'osc2pitch' target
 
   // mixer
   private readonly mixOsc1: GainNode;
@@ -98,6 +103,18 @@ export class CourierModule extends ModuleBase {
   // transport-facing outs
   private readonly clockOut: ConstantSourceNode;
 
+  // ---- mod-assign matrix (Phase B) ----------------------------------------
+  // One pre-built scale-gain per (source x target); built once, never torn down. Each is wired
+  // sourceTap -> scaleGain -> targetNode(/param). setModAssign only mutates `.gain.value` to
+  // modGain(depth, spec) for the assigned pair (else 0) — audio-rate, like applyLfo1Dest.
+  private readonly modScaleGains: Record<CourierModSource, Record<string, GainNode>>;
+  private readonly modRoutes: Record<CourierModSource, ModAssignEntry | null> = {
+    kb: null,
+    fEnv: null,
+    aEnv: null,
+    lfo1: null,
+  };
+
   // cached panel state (for combined writes)
   private osc1OctaveVv = 0; // OSC 1 OCTAVE (8' default = 0)
   private tuneVv = 0; // master TUNE, vv
@@ -126,6 +143,7 @@ export class CourierModule extends ModuleBase {
 
     // shared pitch bus (keyboard note + EXP pedal pitch is not routed here; EXP is volume/mod)
     const pitchBus = gain(ctx, 1);
+    this.pitchBus = pitchBus;
     this.kbCv.connect(pitchBus);
 
     // ---- oscillators ---------------------------------------------------------
@@ -165,6 +183,7 @@ export class CourierModule extends ModuleBase {
     // OSC 2: pitch bus + octave/detune offset + drift
     this.osc2Octave = constant(ctx, 0);
     const osc2Pitch = gain(ctx, 1);
+    this.osc2Pitch = osc2Pitch;
     pitchBus.connect(osc2Pitch);
     this.osc2Octave.connect(osc2Pitch);
     this.drift2.output.connect(osc2Pitch);
@@ -327,6 +346,34 @@ export class CourierModule extends ModuleBase {
     this.kbGate.connect(this.outputTap('COU_GATE_OUT')); // key gate out
     this.clockOut = constant(ctx, 0);
     this.clockOut.connect(this.outputTap('COU_CLOCK_OUT'));
+
+    // ---- mod-assign matrix: pre-build every (source x target) scale-gain ----
+    // sourceTap -> scaleGain(0) -> targetNode/param. The per-target scale (incl. the x1/5 for the
+    // wave-morph params) is folded into modGain(depth, spec), so each scaleGain connects directly.
+    const modSourceTaps: Record<CourierModSource, AudioNode> = {
+      kb: this.kbCv,
+      fEnv: this.filterEg,
+      aEnv: this.ampEg,
+      lfo1: this.lfo1Depth, // rides the panel LFO1 DEPTH knob
+    };
+    const modTargetNodes: Record<ModBus, AudioNode | AudioParam> = {
+      cutoff: this.cutoffCvSum,
+      pitch: this.pitchBus,
+      osc2pitch: this.osc2Pitch,
+      osc1wave: this.osc1.parameters.get('waveshape')!,
+      osc2wave: this.osc2.parameters.get('waveshape')!,
+      subwave: this.sub.parameters.get('subWave')!,
+    };
+    this.modScaleGains = { kb: {}, fEnv: {}, aEnv: {}, lfo1: {} };
+    for (const src of COURIER_MOD_SOURCES) {
+      for (const spec of MOD_TARGETS) {
+        const sg = gain(ctx, 0);
+        modSourceTaps[src].connect(sg);
+        // AudioParam and AudioNode both accept .connect()'s destination overload here.
+        sg.connect(modTargetNodes[spec.bus] as AudioNode);
+        this.modScaleGains[src][spec.controlId] = sg;
+      }
+    }
 
     this.drift1.start();
     this.drift2.start();
@@ -550,6 +597,22 @@ export class CourierModule extends ModuleBase {
 
       default:
         break; // sequencer/arp controls handled by the transport (deferred)
+    }
+  }
+
+  /**
+   * Assign (or clear) one mod SOURCE's single route. Mirrors applyLfo1Dest: for the given source,
+   * walk every supported target and set its pre-built scale-gain to modGain(depth, spec) when the
+   * route targets that control, else 0. Idempotent; no node teardown. `entry=null` clears (all 0).
+   * Unsupported / unknown controlIds are a safe no-op (no spec matches -> every pair stays 0).
+   */
+  setModAssign(source: CourierModSource, entry: ModAssignEntry | null): void {
+    this.modRoutes[source] = entry;
+    const gains = this.modScaleGains[source];
+    for (const spec of MOD_TARGETS) {
+      const g = gains[spec.controlId];
+      if (!g) continue; // every spec.controlId is pre-built in the constructor; guard for safety
+      g.gain.value = entry && entry.controlId === spec.controlId ? modGain(entry.depth, spec) : 0;
     }
   }
 

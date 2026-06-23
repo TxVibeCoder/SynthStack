@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  coalesceCourierModAssignState,
   coalesceKeyboardState,
   coalesceSamplerState,
+  defaultCourierModAssignState,
   defaultKeyboardState,
   defaultPattern,
   defaultStudioState,
@@ -9,6 +11,7 @@ import {
   DRUM_TRACKS,
   QUANTIZE_DIVISIONS,
   StudioStore,
+  type CourierModAssignState,
 } from '../../src/state/studioState';
 import { QUANT_CYCLE } from '../../src/engine/quantGrid';
 import { FACTORY_KIT } from '../../src/engine/factorySamples';
@@ -338,5 +341,58 @@ describe('studio state round-trip (work order §3.6)', () => {
     for (const octave of [-3, -2, -1, 0, 1, 2, 3]) {
       expect(coalesceKeyboardState({ octave })).toEqual({ octave });
     }
+  });
+
+  it('default state carries courier.modAssign all-null and version stays 1', () => {
+    const s = defaultStudioState();
+    expect(s.courier.modAssign).toEqual(defaultCourierModAssignState());
+    expect(s.courier.modAssign).toEqual({ routes: { kb: null, fEnv: null, aEnv: null, lfo1: null } });
+    expect(s.version).toBe(1); // additive slice — no version bump (mirrors the keyboard slice)
+  });
+
+  it('JSON round-trips a courier.modAssign route across the store', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.courier.modAssign.routes.lfo1 = { controlId: 'COU_CUTOFF', depth: 0.5 };
+    store.setState(s);
+    expect(store.getState().courier.modAssign.routes.lfo1).toEqual({
+      controlId: 'COU_CUTOFF',
+      depth: 0.5,
+    });
+    expect(store.getState()).toEqual(s);
+  });
+
+  it('defaultCourierModAssignState() is all-null routes', () => {
+    expect(defaultCourierModAssignState()).toEqual({
+      routes: { kb: null, fEnv: null, aEnv: null, lfo1: null },
+    });
+  });
+
+  it('coalesceCourierModAssignState(undefined) yields the all-null default', () => {
+    expect(coalesceCourierModAssignState(undefined)).toEqual(defaultCourierModAssignState());
+  });
+
+  it('coalesceCourierModAssignState coalesces a pre-feature tree missing courier to all-null', () => {
+    const preFeatureTree: Partial<ReturnType<typeof defaultStudioState>> = defaultStudioState();
+    delete preFeatureTree.courier;
+    const courier = preFeatureTree.courier as { modAssign?: Partial<CourierModAssignState> } | undefined;
+    expect(coalesceCourierModAssignState(courier?.modAssign)).toEqual(
+      defaultCourierModAssignState(),
+    );
+  });
+
+  it('coalesceCourierModAssignState clamps depth and drops garbage / unknown targets', () => {
+    const out = coalesceCourierModAssignState({
+      routes: {
+        kb: { controlId: 'COU_CUTOFF', depth: 9 }, // clamp -> 1
+        fEnv: { controlId: 'COU_TUNE', depth: -9 }, // clamp -> -1
+        aEnv: { controlId: 'COU_NOPE', depth: 0.5 }, // unknown id -> null
+        lfo1: { controlId: 'COU_CUTOFF', depth: 'x' }, // non-number depth -> null
+      },
+    } as unknown as Partial<CourierModAssignState>);
+    expect(out.routes.kb).toEqual({ controlId: 'COU_CUTOFF', depth: 1 });
+    expect(out.routes.fEnv).toEqual({ controlId: 'COU_TUNE', depth: -1 });
+    expect(out.routes.aEnv).toBeNull();
+    expect(out.routes.lfo1).toBeNull();
   });
 });

@@ -33,11 +33,13 @@ import { renderFactorySamples } from './factorySamples';
 import type { SampleBackend } from './sampleStore';
 import {
   StudioStore,
+  coalesceCourierModAssignState,
   coalesceEffectsState,
   coalesceSamplerState,
   defaultSamplerState,
   defaultPad,
   VOICE_FX_IDS,
+  type CourierModSource,
   type StudioState,
   type SamplerState,
   type QuantizeDivision,
@@ -1039,6 +1041,13 @@ export class Studio {
     const fx = coalesceEffectsState(state.effects);
     this.context.applyMasterEffects(fx.master);
     for (const v of VOICE_FX_IDS) this.voiceFx.get(v)?.applyMasterEffects(fx.voices[v]);
+    // Courier mod-assign: push every route into the engine (coalesce heals an older/garbage tree
+    // to all-null). Each setModAssign only mutates the pre-built scale-gain `.gain.value`, so this
+    // is the FX-slice idiom — runs on every powerOn / INIT / preset-load / import.
+    const cma = coalesceCourierModAssignState(state.courier?.modAssign);
+    for (const [src, entry] of Object.entries(cma.routes)) {
+      this.courier.setModAssign(src as CourierModSource, entry);
+    }
   }
 
   getState(): StudioState {

@@ -63,6 +63,32 @@ export interface KnobProps {
   subLabel?: string;
   x: number;
   y: number;
+
+  // ---- Courier mod-assign gesture (optional; all knobs ignore these when unset) ----------
+  /**
+   * Fired when this knob is long-pressed (~450 ms hold, cancelled on >4px travel). The Courier
+   * panel wires it ONLY on the four mod-source host controls; on fire it arms "assign <source>".
+   */
+  onLongPress?: () => void;
+  /**
+   * Drives the assign-mode overlay AND the drag sink:
+   *   - 'source-armed': this knob is the active mod source (paints the focus ring).
+   *   - 'depth-target': a source is armed and this is a supported target — a normal vertical drag
+   *     scrubs the bipolar assignment depth (via onAssignDepthInput/Commit) instead of the knob's
+   *     own value, which is left untouched.
+   *   - 'idle' / unset: ordinary knob behaviour.
+   */
+  assignMode?: 'idle' | 'source-armed' | 'depth-target';
+  /** Current assigned depth (-1..1) for THIS knob's route, when a source maps to it; drives the depth arc. */
+  assignDepth?: number;
+  /** Short source tag (e.g. 'lfo1') for the assigned route — distinguishes multiple sources on one knob. */
+  assignTag?: string;
+  /** Color of the source ring / depth-arc accent (the armed source's color). */
+  assignColor?: string;
+  /** While in 'depth-target' mode: fires continuously during the depth scrub (local-only; no commit). */
+  onAssignDepthInput?: (depth: number) => void;
+  /** While in 'depth-target' mode: fires once on release with the final depth (the single store commit). */
+  onAssignDepthCommit?: (depth: number) => void;
 }
 
 export interface SwitchProps {

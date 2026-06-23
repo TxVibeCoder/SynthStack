@@ -49,15 +49,20 @@
 import { Studio } from '../engine/studio';
 import type { MasterFxId } from '../engine/fx/masterFxChain';
 import {
+  coalesceCourierModAssignState,
   coalesceKeyboardState,
   coalesceSamplerState,
+  defaultCourierModAssignState,
   defaultStudioState,
   defaultPad,
   defaultPattern,
   defaultSamplerState,
   QUANTIZE_DIVISIONS,
   type CableState,
+  type CourierModAssignState,
+  type CourierModSource,
   type EffectsState,
+  type ModAssignEntry,
   type VoiceFxId,
   type PadState,
   type QuantizeDivision,
@@ -701,6 +706,42 @@ class EngineBridge {
   /** Current keyboard octave (KeyboardPanel snapshot source). Coalesce-safe before power-on. */
   getKeyboardOctave(): number {
     return coalesceKeyboardState(this.store.getState().keyboard).octave;
+  }
+
+  /**
+   * Assign (or clear, entry=null) one Courier mod source. Modeled on setKeyboardOctave /
+   * setPadLoop: a DISCRETE commit (the UI commits the resolved depth once on drag-release).
+   * The store write coalesces-on-read so a pre-feature in-memory tree can't throw, then
+   * overwrites just the one source's route.
+   *
+   * Engine write (no-op unpowered) mirrors the other discrete-commit bridge methods
+   * (setPadLoop / setTempoLink): push the route into CourierModule first, then commit the
+   * store. The forward-on-load companion lives in studio.applyState, so a preset/INIT/import
+   * load reaches the engine the same way the FX slice does.
+   */
+  setCourierModAssign(source: CourierModSource, entry: ModAssignEntry | null): void {
+    if (this._powered) this.studio.courier.setModAssign(source, entry);
+    const s = this.store.getState();
+    s.courier = { modAssign: coalesceCourierModAssignState(s.courier?.modAssign) }; // heal older tree
+    s.courier.modAssign.routes[source] = entry;
+    this.store.setState(s);
+  }
+
+  /**
+   * Reference-STABLE Courier mod-assign snapshot for useSyncExternalStore (mirrors getEffects).
+   * store.getState() deep-clones every call, so cache by the slice JSON: the same object is
+   * returned until a route actually changes (assign / clear / preset / INIT), then a new one.
+   */
+  private cachedModAssign: CourierModAssignState = defaultCourierModAssignState();
+  private cachedModAssignJson = '';
+  getCourierModAssign(): CourierModAssignState {
+    const m = coalesceCourierModAssignState(this.store.getState().courier?.modAssign);
+    const json = JSON.stringify(m);
+    if (json !== this.cachedModAssignJson) {
+      this.cachedModAssignJson = json;
+      this.cachedModAssign = m;
+    }
+    return this.cachedModAssign;
   }
 
   /**

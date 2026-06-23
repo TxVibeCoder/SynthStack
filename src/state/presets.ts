@@ -12,6 +12,7 @@
  */
 
 import {
+  coalesceCourierModAssignState,
   coalesceEffectsState,
   coalesceKeyboardState,
   coalesceSamplerState,
@@ -222,6 +223,16 @@ export function coalesceStudioState(raw: unknown): StudioState {
   base.effects = coalesceEffectsState(
     isObject(raw.effects) ? (raw.effects as Parameters<typeof coalesceEffectsState>[0]) : undefined,
   );
+
+  // 12. courier.modAssign — strict coalesce; older trees lacking `courier` default all-null.
+  base.courier = {
+    modAssign: coalesceCourierModAssignState(
+      isObject(raw.courier) && isObject((raw.courier as Record<string, unknown>).modAssign)
+        ? ((raw.courier as Record<string, { modAssign: unknown }>)
+            .modAssign as Parameters<typeof coalesceCourierModAssignState>[0])
+        : undefined,
+    ),
+  };
 
   base.version = 1;
   base.power = false;

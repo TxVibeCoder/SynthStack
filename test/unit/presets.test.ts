@@ -13,6 +13,7 @@ import {
   type PresetBundle,
 } from '../../src/state/presets';
 import {
+  defaultCourierModAssignState,
   defaultStudioState,
   DRUM_STEPS,
   DRUM_TRACKS,
@@ -48,9 +49,31 @@ describe('coalesceStudioState — load-safety net totality', () => {
       expect(s.sampler.pads).toHaveLength(8);
       expect(s.sampler.pattern).toHaveLength(DRUM_TRACKS);
       expect(s.mixer.channelLevels).toHaveLength(5);
+      expect(s.courier.modAssign).toEqual(defaultCourierModAssignState());
       // JSON round-trips cleanly
       expect(JSON.parse(JSON.stringify(s))).toEqual(s);
     }
+  });
+
+  it('coalesces a corrupt / pre-feature courier slice to the all-null default', () => {
+    // Corrupt routes (bad controlId type + non-number depth) coalesce to null.
+    const corrupt = coalesceStudioState({
+      courier: { modAssign: { routes: { lfo1: { controlId: 5, depth: 'x' } } } },
+    } as unknown);
+    expect(corrupt.courier.modAssign).toEqual(defaultCourierModAssignState());
+    // A pre-feature tree with no `courier` key coalesces to the default.
+    const preFeature = defaultStudioState() as Partial<StudioState>;
+    delete preFeature.courier;
+    const out = coalesceStudioState(preFeature as unknown);
+    expect(out.courier.modAssign).toEqual(defaultCourierModAssignState());
+  });
+
+  it('preserves a valid courier.modAssign route through coalesce', () => {
+    const s = coalesceStudioState({
+      courier: { modAssign: { routes: { lfo1: { controlId: 'COU_CUTOFF', depth: 0.5 } } } },
+    } as unknown);
+    expect(s.courier.modAssign.routes.lfo1).toEqual({ controlId: 'COU_CUTOFF', depth: 0.5 });
+    expect(s.courier.modAssign.routes.kb).toBeNull();
   });
 
   it('never throws on a deeply corrupt tree', () => {

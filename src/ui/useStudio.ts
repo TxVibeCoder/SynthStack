@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { engineBridge, type TransportFlags } from './engineBridge';
+import type { CourierModAssignState } from '../state/studioState';
 
 export type { TransportFlags };
 
@@ -90,6 +91,18 @@ export function useStepPosition(machine: 'monarch' | 'anvil' | 'cascade' | 'drum
         : engineBridge.getStepPosition(machine),
     [machine, seq],
   );
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/**
+ * Subscribe to the Courier mod-matrix slice (reference-stable via getCourierModAssign's JSON
+ * cache, so it re-renders only when a route actually changes). Mirrors useControl's
+ * subscribe/getSnapshot shape. Target knobs read their own route by selecting the entry whose
+ * controlId === their def.id.
+ */
+export function useCourierModAssign(): CourierModAssignState {
+  const subscribe = useCallback((cb: () => void) => engineBridge.store.subscribe(cb), []);
+  const getSnapshot = useCallback(() => engineBridge.getCourierModAssign(), []);
   return useSyncExternalStore(subscribe, getSnapshot);
 }
 

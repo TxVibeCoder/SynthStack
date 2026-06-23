@@ -9,6 +9,10 @@
 // types, so importing it into this pure state core is Node-safe — it does NOT pull in
 // OfflineAudioContext (only renderFactorySamples does, and that tree-shakes away here).
 import { FACTORY_KIT } from '../engine/factorySamples';
+// The modulatable-target allow-list is defined ONCE in modRouter.ts (the pure routing core)
+// and re-exported here so coalesce + UI + engine share a single source of truth.
+import { COURIER_MOD_TARGETS } from '../engine/modRouter';
+export { COURIER_MOD_TARGETS } from '../engine/modRouter';
 
 export interface CableState {
   id: string;
@@ -135,6 +139,8 @@ export interface StudioState {
   sampler: SamplerState;
   keyboard: KeyboardState;
   effects: EffectsState;
+  /** Courier per-voice structured slice (namespaced so it can grow beyond modAssign). */
+  courier: { modAssign: CourierModAssignState };
 }
 
 export function defaultMonarchStep(): MonarchStepState {
@@ -310,6 +316,57 @@ export function coalesceEffectsState(raw: Partial<EffectsState> | undefined): Ef
   };
 }
 
+// ---------------------------------------------------------------------------
+// Courier per-patch mod-matrix slice (Phase B). Each of the 4 mod SOURCES is assignable
+// to ONE panel control with a BIPOLAR depth (-1..1). Additive slice — version stays 1.
+// ---------------------------------------------------------------------------
+
+/** The 4 assignable Courier mod sources (cover ids; one route each). */
+export type CourierModSource = 'kb' | 'fEnv' | 'aEnv' | 'lfo1';
+/** A single route: target control id + bipolar depth (-1..1). */
+export interface ModAssignEntry {
+  controlId: string;
+  depth: number; // -1..1
+}
+/** One route per source (null = unassigned). Plain JSON (round-trip test enforces it). */
+export interface CourierModAssignState {
+  routes: Record<CourierModSource, ModAssignEntry | null>;
+}
+export const COURIER_MOD_SOURCES: CourierModSource[] = ['kb', 'fEnv', 'aEnv', 'lfo1'];
+
+export function defaultCourierModAssignState(): CourierModAssignState {
+  return { routes: { kb: null, fEnv: null, aEnv: null, lfo1: null } };
+}
+
+/**
+ * Normalize a possibly-partial / older-shape mod-assign slice to a complete
+ * CourierModAssignState. Mirrors coalesceKeyboardState/coalesceSamplerState: PURE, never
+ * mutates `raw`. A pre-feature tree lacking `courier` -> all routes null. Drops garbage AND
+ * any controlId not in the COURIER_MOD_TARGETS allow-list to null; clamps depth to [-1,1].
+ */
+export function coalesceCourierModAssignState(
+  raw: Partial<CourierModAssignState> | undefined,
+): CourierModAssignState {
+  const out = defaultCourierModAssignState();
+  const rr = (raw?.routes ?? {}) as Record<string, unknown>;
+  for (const src of COURIER_MOD_SOURCES) {
+    const r = rr[src];
+    if (r && typeof r === 'object') {
+      const cid = (r as Record<string, unknown>).controlId;
+      const depth = (r as Record<string, unknown>).depth;
+      if (
+        typeof cid === 'string' &&
+        COURIER_MOD_TARGETS.includes(cid) &&
+        typeof depth === 'number' &&
+        Number.isFinite(depth)
+      ) {
+        out.routes[src] = { controlId: cid, depth: Math.max(-1, Math.min(1, depth)) };
+      }
+    }
+  }
+  return out;
+}
+
 export function defaultStudioState(): StudioState {
   return {
     version: 1,
@@ -333,6 +390,7 @@ export function defaultStudioState(): StudioState {
     sampler: defaultSamplerState(),
     keyboard: defaultKeyboardState(),
     effects: defaultEffectsState(),
+    courier: { modAssign: defaultCourierModAssignState() },
   };
 }
 
