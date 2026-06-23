@@ -54,6 +54,9 @@ describe('defaultCourierStep', () => {
       rest: false,
       glide: false,
       lock: null,
+      noteProb: 1,
+      gateProb: 1,
+      notePool: [],
     });
   });
 });
@@ -509,5 +512,224 @@ describe('Courier sequencer — MVP arpeggiator (OFF / UP / DOWN)', () => {
     const seq = armArp('UP');
     seq.transposeVv = 1; // +1 octave
     expect(pitchSeq(seq, 3)).toEqual([1, 5, 8]);
+  });
+});
+
+describe('Courier sequencer — probability (seeded mulberry32, deterministic)', () => {
+  // pitchSeq: pull/advance n times, collecting the emitted pitch (when present) per pass.
+  const pitchSeq = (seq: CourierSequencer, n: number) => {
+    seq.start(0);
+    const out: (number | undefined)[] = [];
+    for (let i = 0; i < n; i++) {
+      const evs = seq.pullEventsAt(seq.nextEventTime);
+      seq.advance();
+      out.push(evs.find((e) => e.type === 'pitch')?.data?.['noteVv'] as number | undefined);
+    }
+    return out;
+  };
+  // gateSeq: same shape but reports whether a gateOn fired each pass.
+  const gateSeq = (seq: CourierSequencer, n: number) => {
+    seq.start(0);
+    const out: boolean[] = [];
+    for (let i = 0; i < n; i++) {
+      const evs = seq.pullEventsAt(seq.nextEventTime);
+      seq.advance();
+      out.push(evs.some((e) => e.type === 'gateOn'));
+    }
+    return out;
+  };
+
+  const oneStep = (seed = 1) => {
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 1; // re-rolls the single step every pass
+    seq.steps[0]!.noteVv = 5;
+    seq.seed = seed;
+    return seq;
+  };
+
+  it('noteProb 1 always sounds (every pass emits pitch + gate)', () => {
+    const seq = oneStep(1);
+    seq.steps[0]!.noteProb = 1;
+    expect(pitchSeq(seq, 6)).toEqual([5, 5, 5, 5, 5, 5]);
+    expect(gateSeq(seq, 6)).toEqual([true, true, true, true, true, true]);
+  });
+
+  it('noteProb 0 never sounds (no pitch, no gate) but the step marker + paramLock still emit', () => {
+    const seq = oneStep(1);
+    seq.steps[0]!.noteProb = 0;
+    seq.steps[0]!.lock = { COU_CUTOFF: 900 };
+    seq.start(0);
+    const evs = seq.pullEventsAt(seq.nextEventTime);
+    expect(evs.find((e) => e.type === 'pitch')).toBeUndefined();
+    expect(evs.find((e) => e.type === 'gateOn')).toBeUndefined();
+    expect(evs.find((e) => e.type === 'step')).toBeDefined();
+    expect(evs.find((e) => e.type === 'paramLock')!.data!['lock']).toEqual({ COU_CUTOFF: 900 });
+    // ... and no pitch across many passes
+    expect(pitchSeq(seq, 6).every((p) => p === undefined)).toBe(true);
+  });
+
+  it('a fractional noteProb gives a deterministic, seed-reproducible skip pattern', () => {
+    // seed 1 rNote stream: .627 .968 .426 .139 .489 .286 -> with noteProb 0.5, sound when < 0.5
+    const a = oneStep(1);
+    a.steps[0]!.noteProb = 0.5;
+    expect(pitchSeq(a, 6)).toEqual([undefined, undefined, 5, 5, 5, 5]);
+    // identical with the same seed
+    const b = oneStep(1);
+    b.steps[0]!.noteProb = 0.5;
+    expect(pitchSeq(b, 6)).toEqual([undefined, undefined, 5, 5, 5, 5]);
+  });
+
+  it('a different seed diverges (different skip pattern for the same noteProb)', () => {
+    const a = oneStep(1);
+    a.steps[0]!.noteProb = 0.5;
+    const c = oneStep(42);
+    c.steps[0]!.noteProb = 0.5;
+    expect(pitchSeq(a, 8)).not.toEqual(pitchSeq(c, 8));
+  });
+
+  it('reseeds on start so two runs of the SAME seq are identical', () => {
+    const seq = oneStep(7);
+    seq.steps[0]!.noteProb = 0.5;
+    const run1 = pitchSeq(seq, 8); // pitchSeq calls start() (reseeds)
+    const run2 = pitchSeq(seq, 8);
+    expect(run1).toEqual(run2);
+  });
+
+  it('reseeds on reset so a RESET reproduces the run from step 1', () => {
+    const seq = oneStep(7);
+    seq.steps[0]!.noteProb = 0.5;
+    seq.start(0);
+    const first: (number | undefined)[] = [];
+    for (let i = 0; i < 4; i++) {
+      const evs = seq.pullEventsAt(seq.nextEventTime);
+      seq.advance();
+      first.push(evs.find((e) => e.type === 'pitch')?.data?.['noteVv'] as number | undefined);
+    }
+    seq.reset(); // re-seeds + re-rolls step 0
+    const second: (number | undefined)[] = [];
+    for (let i = 0; i < 4; i++) {
+      const evs = seq.pullEventsAt(seq.nextEventTime);
+      seq.advance();
+      second.push(evs.find((e) => e.type === 'pitch')?.data?.['noteVv'] as number | undefined);
+    }
+    expect(second).toEqual(first);
+  });
+
+  it('gateProb 0 with noteProb 1 emits PITCH but no gate (ghost note); CV still tracks', () => {
+    const seq = oneStep(1);
+    seq.steps[0]!.noteProb = 1;
+    seq.steps[0]!.gateProb = 0;
+    expect(pitchSeq(seq, 4)).toEqual([5, 5, 5, 5]); // pitch on every pass
+    expect(gateSeq(seq, 4)).toEqual([false, false, false, false]); // no gate on any pass
+  });
+
+  it('a fractional gateProb gives a deterministic ghost pattern (pitch always, gate sometimes)', () => {
+    // seed 1 rGate stream: .0027 .281 .995 .404 .067 .191 -> gate when < 0.5
+    const seq = oneStep(1);
+    seq.steps[0]!.gateProb = 0.5;
+    expect(pitchSeq(seq, 6)).toEqual([5, 5, 5, 5, 5, 5]); // pitch unaffected by gateProb
+    expect(gateSeq(seq, 6)).toEqual([true, true, false, true, true, true]);
+  });
+
+  it('a NOTE POOL replaces noteVv, picking a deterministic entry per pass within the pool', () => {
+    const seq = oneStep(42);
+    seq.steps[0]!.notePool = [10, 20, 30]; // pool replaces noteVv (5)
+    // seed 42 rPool*3 floors: 2,0,0,0,0,1 -> 30,10,10,10,10,20
+    expect(pitchSeq(seq, 6)).toEqual([30, 10, 10, 10, 10, 20]);
+  });
+
+  it('an empty NOTE POOL falls back to noteVv', () => {
+    const seq = oneStep(42);
+    seq.steps[0]!.notePool = []; // empty -> uses noteVv (5)
+    expect(pitchSeq(seq, 4)).toEqual([5, 5, 5, 5]);
+  });
+
+  it('the PRNG stream is positionally stable: editing a later step never shifts earlier draws', () => {
+    // two seqs, identical except step 3's noteProb; steps 0..2 must roll identically.
+    const make = (p3: number) => {
+      const seq = new CourierSequencer();
+      seq.tempoBpm = 120;
+      seq.endStep = 8;
+      for (let i = 0; i < 8; i++) {
+        seq.steps[i]!.noteVv = i;
+        seq.steps[i]!.noteProb = 0.5;
+      }
+      seq.steps[3]!.noteProb = p3;
+      seq.seed = 99;
+      return seq;
+    };
+    const a = pitchSeq(make(0.5), 3); // first 3 passes = steps 0,1,2
+    const b = pitchSeq(make(0.0), 3);
+    expect(a).toEqual(b); // step 3's edit does not perturb steps 0..2
+  });
+
+  it('a skipped step starts no tie; an incoming tie still completes its gate-off when skipped', () => {
+    // step 0 ties (gateLength 1) into step 1; step 1 has noteProb 0 (always skipped).
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 3;
+    for (let i = 0; i < 3; i++) seq.steps[i]!.noteVv = i;
+    seq.steps[0]!.gateLength = 1.0; // tie into step 1
+    seq.steps[1]!.noteProb = 0; // step 1 is always skipped
+    seq.steps[1]!.gateLength = 0.5; // default gate so the incoming tie's off lands at +0.5*dur
+    seq.seed = 1;
+    const evs = collect(seq, 0.375 - 1e-9);
+    const ons = times(evs, 'gateOn');
+    const offs = times(evs, 'gateOff');
+    // step 0 gate-ons once (tie). step 1 is skipped -> no NEW gate-on there.
+    expect(ons[0]).toBeCloseTo(0, 10);
+    expect(ons.filter((t) => Math.abs(t - 0.125) < 1e-9)).toHaveLength(0); // no retrigger at step 1
+    // the incoming tie completes its gate-off ON the skipped step (at step1Time + 0.5*dur).
+    expect(offs[0]).toBeCloseTo(0.125 + 0.5 * 0.125, 10);
+  });
+
+  it('no NaN/Infinity in emitted times or pitches with probability + a pool active', () => {
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 16;
+    for (let i = 0; i < 16; i++) {
+      seq.steps[i]!.noteVv = i % 12;
+      seq.steps[i]!.noteProb = 0.5;
+      seq.steps[i]!.gateProb = 0.5;
+      seq.steps[i]!.notePool = [i % 7, (i + 3) % 7, (i + 5) % 7];
+    }
+    seq.seed = 123456;
+    const evs = collect(seq, 2.0 - 1e-9);
+    for (const e of evs) {
+      expect(Number.isFinite(e.time)).toBe(true);
+      const n = e.data?.['noteVv'];
+      if (typeof n === 'number') expect(Number.isFinite(n)).toBe(true);
+    }
+  });
+
+  it('pullEventsAt is read-only: pulling twice without advance is identical (PRNG not drawn)', () => {
+    const seq = oneStep(5);
+    seq.steps[0]!.noteProb = 0.5;
+    seq.steps[0]!.notePool = [1, 2, 3];
+    seq.start(0);
+    const a = seq.pullEventsAt(seq.nextEventTime);
+    const b = seq.pullEventsAt(seq.nextEventTime);
+    expect(a).toEqual(b);
+  });
+
+  it('nextEventTime stays strictly increasing under probability', () => {
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 64;
+    for (let i = 0; i < 64; i++) {
+      seq.steps[i]!.noteVv = i % 12;
+      seq.steps[i]!.noteProb = 0.5;
+      seq.steps[i]!.gateProb = 0.5;
+    }
+    seq.seed = 2024;
+    seq.start(0);
+    let prev = seq.nextEventTime;
+    for (let i = 0; i < 200; i++) {
+      seq.pullEventsAt(seq.nextEventTime);
+      seq.advance();
+      expect(seq.nextEventTime).toBeGreaterThan(prev);
+      prev = seq.nextEventTime;
+    }
   });
 });

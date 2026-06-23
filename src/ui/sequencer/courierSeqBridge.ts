@@ -68,7 +68,15 @@ export function setCourierEndStep(endStep: number): void {
  * be inert for the sequencer). Each value is clamped to its valid range by the editor before
  * calling, but the slice fields are typed so an out-of-range write can't compile.
  */
-type CourierSeqScalarKey = 'endStep' | 'swingPct' | 'gateLenScale' | 'clockDivIdx' | 'mode' | 'arpMode';
+type CourierSeqScalarKey =
+  | 'endStep'
+  | 'swingPct'
+  | 'gateLenScale'
+  | 'clockDivIdx'
+  | 'mode'
+  | 'arpMode'
+  | 'arpOctave'
+  | 'arpRhythmIdx';
 type CourierSeqScalars = Pick<CourierSequencerState, CourierSeqScalarKey>;
 export function setCourierSeqField<K extends CourierSeqScalarKey>(
   key: K,
@@ -89,6 +97,8 @@ export function readCourierSeqSettings(): CourierSeqScalars {
     clockDivIdx: q.clockDivIdx,
     mode: q.mode,
     arpMode: q.arpMode,
+    arpOctave: q.arpOctave,
+    arpRhythmIdx: q.arpRhythmIdx,
   };
 }
 

@@ -27,7 +27,7 @@ import { useSyncExternalStore } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { ControlDef, ModuleDef } from '../../../data/schema';
 import courierJson from '../../../data/courier.json';
-import type { CourierStepState } from '../../state/studioState';
+import type { CourierArpModeState, CourierStepState } from '../../state/studioState';
 import { COLORS, FONT_CONDENSED, GROUP_BORDER } from '../theme';
 import { Knob } from '../controls/Knob';
 import { Switch } from '../controls/Switch';
@@ -61,6 +61,32 @@ function seqDef(id: string): ControlDef {
   if (!d) throw new Error(`Courier seq control ${id} missing from data/courier.json`);
   return d;
 }
+
+/**
+ * ARP MODE display<->state maps. The JSON `positions` carry human labels (with spaces);
+ * the seq slice stores the underscored union values. The Switch shows the position label, so
+ * the handler maps label->state on change and state->label for the rendered value. Anything
+ * unrecognized falls back to OFF.
+ */
+const ARP_POS_TO_VAL: Record<string, CourierArpModeState> = {
+  OFF: 'OFF',
+  UP: 'UP',
+  DOWN: 'DOWN',
+  'UP-DN INC': 'UPDOWN_INC',
+  'UP-DN EXC': 'UPDOWN_EXC',
+  'DN-UP INC': 'DOWNUP_INC',
+  'DN-UP EXC': 'DOWNUP_EXC',
+  CONVERGE: 'CONVERGE',
+  DIVERGE: 'DIVERGE',
+  PENDULUM: 'PENDULUM',
+  'AS PLAYED': 'AS_PLAYED',
+  RANDOM: 'RANDOM',
+  'RND WALK': 'RANDOM_WALK',
+  CHORD: 'CHORD',
+};
+const ARP_VAL_TO_POS: Record<CourierArpModeState, string> = Object.fromEntries(
+  Object.entries(ARP_POS_TO_VAL).map(([pos, val]) => [val, pos]),
+) as Record<CourierArpModeState, string>;
 
 /**
  * Courier-local strip canvas — App.tsx reads this aspect to frame the seq region.
@@ -120,6 +146,17 @@ const GATE_DEF: ControlDef = {
   id: 'COU_STEP_GATE', panelLabel: 'GATE LEN', type: 'knob',
   min: 0.05, max: 1, default: 0.5, taper: 'lin',
 };
+// Per-step probability — authored on CourierStepState (NOT in courier.json; these are step
+// fields, not global seq scalars). N PROB = chance the step's note sounds; G PROB = chance the
+// gate fires given the note sounds. Both 0..1, default 1 (a 1 step behaves exactly as before).
+const NOTE_PROB_DEF: ControlDef = {
+  id: 'COU_STEP_NOTE_PROB', panelLabel: 'N PROB', type: 'knob',
+  min: 0, max: 1, default: 1, taper: 'lin',
+};
+const GATE_PROB_DEF: ControlDef = {
+  id: 'COU_STEP_GATE_PROB', panelLabel: 'G PROB', type: 'knob',
+  min: 0, max: 1, default: 1, taper: 'lin',
+};
 const END_DEF: ControlDef = {
   id: 'COU_END_STEP', panelLabel: 'END STEP', type: 'stepKnob',
   min: 1, max: 64, default: 16, taper: 'stepped', steps: 64, unit: 'step',
@@ -178,6 +215,11 @@ function StepCell({
       {/* lock pip — burnt-orange dot in the top-right corner when the step locks any param. */}
       {locks > 0 && (
         <circle data-testid={`courier-cell-lock-${globalIndex}`} cx={x + CELL_W - 7} cy={CELL_Y + 7} r={3} fill={ACCENT} />
+      )}
+      {/* probability pip — hollow dot in the top-left when the step is below full note-prob. */}
+      {step.noteProb < 1 && (
+        <circle data-testid={`courier-cell-prob-${globalIndex}`} cx={x + 7} cy={CELL_Y + 7} r={3}
+          fill="none" stroke={ACCENT} strokeWidth={1} />
       )}
       <rect
         x={x} y={CELL_Y} width={CELL_W} height={CELL_H} rx={4}
@@ -347,6 +389,15 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
   const onNote = useCallback((v: number) => editStep({ noteVv: Math.round(v) / 12, rest: false }), [editStep]);
   const onGate = useCallback((v: number) => editStep({ gateLength: v }), [editStep]);
   const onEnd = useCallback((v: number) => setCourierEndStep(v), []);
+  // Per-step probability (clamped to 0..1; the slice coalesce clamps again on round-trip).
+  const onNoteProb = useCallback(
+    (v: number) => editStep({ noteProb: Math.max(0, Math.min(1, v)) }),
+    [editStep],
+  );
+  const onGateProb = useCallback(
+    (v: number) => editStep({ gateProb: Math.max(0, Math.min(1, v)) }),
+    [editStep],
+  );
 
   // TIE toggles the gate length to its tie value (>=1) / back to a normal sustain (0.5).
   const selTie = isTie(sel);
@@ -409,10 +460,22 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
     [],
   );
   const onArpMode = useCallback(
-    (pos: string) => setCourierSeqField('arpMode', pos === 'UP' ? 'UP' : pos === 'DOWN' ? 'DOWN' : 'OFF'),
+    (pos: string) => setCourierSeqField('arpMode', ARP_POS_TO_VAL[pos] ?? 'OFF'),
     [],
   );
+  // ARP OCTAVE — stepped 1..4 octave span.
+  const onArpOctave = useCallback(
+    (v: number) => setCourierSeqField('arpOctave', Math.max(1, Math.min(4, Math.round(v)))),
+    [],
+  );
+  // ARP RHYTHM — cycling clock-division button; index <-> COURIER_CLOCK_DIVS via arpRhythmIdx.
+  const onArpRhythm = useCallback((pos: string) => {
+    const idx = COURIER_CLOCK_DIVS.indexOf(pos as (typeof COURIER_CLOCK_DIVS)[number]);
+    if (idx >= 0) setCourierSeqField('arpRhythmIdx', idx);
+  }, []);
   const clockDivPos = COURIER_CLOCK_DIVS[settings.clockDivIdx] ?? '1/16';
+  const arpModePos = ARP_VAL_TO_POS[settings.arpMode] ?? 'OFF';
+  const arpRhythmPos = COURIER_CLOCK_DIVS[settings.arpRhythmIdx] ?? '1/16';
 
   return (
     <svg
@@ -497,15 +560,22 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
         <Button def={TIE_DEF} value={selTie ? 'ON' : 'OFF'} lit={selTie}
           onChange={onTie} x={CELL_X0 + 276} y={EDIT_Y} />
 
+        {/* per-step PROBABILITY — note-prob (step sounds) + gate-prob (gate fires given it sounds).
+            In the gap between TIE and the transport cluster (which shifts +112 to clear them). */}
+        <Knob def={NOTE_PROB_DEF} value={sel.noteProb} onInput={noop} onCommit={onNoteProb}
+          accent={ACCENT} x={CELL_X0 + 320} y={EDIT_Y} />
+        <Knob def={GATE_PROB_DEF} value={sel.gateProb} onInput={noop} onCommit={onGateProb}
+          accent={ACCENT} x={CELL_X0 + 374} y={EDIT_Y} />
+
         {/* per-strip transport (Courier has no panel transport): PLAY/STOP + RESET + REC. */}
         <Button def={PLAY_DEF} value={running ? 'ON' : 'OFF'} lit={running} momentary
-          onChange={(p) => { if (p === 'ON') togglePlay(); }} x={CELL_X0 + 372} y={EDIT_Y} />
+          onChange={(p) => { if (p === 'ON') togglePlay(); }} x={CELL_X0 + 484} y={EDIT_Y} />
         <Button def={RESET_DEF} value="OFF" momentary
-          onChange={(p) => { if (p === 'ON') courierReset(); }} x={CELL_X0 + 438} y={EDIT_Y} />
+          onChange={(p) => { if (p === 'ON') courierReset(); }} x={CELL_X0 + 550} y={EDIT_Y} />
         {/* REC — step/live record arm. While lit, keyboard/MIDI notes (with Courier as the
             keyboard target) write the selected cell and advance it. */}
         <Button def={REC_DEF} value={armed ? 'ON' : 'OFF'} lit={armed}
-          onChange={(p) => setArmed(p === 'ON')} x={CELL_X0 + 504} y={EDIT_Y} />
+          onChange={(p) => setArmed(p === 'ON')} x={CELL_X0 + 616} y={EDIT_Y} />
 
         {/* ===== armed-param LOCK-VALUE editor (only while a matrix slot is armed) =====
             Reuses the full Knob ergonomics stack (drag/fine-Shift/wheel/+−/dbl-click-default)
@@ -513,16 +583,16 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
             step. CLR deletes the armed key (canonicalizing an emptied map to null). */}
         {armedParam && armedDef && (
           <g data-testid="courier-lock-editor">
-            <text x={CELL_X0 + 572} y={EDIT_Y - 28} textAnchor="middle" fontFamily={FONT_CONDENSED}
+            <text x={CELL_X0 + 686} y={EDIT_Y - 28} textAnchor="middle" fontFamily={FONT_CONDENSED}
               fontSize={9} letterSpacing={1} fill={ACCENT}>
               {`LOCK · ${armedCap}`}
             </text>
             <Knob def={armedDef} value={armedLockValue} onInput={noop}
               onCommit={(v) => setLockValue(armedParam, v)} accent={ACCENT}
-              x={CELL_X0 + 572} y={EDIT_Y} />
+              x={CELL_X0 + 686} y={EDIT_Y} />
             <Button def={CLR_DEF} value="OFF" momentary
               onChange={(p) => { if (p === 'ON') clearLockValue(armedParam); }}
-              x={CELL_X0 + 638} y={EDIT_Y} />
+              x={CELL_X0 + 752} y={EDIT_Y} />
           </g>
         )}
 
@@ -583,8 +653,14 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
           accent={ACCENT} x={370} y={SET_Y} />
         <Switch def={seqDef('COU_SEQ_MODE')} value={settings.mode} onChange={onSeqMode}
           x={460} y={SET_Y} />
-        <Switch def={seqDef('COU_ARP_MODE')} value={settings.arpMode} onChange={onArpMode}
+        {/* ARP MODE — display label <-> underscored state value via the ARP_*_TO_* tables. */}
+        <Switch def={seqDef('COU_ARP_MODE')} value={arpModePos} onChange={onArpMode}
           x={560} y={SET_Y} />
+        {/* ARP OCTAVE (stepped 1..4) + ARP RHYTHM (the arp's own clock division). */}
+        <Knob def={seqDef('COU_ARP_OCTAVE')} value={settings.arpOctave} onInput={noop} onCommit={onArpOctave}
+          accent={ACCENT} x={660} y={SET_Y} />
+        <Button def={seqDef('COU_ARP_RHYTHM')} value={arpRhythmPos} lit={false}
+          onChange={onArpRhythm} x={740} y={SET_Y} />
       </g>
     </svg>
   );

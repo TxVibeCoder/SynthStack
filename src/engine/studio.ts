@@ -1115,16 +1115,23 @@ export class Studio {
     // guarantees the slice exists on every load path. CourierStepState is structurally identical
     // to the engine's CourierStep, so a shallow per-step copy needs no translation.
     const c = s.courier.seq;
-    // Deep-copy the param-lock map so the engine seq never aliases the store map (the seq only
-    // reads lock, so this is defensive — the rest of the step copies shallow as before).
-    this.courierSeq.steps = c.steps.map((st) => ({ ...st, lock: st.lock ? { ...st.lock } : null }));
+    // Deep-copy the param-lock map AND the per-step note pool so the engine seq never aliases the
+    // store (the seq only reads them, so this is defensive — the rest of the step copies shallow).
+    this.courierSeq.steps = c.steps.map((st) => ({
+      ...st,
+      lock: st.lock ? { ...st.lock } : null,
+      notePool: st.notePool.slice(),
+    }));
     this.courierSeq.endStep = c.endStep;
     this.courierSeq.swingPct = c.swingPct;
     this.courierSeq.gateLenScale = c.gateLenScale;
     this.courierSeq.clockDivIdx = c.clockDivIdx;
-    // mode SEQ/ARP gates whether the arp runs: force arpMode OFF unless mode is ARP.
-    this.courierSeq.arpMode =
-      c.mode === 'ARP' ? (c.arpMode === 'UP' ? 'UP' : c.arpMode === 'DOWN' ? 'DOWN' : 'OFF') : 'OFF';
+    this.courierSeq.seed = c.seed; // probability PRNG seed (reseeds on the next start/reset)
+    this.courierSeq.arpOctave = c.arpOctave; // arp octave span 1..4
+    this.courierSeq.arpRhythmIdx = c.arpRhythmIdx; // arp's own clock division
+    // mode SEQ/ARP gates whether the arp runs: pass the whole widened arpMode through, but force
+    // OFF unless mode is ARP (the engine CourierArpMode is the same widened union).
+    this.courierSeq.arpMode = c.mode === 'ARP' ? c.arpMode : 'OFF';
   }
 
   /** Resolve a control-bearing module instance by id (the named voice fields). Called only

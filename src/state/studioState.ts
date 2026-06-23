@@ -375,7 +375,27 @@ export function coalesceCourierModAssignState(
 // ---------------------------------------------------------------------------
 
 export type CourierSeqMode = 'SEQ' | 'ARP';
-export type CourierArpModeState = 'OFF' | 'UP' | 'DOWN';
+
+/** Full arp pattern set (state mirror of the engine CourierArpMode). OFF + 13 patterns. */
+export const COURIER_ARP_MODES = [
+  'OFF',
+  'UP',
+  'DOWN',
+  'UPDOWN_INC',
+  'UPDOWN_EXC',
+  'DOWNUP_INC',
+  'DOWNUP_EXC',
+  'CONVERGE',
+  'DIVERGE',
+  'PENDULUM',
+  'AS_PLAYED',
+  'RANDOM',
+  'RANDOM_WALK',
+  'CHORD',
+] as const;
+export type CourierArpModeState = (typeof COURIER_ARP_MODES)[number];
+/** ARP RHYTHM divisions — the arp's own clock-division table, aliased to the seq clock divisions. */
+export const ARP_RHYTHMS = ['1/4', '1/8', '1/8T', '1/16', '1/16T', '1/32'] as const;
 
 export interface CourierStepState {
   noteVv: number; // -1 = unauthored; else 1vv/oct relative to C5
@@ -383,6 +403,9 @@ export interface CourierStepState {
   rest: boolean;
   glide: boolean;
   lock: Record<string, number> | null; // per-step param-lock map (controlId->value); null/empty = no locks. Authored by the param-record matrix; applied by the bind layer.
+  noteProb: number; // 0..1 chance the step's note sounds (1 = always)
+  gateProb: number; // 0..1 chance the gate fires given the note sounds (1 = always)
+  notePool: number[]; // candidate noteVv pool; empty = use noteVv, non-empty replaces it (one chosen per pass)
 }
 
 export interface CourierSequencerState {
@@ -392,12 +415,24 @@ export interface CourierSequencerState {
   gateLenScale: number; // 0.05..1.0 global GATE LENGTH
   clockDivIdx: number; // 0..5 index into COURIER_CLOCK_DIVS
   mode: CourierSeqMode; // 'SEQ' | 'ARP'
-  arpMode: CourierArpModeState; // 'OFF' | 'UP' | 'DOWN'
+  arpMode: CourierArpModeState; // OFF + the 13 full arp patterns (see COURIER_ARP_MODES)
+  arpOctave: number; // 1..4 — arp spans N octaves of the authored-note set
+  arpRhythmIdx: number; // 0..5 index into ARP_RHYTHMS; the arp's own clock division
   running: boolean; // FORCED false on every load path
+  seed: number; // uint32 PRNG seed for probability (note/gate prob + note pool); persisted, never force-defaulted
 }
 
 export function defaultCourierStep(): CourierStepState {
-  return { noteVv: -1, gateLength: 0.5, rest: false, glide: false, lock: null };
+  return {
+    noteVv: -1,
+    gateLength: 0.5,
+    rest: false,
+    glide: false,
+    lock: null,
+    noteProb: 1,
+    gateProb: 1,
+    notePool: [],
+  };
 }
 
 export function defaultCourierSequencerState(): CourierSequencerState {
@@ -409,7 +444,10 @@ export function defaultCourierSequencerState(): CourierSequencerState {
     clockDivIdx: 3,
     mode: 'SEQ',
     arpMode: 'OFF',
+    arpOctave: 1,
+    arpRhythmIdx: 3, // '1/16'
     running: false,
+    seed: 1,
   };
 }
 
@@ -440,6 +478,19 @@ export function coalesceCourierSequencerState(
       glide: typeof s.glide === 'boolean' ? s.glide : ds.glide,
       // preserve a C-FULL param-lock map if a future tree carries one; else null
       lock: s.lock && typeof s.lock === 'object' ? (s.lock as Record<string, number>) : null,
+      // probability: clamp 0..1 like gateLength; a pre-feature step (missing field) -> 1 (always)
+      noteProb:
+        typeof s.noteProb === 'number' && Number.isFinite(s.noteProb)
+          ? Math.max(0, Math.min(1, s.noteProb))
+          : ds.noteProb,
+      gateProb:
+        typeof s.gateProb === 'number' && Number.isFinite(s.gateProb)
+          ? Math.max(0, Math.min(1, s.gateProb))
+          : ds.gateProb,
+      // note pool: keep only finite numbers; junk/missing -> empty (falls back to noteVv)
+      notePool: Array.isArray(s.notePool)
+        ? s.notePool.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
+        : ds.notePool,
     };
   });
   const clampInt = (v: unknown, lo: number, hi: number, dv: number) =>
@@ -457,8 +508,16 @@ export function coalesceCourierSequencerState(
         : d.gateLenScale,
     clockDivIdx: clampInt(raw?.clockDivIdx, 0, 5, d.clockDivIdx),
     mode: raw?.mode === 'ARP' ? 'ARP' : 'SEQ',
-    arpMode: raw?.arpMode === 'UP' || raw?.arpMode === 'DOWN' ? raw.arpMode : 'OFF',
+    // widened arp mode: any of the 14 round-trips; a stale/junk value (e.g. SIDEWAYS) -> OFF.
+    arpMode: COURIER_ARP_MODES.includes(raw?.arpMode as CourierArpModeState)
+      ? (raw!.arpMode as CourierArpModeState)
+      : 'OFF',
+    arpOctave: clampInt(raw?.arpOctave, 1, 4, d.arpOctave),
+    arpRhythmIdx: clampInt(raw?.arpRhythmIdx, 0, ARP_RHYTHMS.length - 1, d.arpRhythmIdx),
     running: false, // ALWAYS false on load (a restored preset never spontaneously sounds)
+    // seed is preserved as a uint32 (NOT force-reset like `running`): same seed -> same run.
+    seed:
+      typeof raw?.seed === 'number' && Number.isFinite(raw.seed) ? raw.seed >>> 0 : d.seed,
   };
 }
 

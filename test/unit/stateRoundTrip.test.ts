@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ARP_RHYTHMS,
   coalesceCourierModAssignState,
   coalesceCourierSequencerState,
   coalesceKeyboardState,
   coalesceSamplerState,
+  COURIER_ARP_MODES,
   defaultCourierModAssignState,
   defaultCourierSequencerState,
   defaultCourierStep,
@@ -17,6 +19,10 @@ import {
   type CourierModAssignState,
   type CourierSequencerState,
 } from '../../src/state/studioState';
+import {
+  COURIER_CLOCK_DIVS as ENGINE_CLOCK_DIVS,
+  ARP_RHYTHMS as ENGINE_ARP_RHYTHMS,
+} from '../../src/engine/sequencers/courierSeq';
 import { QUANT_CYCLE } from '../../src/engine/quantGrid';
 import { FACTORY_KIT } from '../../src/engine/factorySamples';
 import monarch from '../../data/monarch.json';
@@ -414,11 +420,16 @@ describe('studio state round-trip (work order §3.6)', () => {
       rest: false,
       glide: false,
       lock: null,
+      noteProb: 1,
+      gateProb: 1,
+      notePool: [],
     });
     expect(s.courier.seq.endStep).toBe(16);
     expect(s.courier.seq.clockDivIdx).toBe(3);
     expect(s.courier.seq.mode).toBe('SEQ');
     expect(s.courier.seq.arpMode).toBe('OFF');
+    expect(s.courier.seq.arpOctave).toBe(1);
+    expect(s.courier.seq.arpRhythmIdx).toBe(3); // 1/16
     expect(s.courier.seq.running).toBe(false);
     expect(s.version).toBe(1); // additive slice — no version bump
   });
@@ -430,6 +441,9 @@ describe('studio state round-trip (work order §3.6)', () => {
       rest: false,
       glide: false,
       lock: null,
+      noteProb: 1,
+      gateProb: 1,
+      notePool: [],
     });
   });
 
@@ -451,6 +465,9 @@ describe('studio state round-trip (work order §3.6)', () => {
       rest: false,
       glide: true,
       lock: null,
+      noteProb: 1,
+      gateProb: 1,
+      notePool: [],
     });
   });
 
@@ -479,7 +496,7 @@ describe('studio state round-trip (work order §3.6)', () => {
           lock: 7 as unknown as Record<string, number>,
         },
       ],
-    } as Partial<CourierSequencerState>);
+    } as unknown as Partial<CourierSequencerState>);
     expect(out.steps[0]!.lock).toEqual({ COU_CUTOFF: 1500 });
     expect(out.steps[1]!.lock).toBeNull();
     expect(out.steps[2]!.lock).toBeNull();
@@ -499,7 +516,7 @@ describe('studio state round-trip (work order §3.6)', () => {
   it('coalesceCourierSequencerState rebuilds a missing/short steps array to exactly 64', () => {
     const out = coalesceCourierSequencerState({
       steps: [{ noteVv: 1, gateLength: 0.5, rest: false, glide: false, lock: null }],
-    } as Partial<CourierSequencerState>);
+    } as unknown as Partial<CourierSequencerState>);
     expect(out.steps).toHaveLength(64);
     expect(out.steps[0]!.noteVv).toBe(1);
     expect(out.steps[1]).toEqual(defaultCourierStep()); // gap filled with a default step
@@ -520,8 +537,45 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(out.swingPct).toBe(100);
     expect(out.gateLenScale).toBe(1);
     expect(out.mode).toBe('SEQ');
-    expect(out.arpMode).toBe('OFF');
+    expect(out.arpMode).toBe('OFF'); // junk arpMode -> OFF
     expect(out.running).toBe(false);
+  });
+
+  it('coalesceCourierSequencerState round-trips every widened arp mode + clamps octave/rhythm', () => {
+    for (const m of COURIER_ARP_MODES) {
+      expect(
+        coalesceCourierSequencerState({ arpMode: m } as Partial<CourierSequencerState>).arpMode,
+      ).toBe(m);
+    }
+    const out = coalesceCourierSequencerState({
+      arpMode: 'PENDULUM',
+      arpOctave: 99, // clamp -> 4
+      arpRhythmIdx: 50, // clamp -> 5 (ARP_RHYTHMS length - 1)
+    } as Partial<CourierSequencerState>);
+    expect(out.arpMode).toBe('PENDULUM');
+    expect(out.arpOctave).toBe(4);
+    expect(out.arpRhythmIdx).toBe(5);
+    // a below-range octave clamps up to 1
+    expect(
+      coalesceCourierSequencerState({ arpOctave: 0 } as Partial<CourierSequencerState>).arpOctave,
+    ).toBe(1);
+    // junk arp mode still falls back to OFF even with the widened set
+    expect(
+      coalesceCourierSequencerState({
+        arpMode: 'SIDEWAYS' as unknown as 'OFF',
+      } as Partial<CourierSequencerState>).arpMode,
+    ).toBe('OFF');
+  });
+
+  it('lockstep: COURIER_ARP_MODES + ARP_RHYTHMS pin the engine + clock-division tables', () => {
+    // the engine arp union must include exactly OFF + the 13 patterns the state mirror declares
+    expect(COURIER_ARP_MODES).toEqual([
+      'OFF', 'UP', 'DOWN', 'UPDOWN_INC', 'UPDOWN_EXC', 'DOWNUP_INC', 'DOWNUP_EXC',
+      'CONVERGE', 'DIVERGE', 'PENDULUM', 'AS_PLAYED', 'RANDOM', 'RANDOM_WALK', 'CHORD',
+    ]);
+    // ARP_RHYTHMS is the same division table the engine clock divisions use
+    expect([...ARP_RHYTHMS]).toEqual([...ENGINE_CLOCK_DIVS]);
+    expect([...ARP_RHYTHMS]).toEqual([...ENGINE_ARP_RHYTHMS]);
   });
 
   it('coalesceCourierSequencerState forces running:false even when the raw says true', () => {
@@ -549,7 +603,80 @@ describe('studio state round-trip (work order §3.6)', () => {
   it('coalesceCourierSequencerState preserves a forward-compat per-step lock map', () => {
     const out = coalesceCourierSequencerState({
       steps: [{ noteVv: 0, gateLength: 0.5, rest: false, glide: false, lock: { COU_CUTOFF: 0.7 } }],
-    } as Partial<CourierSequencerState>);
+    } as unknown as Partial<CourierSequencerState>);
     expect(out.steps[0]!.lock).toEqual({ COU_CUTOFF: 0.7 });
+  });
+
+  // ---- probability (note prob / gate prob / note pool) + seed -------------------------------
+
+  it('default state carries seed 1 and steps default to noteProb/gateProb 1, empty pool', () => {
+    const s = defaultStudioState();
+    expect(s.courier.seq.seed).toBe(1);
+    expect(s.courier.seq.steps[0]!.noteProb).toBe(1);
+    expect(s.courier.seq.steps[0]!.gateProb).toBe(1);
+    expect(s.courier.seq.steps[0]!.notePool).toEqual([]);
+  });
+
+  it('JSON round-trips per-step probability + pool + seed across the store', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.courier.seq.steps[0]!.noteProb = 0.25;
+    s.courier.seq.steps[0]!.gateProb = 0.75;
+    s.courier.seq.steps[0]!.notePool = [0, 4, 7];
+    s.courier.seq.seed = 424242;
+    store.setState(s);
+    const got = store.getState();
+    expect(got).toEqual(s); // full deep-equal round-trip
+    expect(got.courier.seq.steps[0]!.noteProb).toBe(0.25);
+    expect(got.courier.seq.steps[0]!.gateProb).toBe(0.75);
+    expect(got.courier.seq.steps[0]!.notePool).toEqual([0, 4, 7]);
+    expect(got.courier.seq.seed).toBe(424242);
+    expect(JSON.parse(JSON.stringify(got))).toEqual(got);
+  });
+
+  it('JSON round-trips the widened arp mode + octave + rhythm across the store', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.courier.seq.mode = 'ARP';
+    s.courier.seq.arpMode = 'RANDOM_WALK';
+    s.courier.seq.arpOctave = 3;
+    s.courier.seq.arpRhythmIdx = 1; // 1/8
+    store.setState(s);
+    const got = store.getState();
+    expect(got).toEqual(s);
+    expect(got.courier.seq.arpMode).toBe('RANDOM_WALK');
+    expect(got.courier.seq.arpOctave).toBe(3);
+    expect(got.courier.seq.arpRhythmIdx).toBe(1);
+    expect(JSON.parse(JSON.stringify(got))).toEqual(got);
+  });
+
+  it('coalesce clamps noteProb/gateProb to 0..1, filters pool junk, preserves a uint32 seed', () => {
+    const out = coalesceCourierSequencerState({
+      steps: [
+        { noteVv: 0, gateLength: 0.5, rest: false, glide: false, lock: null, noteProb: 9, gateProb: -1, notePool: [1, 'x', NaN, 2, Infinity, 3] },
+      ],
+      seed: 777,
+    } as unknown as Partial<CourierSequencerState>);
+    expect(out.steps[0]!.noteProb).toBe(1); // 9 clamps to 1
+    expect(out.steps[0]!.gateProb).toBe(0); // -1 clamps to 0
+    expect(out.steps[0]!.notePool).toEqual([1, 2, 3]); // junk/NaN/Infinity filtered out
+    expect(out.seed).toBe(777);
+  });
+
+  it('coalesce defaults a pre-feature step to noteProb/gateProb 1 + empty pool, seed 1', () => {
+    // a step lacking the new fields (pre-feature tree) -> 1 / 1 / [] ; missing seed -> default 1
+    const out = coalesceCourierSequencerState({
+      steps: [{ noteVv: 2, gateLength: 0.5, rest: false, glide: false, lock: null }],
+    } as unknown as Partial<CourierSequencerState>);
+    expect(out.steps[0]!.noteProb).toBe(1);
+    expect(out.steps[0]!.gateProb).toBe(1);
+    expect(out.steps[0]!.notePool).toEqual([]);
+    expect(out.seed).toBe(1);
+  });
+
+  it('coalesce normalizes a non-finite seed to the default (NOT force-reset like running)', () => {
+    expect(coalesceCourierSequencerState({ seed: NaN } as unknown as Partial<CourierSequencerState>).seed).toBe(1);
+    // a large/float seed is truncated to uint32 (>>> 0), not discarded
+    expect(coalesceCourierSequencerState({ seed: 4294967296 + 5 } as unknown as Partial<CourierSequencerState>).seed).toBe(5);
   });
 });

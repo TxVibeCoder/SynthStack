@@ -54,6 +54,8 @@ describe('courierLayout (Courier panel layout)', () => {
     'COU_SWING',
     'COU_SEQ_MODE',
     'COU_ARP_MODE',
+    'COU_ARP_OCTAVE',
+    'COU_ARP_RHYTHM',
     'COU_RUN_STOP',
     'COU_RESET',
   ]);
