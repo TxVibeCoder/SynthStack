@@ -136,6 +136,11 @@ export class CourierSequencer implements Transport {
   running = false;
   nextEventTime = Infinity;
 
+  /** When a cable is patched into COU_CLOCK_IN the internal lookahead clock is suppressed and the
+   *  pattern is stepped by onExternalEdge() from the follower mechanism — exactly like the Monarch
+   *  TEMPO IN, Anvil ADV/CLOCK and Cascade CLOCK in. studio.ts toggles this in rebuildFollowers. */
+  externalClock = false;
+
   steps: CourierStep[] = Array.from({ length: 64 }, defaultCourierStep);
   endStep = 16; // 1..64 (LENGTH)
   swingPct = 50; // 0..100
@@ -244,8 +249,7 @@ export class CourierSequencer implements Transport {
   }
 
   pullEventsAt(time: number): TransportEvent[] {
-    // EXTENSION POINT (C-FULL): if external CLOCK IN is patched, suppress the internal clock here
-    // and let edge events drive stepping (clone Monarch's externalClock/onExternalEdge). MVP: internal only.
+    if (this.externalClock) return []; // COU_CLOCK_IN edges drive stepping; internal clock suppressed
     return this.emitStepEvents(time, this.stepDur());
   }
 
@@ -456,9 +460,35 @@ export class CourierSequencer implements Transport {
   }
 
   advance(): void {
-    // EXTENSION POINT (C-FULL): when external CLOCK IN drives stepping, freeze the internal clock here.
+    if (this.externalClock) {
+      this.nextEventTime = Infinity; // stepped by onExternalEdge, never the lookahead clock
+      return;
+    }
     this.advanceStep(this.stepDur());
     const swung = this.tickCount % 2 === 1 ? swingOffsetS(this.swingPct, this.stepDur()) : 0;
     this.nextEventTime = this.baseTime + swung;
+  }
+
+  /**
+   * COU_CLOCK_IN rising edge ("Rising edges replace the internal clock", Courier p.20): emit the
+   * current step's events at `time` — gate/tie spacing keyed to the MEASURED external interval so
+   * gate lengths scale to the incoming clock rate — then advance one step. `intervalS` is the gap
+   * since the previous edge; the first edge falls back to the internal step duration. Order matches
+   * Monarch/Anvil/Cascade: fire the current step, then advance. Swing is NOT applied (the external
+   * clock owns the timing grid). Re-rolls per-step probability via advanceStep, same as internal.
+   */
+  onExternalEdge(time: number, intervalS?: number): TransportEvent[] {
+    const dur = intervalS !== undefined && intervalS > 0 ? intervalS : this.stepDur();
+    const events = this.emitStepEvents(time, dur);
+    this.advanceStep(dur);
+    return events;
+  }
+
+  /** Re-anchor the internal clock to `now` (e.g. the COU_CLOCK_IN cable was unplugged while running)
+   *  without disturbing the current step — so the lookahead clock resumes instead of freezing. */
+  resumeInternal(now: number): void {
+    this.baseTime = now;
+    this.nextEventTime = now;
+    this.prevTied = false;
   }
 }

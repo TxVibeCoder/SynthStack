@@ -138,6 +138,8 @@ export class Studio {
   /** Was a cable in MON_TEMPO_IN last rebuild? Used to RESUME the internal clock when it is
    *  unplugged while running (the external-clock branch left nextEventTime=Infinity). */
   private monarchTempoPatched = false;
+  /** Was a cable in COU_CLOCK_IN last rebuild? Same unplug-resume role as monarchTempoPatched. */
+  private courierClockPatched = false;
   private registry: StudioEndpointRegistry | null = null;
   private built = false;
 
@@ -536,6 +538,42 @@ export class Studio {
         });
       }
     }
+
+    // Courier external CLOCK IN ("Rising edges replace the internal clock", Courier p.20): a cable in
+    // COU_CLOCK_IN suppresses Courier's internal clock and steps its 64-step sequencer one step per
+    // rising edge, gate spacing keyed to the measured interval — structurally identical to MON_TEMPO_IN.
+    // Courier has no MIDI-clock priority (only Monarch/Cascade do), so the analog cable is the sole driver.
+    const courierClock = findCable('COU_CLOCK_IN');
+    const courierAnalog = !!courierClock;
+    this.courierSeq.externalClock = courierAnalog;
+    if (courierClock) {
+      let lastEdge = -1;
+      const onEdge = (t: number): void => {
+        const interval = lastEdge >= 0 ? t - lastEdge : undefined;
+        lastEdge = t;
+        for (const fe of this.courierSeq.onExternalEdge(t, interval)) this.bindCourierEvent(fe);
+      };
+      const src = INTERNAL_CLOCK_EVENTS[courierClock.from];
+      if (src) {
+        this.followers.push((e) => {
+          if (
+            e.data?.['__transport'] === src.transport &&
+            e.type === src.type &&
+            (src.seq === undefined || e.data?.['seq'] === src.seq)
+          ) {
+            onEdge(e.time);
+          }
+        });
+      } else {
+        this.addEdgeFollower(courierClock.from, (t) => onEdge(t));
+      }
+    } else if (this.courierClockPatched && this.courierSeq.running) {
+      // COU_CLOCK_IN cable just unplugged while running: the external-clock branch left
+      // nextEventTime=Infinity, so re-anchor the internal clock to now or the sequence freezes
+      // (mirrors the Monarch TEMPO unplug-resume below).
+      this.courierSeq.resumeInternal(this.context.audioContext.currentTime + 0.03);
+    }
+    this.courierClockPatched = courierAnalog; // remembered for the next rebuild's unplug detection
 
     // Monarch external TEMPO clock (Single Clock Advance, the hardware default): a cable in
     // MON_TEMPO_IN suppresses the internal clock and steps the pattern one step per rising edge —

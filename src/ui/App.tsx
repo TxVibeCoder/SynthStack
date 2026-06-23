@@ -82,6 +82,7 @@ import { MonarchStepEditor } from './sequencer/MonarchStepEditor';
 import { CableLayer } from './cables/CableLayer';
 import { SamplerPanel } from './panels/SamplerPanel';
 import { SamplerJacks } from './panels/SamplerJacks';
+import { CourierJacks, CJ_W, CJ_H } from './panels/CourierJacks';
 import { DrumMachinePanel } from './panels/DrumMachinePanel';
 import { SAMPLER_REGION, DRUM_REGION } from './panels/samplerLayout';
 import { KeyboardPanel } from './keyboard/KeyboardPanel';
@@ -223,9 +224,16 @@ const MON_KB_BOX: RegionBox = {
 const JACKFIELD_BOX: RegionBox = { x: 0, y: REGIONS.jackField.y, w: REGIONS.jackField.w, h: FIELD_H };
 const SAMPLER_JACKS_W = 660;
 const SAMPLER_JACKS_H = 150;
+// Courier + Sampler jack bands sit side-by-side in one row below the field — Courier is the 4th
+// voice zone (left), the separate sampler cluster to its right — centred as a pair. (Courier was
+// added after the 3-machine field froze at 88 jacks, so it docks as its own band, like Sampler.)
+const PATCH_ROW_Y = JACKFIELD_BOX.y + FIELD_H + 18;
+const PATCH_PAIR_GAP = 40;
+const PATCH_PAIR_X = (STAGE.w - (CJ_W + PATCH_PAIR_GAP + SAMPLER_JACKS_W)) / 2;
+const COURIER_PATCH_BOX: RegionBox = { x: PATCH_PAIR_X, y: PATCH_ROW_Y, w: CJ_W, h: CJ_H };
 const SAMPLER_PATCH_BOX: RegionBox = {
-  x: (STAGE.w - SAMPLER_JACKS_W) / 2,
-  y: JACKFIELD_BOX.y + FIELD_H + 18,
+  x: PATCH_PAIR_X + CJ_W + PATCH_PAIR_GAP,
+  y: PATCH_ROW_Y,
   w: SAMPLER_JACKS_W,
   h: SAMPLER_JACKS_H,
 };
@@ -237,7 +245,7 @@ const BBOX: Record<ModuleTabId, RegionBox> = {
   monarch: union(MON_CONTROLS_BOX, MON_SEQ_BOX, MON_KB_BOX),
   // Courier fill-zooms to its single full-face replica canvas (keybed included).
   courier: CUR_CONTROLS_BOX,
-  patchbay: union(JACKFIELD_BOX, SAMPLER_PATCH_BOX),
+  patchbay: union(JACKFIELD_BOX, COURIER_PATCH_BOX, SAMPLER_PATCH_BOX),
   sampler: union(SAMPLER_REGION, DRUM_REGION),
   fx: FX_BOX,
 };
@@ -418,6 +426,9 @@ export function App() {
               <>
                 <Region box={JACKFIELD_BOX} testId="jack-field" dimmed={dim}>
                   <JackFieldPanel />
+                </Region>
+                <Region box={COURIER_PATCH_BOX} testId="courier-jacks" dimmed={dim}>
+                  <CourierJacks />
                 </Region>
                 <Region box={SAMPLER_PATCH_BOX} testId="sampler-jacks" dimmed={dim}>
                   <SamplerJacks />
