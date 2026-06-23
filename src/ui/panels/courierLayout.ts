@@ -321,16 +321,16 @@ export const COURIER_DECOR_BUTTONS: DecorButton[] = [
 export const COURIER_DECOR_DROPDOWNS: DecorDropdown[] = [
   { x: 345, y: PR2, w: 70, label: 'PB UP', value: '+7 st' },
   { x: 345, y: PR3, w: 70, label: 'PB DN', value: '-7 st' },
-  // MOD ASSIGN destination dropdowns (above each amount knob)
-  { x: 758, y: MR - 17, w: 58, label: 'DEST', value: 'None' },
-  { x: 872, y: MR - 17, w: 58, label: 'DEST', value: 'None' },
-  { x: 986, y: MR - 17, w: 58, label: 'DEST', value: 'None' },
-  { x: 1099, y: MR - 17, w: 58, label: 'DEST', value: 'None' },
-  { x: 1212, y: MR - 17, w: 58, label: 'DEST', value: 'None' },
-  { x: 758, y: MR2 - 17, w: 58, label: 'DEST', value: 'OSC2' },
-  { x: 872, y: MR2 - 17, w: 58, label: 'DEST', value: 'WAVE' },
-  { x: 986, y: MR2 - 17, w: 58, label: 'DEST', value: 'LFO1' },
-  { x: 1099, y: MR2 - 17, w: 58, label: 'DEST', value: 'CUT' },
+  // MOD ASSIGN destination dropdowns — to the RIGHT of each amount knob (knob_x + 60), same row.
+  { x: 818, y: MR, w: 54, label: 'DEST', value: 'None' },
+  { x: 932, y: MR, w: 54, label: 'DEST', value: 'None' },
+  { x: 1046, y: MR, w: 54, label: 'DEST', value: 'None' },
+  { x: 1159, y: MR, w: 54, label: 'DEST', value: 'None' },
+  { x: 1272, y: MR, w: 54, label: 'DEST', value: 'None' },
+  { x: 818, y: MR2, w: 54, label: 'DEST', value: 'OSC2' },
+  { x: 932, y: MR2, w: 54, label: 'DEST', value: 'WAVE' },
+  { x: 1046, y: MR2, w: 54, label: 'DEST', value: 'LFO1' },
+  { x: 1159, y: MR2, w: 54, label: 'DEST', value: 'CUT' },
 ];
 
 export const COURIER_DECOR_TOGGLES: DecorToggle[] = [

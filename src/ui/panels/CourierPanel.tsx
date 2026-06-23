@@ -81,6 +81,8 @@ const moduleDef = courierJson as unknown as ModuleDef;
 const MODULE_ID = moduleDef.id; // 'courier'
 const ACCENT = GROUP_BORDER.courier;
 const TARGET_IDS = new Set(COURIER_MOD_TARGETS);
+/** Smoke grey for the black-key buttons so they read against the dark panel (not panelShadow black). */
+const BLACK_KEY = '#4e515a';
 
 const defById = new Map(moduleDef.controls.map((c) => [c.id, c]));
 
@@ -423,8 +425,8 @@ const KeyView = memo(function KeyView({ k, held, onDown, onUp }: { k: CourierKey
         width={k.w}
         height={k.h}
         rx={3.5}
-        fill={held ? COLORS.focus : k.isBlack ? COLORS.panelShadow : COLORS.legend}
-        stroke={k.isBlack ? COLORS.panelEdge : COLORS.jackRingDark}
+        fill={held ? COLORS.focus : k.isBlack ? BLACK_KEY : COLORS.legend}
+        stroke={k.isBlack ? COLORS.panelShadow : COLORS.jackRingDark}
         strokeWidth={1.1}
       />
     </g>
