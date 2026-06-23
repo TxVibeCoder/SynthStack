@@ -639,4 +639,40 @@ export class CourierModule extends ModuleBase {
     this.clockOut.offset.setValueAtTime(10, time);
     this.clockOut.offset.setValueAtTime(0, time + 0.002);
   }
+
+  /**
+   * Time-scheduled control set for per-step PARAM LOCKS (Phase C-Full). The sequencer binder
+   * applies a step's lock at the step's EXACT audio time (e.time), not at bind time (which can be
+   * up to SCHEDULE_AHEAD_S ~100 ms early on the lookahead). Only the six lockable targets reach
+   * here (the binder allow-lists via findModTarget). `value` is engine-native (Hz for CUTOFF,
+   * semitones for TUNE/OSC2_FREQ, 0..1 morphs) — exactly what setControl expects, no conversion.
+   *
+   * FOUR targets are clean single-AudioParam writes -> sample-accurate setValueAtTime. TWO are
+   * NOT (COU_TUNE / COU_OSC2_FREQ recompute combined pitch buses via applyOsc*Pitch(), which write
+   * AudioParam .value immediately and can't be cheaply scheduled here); for those we fall back to
+   * the IMMEDIATE setControl. CAVEAT: a TUNE / OSC2_FREQ lock therefore lands at bind time, up to
+   * the lookahead early — audible only on fast sequences; the four most-used targets (CUTOFF + the
+   * two waveshapes + sub) are sample-accurate. (See the build contract for the scope ruling.)
+   */
+  setControlAt(id: string, value: number, time: number): void {
+    switch (id) {
+      case 'COU_CUTOFF':
+        this.ladder.parameters.get('cutoffHz')!.setValueAtTime(value, time);
+        break;
+      case 'COU_OSC1_WAVESHAPE':
+        this.osc1.parameters.get('waveshape')!.setValueAtTime(value, time);
+        break;
+      case 'COU_OSC2_WAVESHAPE':
+        this.osc2.parameters.get('waveshape')!.setValueAtTime(value, time);
+        break;
+      case 'COU_SUB_WAVE':
+        this.sub.parameters.get('subWave')!.setValueAtTime(value, time);
+        break;
+      // COU_TUNE / COU_OSC2_FREQ recompute combined pitch buses; immediate fallback (~lookahead early).
+      case 'COU_TUNE':
+      case 'COU_OSC2_FREQ':
+      default:
+        this.setControl(id, value);
+    }
+  }
 }

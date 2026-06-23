@@ -37,6 +37,31 @@ export const MOD_TARGETS: ModTargetSpec[] = [
 /** The allow-list of modulatable COU_ control ids (re-exported by studioState.ts). */
 export const COURIER_MOD_TARGETS: string[] = MOD_TARGETS.map((t) => t.controlId);
 
+/**
+ * Short button captions for the param-lock matrix UI, keyed by control id. Kept next to
+ * MOD_TARGETS so the lockable set and its labels never drift. (Phase C param-locks.)
+ */
+const SHORT_CAP: Record<string, string> = {
+  COU_CUTOFF: 'CUTOFF',
+  COU_TUNE: 'TUNE',
+  COU_OSC2_FREQ: 'OSC2 FRQ',
+  COU_OSC1_WAVESHAPE: 'O1 WAVE',
+  COU_OSC2_WAVESHAPE: 'O2 WAVE',
+  COU_SUB_WAVE: 'SUB WAVE',
+};
+
+/**
+ * THE shared per-step param-lock allow-list (Phase C-Full part 1). Both the engine binder
+ * (which validates each lock via findModTarget) and the UI matrix (which renders one button
+ * per entry) import THIS so the lockable set can never drift. It is a strict superset-equal of
+ * MOD_TARGETS — derived from it, so adding a mod target automatically makes it lockable. The
+ * UI resolves each control's min/max/taper from data/courier.json (the single range source).
+ */
+export const COURIER_LOCKABLE: { controlId: string; cap: string }[] = MOD_TARGETS.map((t) => ({
+  controlId: t.controlId,
+  cap: SHORT_CAP[t.controlId] ?? t.controlId,
+}));
+
 /** Look up a target spec by control id; undefined for a non-modulatable control (e.g. a switch). */
 export function findModTarget(controlId: string): ModTargetSpec | undefined {
   return MOD_TARGETS.find((t) => t.controlId === controlId);
@@ -49,4 +74,39 @@ export function findModTarget(controlId: string): ModTargetSpec | undefined {
  */
 export function modGain(depth: number, spec: ModTargetSpec): number {
   return Math.max(-1, Math.min(1, depth)) * spec.scale;
+}
+
+/**
+ * PURE per-step param-lock set-diff (Phase C-Full) — the heart of the restore design, factored
+ * out of the engine binder so it is Node-testable with no AudioContext and so the binder and its
+ * tests can never drift. `lock` is the FULL authoritative override-set for the current step
+ * (emitted every step, {} when nothing is locked). Mutates the caller-owned `active` set + `base`
+ * map in place and drives the live engine only through the injected callbacks:
+ *   - `readBase(id)`  -> the un-locked base to restore to (the binder reads the STORE here).
+ *   - `apply(id,val)` -> schedule/write the value on the live engine.
+ * Behavior: (1) APPLY — for each id in `lock` that passes the allow-list (findModTarget),
+ * capture-base-if-new then apply the locked value; (2) RESTORE — for each currently-active id NOT
+ * in `lock`, apply its captured base and clear it. Because every step calls this with its full map,
+ * length-wrap and RESET-jump restore for free (a no-lock step's empty map releases everything).
+ * Stray / non-MOD_TARGET ids are a safe no-op (never applied, never tracked).
+ */
+export function diffParamLock(
+  lock: Record<string, number>,
+  active: Set<string>,
+  base: Map<string, number>,
+  readBase: (id: string) => number,
+  apply: (id: string, value: number, restoring: boolean) => void,
+): void {
+  for (const id of Object.keys(lock)) {
+    if (!findModTarget(id)) continue; // allow-list gate (the six MOD_TARGETS only)
+    if (!active.has(id)) base.set(id, readBase(id)); // lazy base capture on first override
+    apply(id, lock[id]!, false);
+    active.add(id);
+  }
+  for (const id of [...active]) {
+    if (Object.prototype.hasOwnProperty.call(lock, id)) continue;
+    apply(id, base.get(id)!, true); // restore the dropped lock to its base
+    active.delete(id);
+    base.delete(id);
+  }
 }

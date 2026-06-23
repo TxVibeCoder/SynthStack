@@ -382,7 +382,7 @@ export interface CourierStepState {
   gateLength: number; // 0.05..1.0; >=1 == TIE
   rest: boolean;
   glide: boolean;
-  lock: Record<string, number> | null; // C-FULL param-lock map (controlId->value). MVP: ALWAYS null.
+  lock: Record<string, number> | null; // per-step param-lock map (controlId->value); null/empty = no locks. Authored by the param-record matrix; applied by the bind layer.
 }
 
 export interface CourierSequencerState {

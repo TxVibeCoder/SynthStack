@@ -454,6 +454,37 @@ describe('studio state round-trip (work order §3.6)', () => {
     });
   });
 
+  it('JSON round-trips a non-null per-step param-lock map across the store', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.courier.seq.steps[0]!.lock = { COU_CUTOFF: 1000, COU_TUNE: 3 };
+    s.courier.seq.steps[5]!.lock = { COU_OSC1_WAVESHAPE: 0.4 };
+    store.setState(s);
+    expect(store.getState().courier.seq.steps[0]!.lock).toEqual({ COU_CUTOFF: 1000, COU_TUNE: 3 });
+    expect(store.getState().courier.seq.steps[5]!.lock).toEqual({ COU_OSC1_WAVESHAPE: 0.4 });
+    expect(store.getState().courier.seq.steps[1]!.lock).toBeNull();
+  });
+
+  it('coalesceCourierSequencerState preserves a non-null lock and keeps a non-object lock null', () => {
+    const out = coalesceCourierSequencerState({
+      steps: [
+        { noteVv: 0, gateLength: 0.5, rest: false, glide: false, lock: { COU_CUTOFF: 1500 } },
+        { noteVv: 0, gateLength: 0.5, rest: false, glide: false, lock: null },
+        // a junk non-object lock canonicalizes to null
+        {
+          noteVv: 0,
+          gateLength: 0.5,
+          rest: false,
+          glide: false,
+          lock: 7 as unknown as Record<string, number>,
+        },
+      ],
+    } as Partial<CourierSequencerState>);
+    expect(out.steps[0]!.lock).toEqual({ COU_CUTOFF: 1500 });
+    expect(out.steps[1]!.lock).toBeNull();
+    expect(out.steps[2]!.lock).toBeNull();
+  });
+
   it('coalesceCourierSequencerState(undefined) yields the 64-step default', () => {
     expect(coalesceCourierSequencerState(undefined)).toEqual(defaultCourierSequencerState());
   });

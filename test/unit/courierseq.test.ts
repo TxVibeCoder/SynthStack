@@ -359,6 +359,85 @@ describe('Courier sequencer — tempo / scheduler contract', () => {
   });
 });
 
+describe('Courier sequencer — per-step param locks (pure emit)', () => {
+  it('emits a paramLock carrying the step lock map, at the step marker time', () => {
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 1;
+    seq.steps[0]!.noteVv = 0;
+    seq.steps[0]!.lock = { COU_CUTOFF: 1000 };
+    const evs = collect(seq, 0.125 - 1e-9);
+    const lock = evs.find((e) => e.type === 'paramLock');
+    expect(lock).toBeDefined();
+    expect(lock!.data!['lock']).toEqual({ COU_CUTOFF: 1000 });
+    // fires at the same time as step 0's marker
+    expect(lock!.time).toBeCloseTo(times(evs, 'step')[0]!, 12);
+  });
+
+  it('fires paramLock on a REST step too (a lock is gate-independent)', () => {
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 2;
+    seq.steps[0]!.noteVv = 0;
+    seq.steps[1]!.rest = true;
+    seq.steps[1]!.lock = { COU_TUNE: 3 };
+    const evs = collect(seq, 0.25 - 1e-9);
+    // step 1 produced no gate/pitch but DID emit its lock
+    expect(times(evs, 'gateOn')).toHaveLength(1);
+    const locks = evs.filter((e) => e.type === 'paramLock');
+    const restLock = locks.find((e) => Object.keys(e.data!['lock'] as object).length > 0);
+    expect(restLock!.data!['lock']).toEqual({ COU_TUNE: 3 });
+  });
+
+  it('emits a paramLock on EVERY visited step ({} when no lock), across wraps', () => {
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 2; // two full wraps -> 6 step markers in 0.75 s
+    seq.steps[0]!.lock = { COU_CUTOFF: 800 };
+    // step 1 has no lock
+    const evs = collect(seq, 0.75 - 1e-9);
+    const steps = times(evs, 'step');
+    const locks = evs.filter((e) => e.type === 'paramLock');
+    expect(locks).toHaveLength(steps.length); // one paramLock per visited step
+    // the locked vs empty maps alternate with the [0,1,0,1,0,1] step pattern
+    const maps = locks.map((e) => e.data!['lock']);
+    expect(maps).toEqual([
+      { COU_CUTOFF: 800 },
+      {},
+      { COU_CUTOFF: 800 },
+      {},
+      { COU_CUTOFF: 800 },
+      {},
+    ]);
+  });
+
+  it('multiple params lock independently on one step', () => {
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 1;
+    seq.steps[0]!.noteVv = 0;
+    seq.steps[0]!.lock = { COU_CUTOFF: 1200, COU_OSC1_WAVESHAPE: 0.4 };
+    const evs = collect(seq, 0.125 - 1e-9);
+    const lock = evs.find((e) => e.type === 'paramLock');
+    expect(lock!.data!['lock']).toEqual({ COU_CUTOFF: 1200, COU_OSC1_WAVESHAPE: 0.4 });
+  });
+
+  it('a null lock (MVP default) emits an empty {} map and adds no NaN', () => {
+    const seq = new CourierSequencer();
+    seq.tempoBpm = 120;
+    seq.endStep = 2;
+    seq.steps[0]!.noteVv = 0; // lock stays null (default)
+    const evs = collect(seq, 0.25 - 1e-9);
+    for (const e of evs.filter((x) => x.type === 'paramLock')) {
+      expect(e.data!['lock']).toEqual({});
+      expect(Number.isFinite(e.time)).toBe(true);
+    }
+    // distinct event type: step markers + the defaultCourierStep equality are unchanged
+    expect(times(evs, 'step')).toHaveLength(2);
+    expect(defaultCourierStep().lock).toBeNull();
+  });
+});
+
 describe('Courier sequencer — MVP arpeggiator (OFF / UP / DOWN)', () => {
   /** Author scattered notes [C=0, G=7, E=4] across the first three steps. */
   const armArp = (mode: 'OFF' | 'UP' | 'DOWN') => {

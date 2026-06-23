@@ -35,6 +35,7 @@ import { Button } from '../controls/Button';
 import { StepLed } from '../controls/StepLed';
 import { useControl } from '../useStudio';
 import { COURIER_CLOCK_DIVS } from '../../engine/sequencers/courierSeq';
+import { COURIER_LOCKABLE } from '../../engine/modRouter';
 import { keyToCourierAction, nextNoteSemis, nextSelection } from './courierKeyNav';
 import {
   courierIsRunning,
@@ -61,8 +62,12 @@ function seqDef(id: string): ControlDef {
   return d;
 }
 
-/** Courier-local strip canvas — App.tsx reads this aspect to frame the seq region. */
-export const COURIER_SEQ_STRIP = { w: 1300, h: 252 } as const;
+/**
+ * Courier-local strip canvas — App.tsx reads this aspect to frame the seq region.
+ * Grew (252 -> 330) for the Phase-C param-lock MATRIX band between the edit row and the
+ * global SEQUENCER settings row; the stage frame reflows off this height automatically.
+ */
+export const COURIER_SEQ_STRIP = { w: 1300, h: 330 } as const;
 
 /** Strip geometry: one row of 16 cells per page across the wide canvas. */
 const BAND_Y = 6;
@@ -73,11 +78,26 @@ const CELL_H = 60;
 const CELL_Y = BAND_Y + 18;
 const LED_Y = BAND_Y + 8;
 const EDIT_Y = BAND_Y + 116;
-/** Global sequencer SETTINGS row, beneath the per-step edit row. */
-const SET_Y = BAND_Y + 196;
+/** Param-lock matrix band, between the per-step edit row and the global settings row. */
+const MATRIX_Y = EDIT_Y + 70; // ~192
+/** Global sequencer SETTINGS row, beneath the matrix band. */
+const SET_Y = BAND_Y + 274;
 
 const PAGE_CELLS = 16;
 const ACCENT = GROUP_BORDER.courier;
+
+// ---- param-lock matrix geometry (18-slot 9×2 grid) -----------------------------------------
+/** The full 18 matrix slots. 6 are wired from the shared COURIER_LOCKABLE allow-list; the
+ *  remaining 12 render as disabled placeholders — forward-compatible with part 2 widening the
+ *  lockable set without a re-layout. The wired set can NEVER drift from the engine binder
+ *  because both import COURIER_LOCKABLE (derived from MOD_TARGETS). */
+const MATRIX_SLOTS = 18;
+const MATRIX_COLS = 9;
+const MATRIX_X0 = 60;
+const MATRIX_PITCH_X = 64;
+const MATRIX_PITCH_Y = 40;
+const matrixSlotX = (i: number) => MATRIX_X0 + (i % MATRIX_COLS) * MATRIX_PITCH_X;
+const matrixSlotY = (i: number) => MATRIX_Y + Math.floor(i / MATRIX_COLS) * MATRIX_PITCH_Y;
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -114,9 +134,26 @@ const REC_DEF = mkToggle('COU_REC', 'REC');
 const PLAY_DEF: ControlDef = { id: 'COU_RUN_STOP', panelLabel: 'PLAY', type: 'button' };
 const RESET_DEF: ControlDef = { id: 'COU_RESET', panelLabel: 'RESET', type: 'button' };
 
+/**
+ * Resolve a lockable param's ControlDef (min/max/taper/default) from data/courier.json — the
+ * single source of truth for ranges. Used to build the per-step lock-value Knob so the locked
+ * value is authored in engine-native units (Hz / semitones / 0..1 morph) the binder applies
+ * verbatim. The panelLabel is overridden with the short matrix caption for the edit-row knob.
+ */
+function lockParamDef(controlId: string, cap: string): ControlDef {
+  return { ...seqDef(controlId), panelLabel: cap };
+}
+
+const CLR_DEF: ControlDef = { id: 'COU_LOCK_CLR', panelLabel: 'CLR', type: 'button' };
+
 /** A step counts as a TIE when its gate length reaches/exceeds 1 (no separate field in MVP). */
 function isTie(step: CourierStepState): boolean {
   return step.gateLength >= 1;
+}
+
+/** Does this step lock any parameter? (drives the per-cell lock pip + status suffix.) */
+function lockCount(step: CourierStepState): number {
+  return step.lock ? Object.keys(step.lock).length : 0;
 }
 
 function StepCell({
@@ -132,11 +169,16 @@ function StepCell({
   const x = CELL_X0 + (globalIndex % PAGE_CELLS) * CELL_PITCH;
   const handle = () => onClick(globalIndex);
   const tie = isTie(step);
+  const locks = lockCount(step);
   // -1 noteVv == unauthored (rest-like blank). Show a dash; rests show the rest glyph.
   const blank = step.noteVv < 0 && !step.rest;
   return (
     <g className="control" data-testid={`courier-cell-${globalIndex}`} onClick={handle} opacity={beyondEnd ? 0.35 : 1}>
       <StepLed x={x + CELL_W / 2} y={LED_Y} on={active} />
+      {/* lock pip — burnt-orange dot in the top-right corner when the step locks any param. */}
+      {locks > 0 && (
+        <circle data-testid={`courier-cell-lock-${globalIndex}`} cx={x + CELL_W - 7} cy={CELL_Y + 7} r={3} fill={ACCENT} />
+      )}
       <rect
         x={x} y={CELL_Y} width={CELL_W} height={CELL_H} rx={4}
         fill={step.rest ? COLORS.panelShadow : COLORS.panelRaised}
@@ -220,6 +262,9 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(0);
   const [armed, setArmed] = useState(false);
+  /** The lockable param currently armed for per-step value authoring (null = none). Distinct
+   *  from the REC note-record `armed` flag above. */
+  const [armedParam, setArmedParam] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const pos = useCourierStepPosition();
   const running = useCourierRunning();
@@ -306,6 +351,39 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
   // TIE toggles the gate length to its tie value (>=1) / back to a normal sustain (0.5).
   const selTie = isTie(sel);
   const onTie = useCallback(() => editStep({ gateLength: selTie ? 0.5 : 1 }), [editStep, selTie]);
+
+  // --- per-step PARAM LOCK authoring ---------------------------------------------------------
+  // Merge-write one lock key on the selected step. Always reads the LIVE lock off the store and
+  // writes a FRESH object (never mutates in place) so the JSON-diff subscription re-renders.
+  const setLockValue = useCallback(
+    (controlId: string, value: number) => {
+      const prev = readCourierSeq().steps[selected]?.lock ?? null;
+      updateCourierStep(selected, { lock: { ...(prev ?? {}), [controlId]: value } });
+    },
+    [selected],
+  );
+  // Clear ONE lock key on the selected step; canonicalize an emptied map to null (keeps the
+  // emitStepEvents `?? {}` fast-path + the cell-pip check consistent).
+  const clearLockValue = useCallback(
+    (controlId: string) => {
+      const prev = readCourierSeq().steps[selected]?.lock ?? null;
+      if (!prev || !(controlId in prev)) return;
+      const next: Record<string, number> = { ...prev };
+      delete next[controlId];
+      updateCourierStep(selected, { lock: Object.keys(next).length > 0 ? next : null });
+    },
+    [selected],
+  );
+  // The live ControlDef + current value of the armed param's lock on the selected step.
+  const armedCap = armedParam
+    ? COURIER_LOCKABLE.find((p) => p.controlId === armedParam)?.cap ?? armedParam
+    : null;
+  const armedDef = armedParam ? lockParamDef(armedParam, armedCap!) : null;
+  const armedLockValue =
+    armedParam && armedDef
+      ? sel.lock?.[armedParam] ?? (typeof armedDef.default === 'number' ? armedDef.default : 0)
+      : 0;
+  const selLockCount = lockCount(sel);
 
   const togglePlay = useCallback(() => {
     if (courierIsRunning()) courierStop();
@@ -404,7 +482,8 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
             announces the new step + note on every arrow edit/navigation). */}
         <text x={26} y={EDIT_Y + 4} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.5}
           fill={COLORS.legendDim} role="status" aria-live="polite">
-          {`STEP ${selected + 1} · ${sel.rest ? 'REST' : sel.noteVv < 0 ? 'EMPTY' : noteName(sel.noteVv)}`}
+          {`STEP ${selected + 1} · ${sel.rest ? 'REST' : sel.noteVv < 0 ? 'EMPTY' : noteName(sel.noteVv)}` +
+            (selLockCount > 0 ? ` · ${selLockCount} LOCK${selLockCount > 1 ? 'S' : ''}` : '')}
         </text>
 
         <Knob def={NOTE_DEF} value={Math.round(sel.noteVv * 12)} onInput={noop} onCommit={onNote}
@@ -427,6 +506,63 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
             keyboard target) write the selected cell and advance it. */}
         <Button def={REC_DEF} value={armed ? 'ON' : 'OFF'} lit={armed}
           onChange={(p) => setArmed(p === 'ON')} x={CELL_X0 + 504} y={EDIT_Y} />
+
+        {/* ===== armed-param LOCK-VALUE editor (only while a matrix slot is armed) =====
+            Reuses the full Knob ergonomics stack (drag/fine-Shift/wheel/+−/dbl-click-default)
+            seeded from the param's ControlDef; onCommit merge-writes the lock on the selected
+            step. CLR deletes the armed key (canonicalizing an emptied map to null). */}
+        {armedParam && armedDef && (
+          <g data-testid="courier-lock-editor">
+            <text x={CELL_X0 + 572} y={EDIT_Y - 28} textAnchor="middle" fontFamily={FONT_CONDENSED}
+              fontSize={9} letterSpacing={1} fill={ACCENT}>
+              {`LOCK · ${armedCap}`}
+            </text>
+            <Knob def={armedDef} value={armedLockValue} onInput={noop}
+              onCommit={(v) => setLockValue(armedParam, v)} accent={ACCENT}
+              x={CELL_X0 + 572} y={EDIT_Y} />
+            <Button def={CLR_DEF} value="OFF" momentary
+              onChange={(p) => { if (p === 'ON') clearLockValue(armedParam); }}
+              x={CELL_X0 + 638} y={EDIT_Y} />
+          </g>
+        )}
+
+        {/* ===== PARAM-RECORD MATRIX (18-slot 9×2 grid) =====
+            Arm a lockable param, then author its per-step value with the lock-value knob above.
+            6 slots are wired from the shared COURIER_LOCKABLE allow-list (cannot drift from the
+            engine binder); the other 12 are disabled placeholders for a future widened set. A
+            burnt-orange dot overlays any wired slot the SELECTED step locks. */}
+        <text x={26} y={MATRIX_Y - 16} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.5}
+          fill={COLORS.legendDim}>
+          PARAM REC
+        </text>
+        {Array.from({ length: MATRIX_SLOTS }, (_, i) => {
+          const entry = COURIER_LOCKABLE[i];
+          const sx = matrixSlotX(i);
+          const sy = matrixSlotY(i);
+          if (!entry) {
+            // disabled placeholder slot (forward-compatible layout for part 2)
+            return (
+              <g key={`ph-${i}`} data-testid={`courier-matrix-empty-${i}`} opacity={0.25}>
+                <rect x={sx - 16} y={sy - 9} width={32} height={18} rx={4}
+                  fill={COLORS.panel} stroke={COLORS.panelEdge} strokeWidth={1} strokeDasharray="2 2" />
+              </g>
+            );
+          }
+          const id = entry.controlId;
+          const isArmed = armedParam === id;
+          const stepLocks = sel.lock?.[id] != null;
+          return (
+            <g key={id} data-testid={`courier-matrix-${id}`}>
+              <Button def={mkToggle(id, entry.cap)} value={isArmed ? 'ON' : 'OFF'} lit={isArmed}
+                onChange={() => setArmedParam((p) => (p === id ? null : id))} x={sx} y={sy} />
+              {/* "this param is locked on the SELECTED step" dot — distinct from the arm LED. */}
+              {stepLocks && (
+                <circle data-testid={`courier-matrix-locked-${id}`} cx={sx + 13} cy={sy - 9} r={3}
+                  fill={ACCENT} stroke={COLORS.panelShadow} strokeWidth={0.75} />
+              )}
+            </g>
+          );
+        })}
 
         {/* ===== GLOBAL SEQUENCER SETTINGS row (Phase C MVP) =====
             TEMPO (control store), CLOCK DIV / LENGTH / GATE LENGTH / SWING / SEQ MODE / ARP MODE

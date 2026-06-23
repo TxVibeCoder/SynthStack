@@ -2,17 +2,19 @@
  * Courier sequencer (Phase C MVP) — pure step-state + event generation.
  * 64 steps (4 pages x 16). 1 step = a clock-divider multiple of a 1/16 base note.
  * Event types emitted:
- *   'step'    { stepIndex }            UI LED chase marker (feeds scheduler.uiQueue)
- *   'pitch'   { noteVv, glide }        (suppressed on rests — CV holds)
- *   'gateOn'  {}                       at the exact step time
- *   'gateOff' {}                       scheduled, never timed out
+ *   'step'      { stepIndex }          UI LED chase marker (feeds scheduler.uiQueue)
+ *   'paramLock' { lock }               per-step lock map (emitted EVERY step, {} when none)
+ *   'pitch'     { noteVv, glide }      (suppressed on rests — CV holds)
+ *   'gateOn'    {}                     at the exact step time
+ *   'gateOff'   {}                     scheduled, never timed out
  *
  * Pure state machine: no Web Audio types, no Date/Math.random — Node-testable through
  * the real Scheduler. Mirrors monarchseq.ts (minus ratchet/accent/ASSIGN/external clock)
  * and adds a clock divider + a minimal OFF/UP/DOWN arpeggiator.
  *
- * MVP scope (C-FULL extension points are noted inline, none implemented):
- *   - per-step `lock` param-lock slot (always null here; emitStepEvents ignores it)
+ * C-FULL scope (other extension points noted inline, not yet implemented):
+ *   - per-step `lock` param-lock slot: emitStepEvents forwards it as a 'paramLock' event every
+ *     step; the binder (studio.ts) owns base-capture + restore-on-diff (the seq stays pure).
  *   - arpMode widening to the full pattern set (arpDir/arpCursor scaffolding present)
  *   - external clock follow (CLOCK IN) — one-line marker in pullEventsAt/advance
  *   - per-step ratchet / accent / probability
@@ -26,7 +28,7 @@ export interface CourierStep {
   gateLength: number; // 0.05..1.0; >=1 == TIE (carries gate into next step)
   rest: boolean; // REST = no gate, no pitch event (CV holds)
   glide: boolean; // per-step portamento on the pitch event
-  lock: Record<string, number> | null; // C-FULL param-lock slot. MVP: ALWAYS null. emitStepEvents IGNORES it.
+  lock: Record<string, number> | null; // per-step param-lock map (controlId -> engine-native value); null/empty = no locks. emitStepEvents forwards it as a paramLock event on every visited step.
 }
 
 export function defaultCourierStep(): CourierStep {
@@ -137,6 +139,16 @@ export class CourierSequencer implements Transport {
 
     // 1. UI LED chase marker (always emitted).
     events.push({ time, type: 'step', data: { stepIndex: this.stepIndex } });
+
+    // 1b. Param-lock (Phase C-Full). Emit the step's lock map VERBATIM on EVERY visited step —
+    //   even no-lock steps emit an empty {} — so the binder can drive restore-on-diff (a no-lock
+    //   step's empty map tells it to release any still-active locks). This is the crux of the
+    //   restore design: emit-on-every-step turns wrap/jump/unlock restore into a pure per-step
+    //   set-diff in the shell, with NO separate restore event and NO wrap detection here. Fires
+    //   BEFORE the rest return — a lock is a knob value, independent of the gate, so it applies on
+    //   rests too. PURE: the seq forwards the map by reference; it does NOT validate control ids,
+    //   clamp values, or know the lockable allow-list (that lives in the binder via findModTarget).
+    events.push({ time, type: 'paramLock', data: { lock: step.lock ?? {} } });
 
     // 2. REST: no gate, no pitch (CV holds).
     if (step.rest) return events;

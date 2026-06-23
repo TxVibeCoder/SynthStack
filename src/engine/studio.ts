@@ -48,6 +48,7 @@ import {
 } from '../state/studioState';
 import { anvilStepRateHz, expKnob01 } from './units';
 import { assignSourceValue } from './assign';
+import { diffParamLock } from './modRouter';
 
 export const CABLE_COUNT = 12; // D5
 export const CABLE_COLORS = ['#d4a017', '#b0413e', '#3e6fb0', '#3e8e5a', '#7a4fa3', '#c2c2c2'];
@@ -62,6 +63,19 @@ const INTERNAL_CLOCK_EVENTS: Record<string, { transport: string; type: string; s
   CAS_SEQ2_CLK_OUT: { transport: 'cascadeclock', type: 'seqClkPulse', seq: 1 },
   ANV_TRIGGER_OUT: { transport: 'anvilseq', type: 'trigger' },
 };
+
+/** Lazily-built map of the COU_ control defaults from data/courier.json — the round-trip-safe
+ *  fallback base for a param-lock restore when the store has no value for that control yet. */
+let courierDefaultCache: Record<string, number> | null = null;
+function courierJsonDefault(id: string): number {
+  if (!courierDefaultCache) {
+    courierDefaultCache = {};
+    for (const c of moduleConfig('courier')?.def.controls ?? []) {
+      if (typeof c.default === 'number') courierDefaultCache[c.id] = c.default;
+    }
+  }
+  return courierDefaultCache[id] ?? 0;
+}
 
 export class Studio {
   readonly context = new StudioContext();
@@ -81,6 +95,13 @@ export class Studio {
    *  internal-clock state machine; mirrored from state.courier.seq by syncTransportConfig.
    *  tempoBpm follows LINK (applyTempoLink) like the Monarch clock. */
   readonly courierSeq = new CourierSequencer();
+  /** Per-step PARAM-LOCK shell state (Phase C-Full). NEVER serialized, never in the store —
+   *  the binder owns base-capture + restore so the pure seq only forwards step.lock.
+   *  courierLockBase: controlId -> the panel base value to restore to (captured lazily from the
+   *  STORE on first override). courierActiveLocks: controlIds currently overridden by a lock and
+   *  not yet restored. See applyCourierParamLock / flushCourierParamLocks. */
+  private readonly courierLockBase = new Map<string, number>();
+  private readonly courierActiveLocks = new Set<string>();
   /** External MIDI transport clock (24-PPQN ÷6 → 16ths). When running it is the studio master:
    *  it clocks the Cascade (4 PPQN, manual priority MIDI > analog) and the Monarch (unless
    *  its analog TEMPO IN is patched — Monarch priority analog > MIDI). Fed by the bridge from Web MIDI. */
@@ -317,11 +338,68 @@ export class Studio {
       case 'gateOff':
         this.courier.gateAt(false, e.time);
         break;
+      case 'paramLock':
+        this.applyCourierParamLock(e.data!['lock'] as Record<string, number>, e.time);
+        break;
     }
     // Courier has a COU_CLOCK_OUT jack — keep follower parity so a patched clock-out can drive
     // downstream followers (the feedingFollowers guard prevents loops). No INTERNAL_CLOCK_EVENTS
     // entry exists yet, so today this is inert; it costs nothing and mirrors the other binders.
     this.feedFollowers('courierseq', e);
+  }
+
+  /**
+   * Per-step PARAM-LOCK realization (Phase C-Full) — the whole bind contract is this per-step
+   * set-diff. `lock` is the FULL authoritative override-set for the step that fired at `time`
+   * (emitted EVERY step, {} when nothing is locked). We diff it against courierActiveLocks:
+   *   (1) APPLY pass — for each [id, value] in `lock`: allow-list via findModTarget (a stray /
+   *       hand-edited id is a safe no-op; only the six MOD_TARGETS pass), lazily capture the base
+   *       from the STORE on the first override (never from the live AudioParam, which may hold a
+   *       prior step's locked value), then schedule the locked value at `time`.
+   *   (2) RESTORE pass — for each currently-active id NOT present in `lock`: restore its captured
+   *       base at `time` and clear it. Because every step emits a (possibly empty) lock map, a
+   *       length-wrap or a RESET-jump that lands on a no-lock step restores everything for free —
+   *       no wrap detection needed anywhere.
+   * Writes ONLY the live engine (the AudioParam), NEVER this.store — so state.controls.courier
+   * (the panel knob position / persistence / un-locked base) stays the single UI-owned source of
+   * truth, and once all locks restore the live param is back exactly at the store base.
+   */
+  private applyCourierParamLock(lock: Record<string, number>, time: number): void {
+    diffParamLock(
+      lock,
+      this.courierActiveLocks,
+      this.courierLockBase,
+      (id) => this.readCourierBase(id),
+      (id, value) => this.courier.setControlAt(id, value, time),
+    );
+  }
+
+  /**
+   * The base (un-locked) value of a lockable control: the live STORE value coalesced to the
+   * data/courier.json default. Read READ-ONLY from the store — NEVER from the live AudioParam,
+   * which may currently hold a prior step's locked value. Lazy capture from here (per
+   * applyCourierParamLock) means a user editing the knob mid-pattern is honored: an un-locked
+   * step restores to the CURRENT panel value ("the knob is the base", hardware parity).
+   */
+  private readCourierBase(id: string): number {
+    const v = this.store.getState().controls.courier?.[id];
+    return typeof v === 'number' ? v : courierJsonDefault(id);
+  }
+
+  /**
+   * STOP / PANIC flush — restore every active lock to its captured base, then clear both shell
+   * structures. Without this a stopped sequence would freeze the last locked value onto the live
+   * knob. Restores immediately at currentTime (the seq is no longer scheduling, so there is no
+   * future step time to align to). Called from stopAll / panic / courierStop.
+   */
+  private flushCourierParamLocks(): void {
+    if (this.courierActiveLocks.size === 0) return;
+    const t = this.context.audioContext.currentTime;
+    for (const id of this.courierActiveLocks) {
+      this.courier.setControlAt(id, this.courierLockBase.get(id)!, t);
+    }
+    this.courierActiveLocks.clear();
+    this.courierLockBase.clear();
   }
 
   /**
@@ -564,6 +642,7 @@ export class Studio {
     this.cascadeClock.stop();
     this.samplerSeq.stop(); // STOP ALL halts the drum grid too (mirrors runAll)
     this.courierSeq.stop();
+    this.flushCourierParamLocks(); // restore any active param-lock to its base (no frozen knob)
     const t = this.context.audioContext.currentTime;
     this.monarch.gateAt(false, t);
     this.courier.gateAt(false, t); // drop a possibly-hung Courier gate (mirrors the Monarch drop)
@@ -588,6 +667,7 @@ export class Studio {
     this.cascadeClock.stop();
     this.samplerSeq.stop();
     this.courierSeq.stop();
+    this.flushCourierParamLocks(); // restore any active param-lock to its base before silence
     this.samplerLoops.panicAll(); // clear the loop SCHEDULE so nothing re-launches...
     for (let i = 0; i < 8; i++) this.sampler.stopLoop(i, t); // ...and stop the sounding voices
     this.monarch.gateAt(false, t);
@@ -692,6 +772,7 @@ export class Studio {
 
   courierStop(): void {
     this.courierSeq.stop();
+    this.flushCourierParamLocks(); // restore any active param-lock to its base (no frozen knob)
     this.courier.gateAt(false, this.context.audioContext.currentTime + 0.03); // no hung gate
   }
 
@@ -1034,7 +1115,9 @@ export class Studio {
     // guarantees the slice exists on every load path. CourierStepState is structurally identical
     // to the engine's CourierStep, so a shallow per-step copy needs no translation.
     const c = s.courier.seq;
-    this.courierSeq.steps = c.steps.map((st) => ({ ...st }));
+    // Deep-copy the param-lock map so the engine seq never aliases the store map (the seq only
+    // reads lock, so this is defensive — the rest of the step copies shallow as before).
+    this.courierSeq.steps = c.steps.map((st) => ({ ...st, lock: st.lock ? { ...st.lock } : null }));
     this.courierSeq.endStep = c.endStep;
     this.courierSeq.swingPct = c.swingPct;
     this.courierSeq.gateLenScale = c.gateLenScale;
