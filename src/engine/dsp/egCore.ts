@@ -37,6 +37,9 @@ export interface EgConfig {
   releaseS?: number;
   /** ADSR only: loop the attack-decay segment while gated (envelope-as-LFO). Default false. */
   loop?: boolean;
+  /** When false, the velocity input is IGNORED (peak not scaled). Default (undefined) = scale by
+   *  velocity, preserving Anvil. Courier sets this per its F/A ENV VEL toggle. */
+  useVelocity?: boolean;
 }
 
 // Single source of truth: the +2.5 vv rising-edge gate threshold lives in units.ts (D8). Kept over
@@ -79,6 +82,12 @@ export class EgCore {
   }
 
   setVelocity(velocityVv: number): void {
+    if (this.cfg.useVelocity === false) {
+      // ENV VEL off: the connected velocity input must NOT scale the EG (full peak, no stretch).
+      this.velocityScale = 1;
+      this.decayTimeScale = 1;
+      return;
+    }
     const v = velocityVv < 0 ? 0 : velocityVv > 5 ? 5 : velocityVv;
     this.velocityScale = v / 5;
     this.decayTimeScale = 1 + 0.15 * (v / 5);

@@ -269,4 +269,21 @@ describe('eg.worklet core — Courier ADSR mode', () => {
     }
     expect(reattackPeak).toBeGreaterThan(8 * 0.95);
   });
+
+  it('ENV VEL gate: useVelocity:false ignores velocity (full peak); useVelocity:true scales it', () => {
+    const base: EgConfig = { ...courierAdsr, sustainLevel: 1 }; // hold at peak so peak == sustain
+    const off = new EgCore(FS, { ...base, useVelocity: false });
+    const on = new EgCore(FS, { ...base, useVelocity: true });
+    off.setVelocity(2.5); // half velocity on both...
+    on.setVelocity(2.5);
+    const n = Math.floor(0.1 * FS);
+    let peakOff = 0;
+    let peakOn = 0;
+    for (let i = 0; i < n; i++) {
+      peakOff = Math.max(peakOff, off.processSample(5)); // gate held high
+      peakOn = Math.max(peakOn, on.processSample(5));
+    }
+    expect(peakOff).toBeGreaterThan(8 * 0.95); // ENV VEL off -> velocity ignored -> full peak
+    expect(peakOn).toBeCloseTo(4, 0); // ENV VEL on -> 2.5/5 * peak(8) = 4
+  });
 });

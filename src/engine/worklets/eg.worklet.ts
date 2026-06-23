@@ -47,6 +47,7 @@ class SynthStackEgProcessor extends AudioWorkletProcessor {
       sustainLevel: cfg.sustainLevel,
       releaseS: cfg.releaseS,
       loop: cfg.loop,
+      useVelocity: cfg.useVelocity,
     });
     this.port.onmessage = (e: MessageEvent) => {
       const msg = e.data as EgOptionsMessage | EgHeldMessage;

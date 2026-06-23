@@ -335,6 +335,10 @@ export class Studio {
         this.courier.setPitchAt(e.data!['noteVv'] as number, e.time, e.data!['glide'] as boolean);
         break;
       case 'gateOn':
+        // sequencer notes carry no per-step velocity yet — pin the bus to full, a hair before the
+        // gate (worklet reads velocity once per block), so a prior live MIDI note's velocity can't
+        // bleed into a sequenced note.
+        this.courier.setVelocityAt(5, e.time - 0.003);
         this.courier.gateAt(true, e.time);
         break;
       case 'gateOff':
@@ -846,14 +850,21 @@ export class Studio {
    *   glide=true: setPitchAt reads the module's glideTimeS and only glides when GLIDE is up.
    *   retrigger=false (legato / held-note fall-back): pitch moves, gate stays high (no re-attack).
    */
-  courierNoteOn(noteVv: number, retrigger: boolean): void {
+  courierNoteOn(noteVv: number, retrigger: boolean, velocityVv = 5): void {
     const t = this.context.audioContext.currentTime + 0.03;
     this.courier.setPitchAt(noteVv, t, true);
+    // Velocity LATCHES at the attack (and the multi-trig re-attack), a hair BEFORE the gate: the
+    // worklet reads velocity once per block (first sample) but the gate per sample, so setting it at
+    // t-0.003 guarantees the new velocity is present on the block where the gate rises. Pure legato /
+    // held-note fall-back (retrigger=false, no multi-trig) leaves the sustaining note's velocity
+    // alone — no surprising mid-hold amp rescale.
     if (retrigger) {
+      this.courier.setVelocityAt(velocityVv, t - 0.003);
       this.courier.gateAt(true, t);
     } else if (this.courier.multiTrig) {
       // MULTI-TRIG: a legato keypress (gate already high) forces a discrete down→up edge so both
       // EGs restart their attack. The 1 ms gap spans render blocks so the worklet sees the edge.
+      this.courier.setVelocityAt(velocityVv, t - 0.003);
       this.courier.gateAt(false, t);
       this.courier.gateAt(true, t + 0.001);
     }

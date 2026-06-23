@@ -461,7 +461,7 @@ function CourierKeybed() {
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
       pointerNote.current.set(e.pointerId, k.semitone);
-      engineBridge.noteOn(keyToNote(k.semitone, 0), 100);
+      engineBridge.noteOn(keyToNote(k.semitone, 0), 127); // no velocity sensor -> full (Courier ENV VEL)
       mark(k.semitone, true);
     },
     [mark],

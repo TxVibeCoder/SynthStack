@@ -47,8 +47,9 @@ import {
   type KeyRect,
 } from './keyboardLayout';
 
-/** On-screen velocity (v1: gate-only — the value is passed through but unused). */
-const SCREEN_VELOCITY = 100;
+/** On-screen velocity: the panel has no velocity sensor, so it sends FULL (127). Monarch ignores
+ *  velocity; Courier (ENV VEL) scales by it, so a velocity-insensitive key must play at full level. */
+const SCREEN_VELOCITY = 127;
 /** Octave clamp — mirrors the bridge/state clamp (-3..+3). */
 const OCT_MIN = -3;
 const OCT_MAX = 3;

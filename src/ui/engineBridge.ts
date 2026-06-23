@@ -262,6 +262,9 @@ class EngineBridge {
   private readonly livePitchVv: (number | null)[] = Array.from({ length: 8 }, () => null);
   private readonly liveVelocityVv: (number | null)[] = Array.from({ length: 8 }, () => null);
   private liveTransportGuardOn = false;
+  /** Held keyboard/MIDI note velocities (raw MIDI note -> 0..5 vv), so the Courier velocity bus
+   *  gets the sounding note's own velocity — including a legato fall-back to a still-held note. */
+  private readonly heldNoteVelocityVv = new Map<number, number>();
 
   /** Lazy Studio. Constructing it is audio-free; powerOn() makes the AudioContext. */
   private get studio(): Studio {
@@ -708,6 +711,9 @@ class EngineBridge {
    */
   noteOn(noteNumber: number, velocity: number): void {
     if (velocity === 0) return this.noteOff(noteNumber);
+    // capture this note's velocity (MIDI 0..127 -> 0..5 vv) for the Courier velocity bus, keyed by
+    // note so a legato fall-back uses the still-held note's own velocity. (Monarch ignores it.)
+    this.heldNoteVelocityVv.set(noteNumber, (Math.min(127, Math.max(0, velocity)) / 127) * 5);
     this.applyVoiceAction(this.voice.noteOn(noteNumber)); // sounds the note (also while recording)
     // Monarch step-record: while armed, the pressed note ALSO writes the cursor step and
     // advances it (hardware-style step record). Uses the RAW pressed note (not the mono
@@ -727,7 +733,8 @@ class EngineBridge {
 
   /** Note OFF from the keyboard / MIDI. Drives the mono allocator -> applyVoiceAction. */
   noteOff(noteNumber: number): void {
-    this.applyVoiceAction(this.voice.noteOff(noteNumber));
+    this.applyVoiceAction(this.voice.noteOff(noteNumber)); // may fall back to a still-held note...
+    this.heldNoteVelocityVv.delete(noteNumber); // ...so drop this note's velocity only after
   }
 
   /**
@@ -877,6 +884,7 @@ class EngineBridge {
    */
   releaseAllNotes(): void {
     this.applyVoiceAction(this.voice.allNotesOff());
+    this.heldNoteVelocityVv.clear();
   }
 
   /**
@@ -906,8 +914,10 @@ class EngineBridge {
     if (!this._powered) return;
     if (a.gate === 'on' && a.note != null) {
       const vv = noteToVv(a.note) + this.keyboardOctave;
-      if (this.keyboardTarget === 'courier') this.studio.courierNoteOn(vv, a.retrigger);
-      else this.studio.monarchNoteOn(vv, a.retrigger);
+      if (this.keyboardTarget === 'courier') {
+        const velVv = this.heldNoteVelocityVv.get(a.note) ?? 5; // full if somehow untracked
+        this.studio.courierNoteOn(vv, a.retrigger, velVv);
+      } else this.studio.monarchNoteOn(vv, a.retrigger);
     } else if (a.gate === 'off') {
       if (this.keyboardTarget === 'courier') this.studio.courierNoteOff();
       else this.studio.monarchNoteOff();

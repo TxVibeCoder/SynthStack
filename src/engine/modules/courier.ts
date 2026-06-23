@@ -15,8 +15,8 @@
  *
  * EG model: both EGs run the shared eg worklet in 'adsr' mode — full attack, decay-to-SUSTAIN
  * level, hold while gated, an independent RELEASE on gate-off, and an optional ENV LOOP that
- * re-attacks the gated envelope as an LFO. (Velocity scaling of the EGs — F/A ENV VEL — still
- * awaits a Courier velocity bus; those two toggles remain stored-only for now.)
+ * re-attacks the gated envelope as an LFO. F/A ENV VEL gate a shared velocity bus (live note
+ * velocity, 0..5 vv) onto each EG's velocity input — when ON, that EG's peak scales with velocity.
  */
 
 import type { ModuleDef } from '../../../data/schema';
@@ -60,6 +60,7 @@ export class CourierModule extends ModuleBase {
   // pitch
   private readonly kbCv: ConstantSourceNode; // scheduled keyboard note, vv
   private readonly kbGate: ConstantSourceNode; // internal KB gate 0/5
+  private readonly velBus: ConstantSourceNode; // note velocity (0..5 vv) -> both EGs' velocity input (input 1)
   private readonly osc1Octave: ConstantSourceNode; // octave + master TUNE, vv
   private readonly osc2Octave: ConstantSourceNode; // octave + OSC 2 FREQ detune, vv
   private readonly pitchBus: GainNode; // shared keyboard-note pitch bus (vv); mod 'pitch' target
@@ -267,6 +268,7 @@ export class CourierModule extends ModuleBase {
           peakVv: 8,
           sustainLevel: 0.8,
           releaseS: 0.2,
+          useVelocity: false, // ENV VEL off by default; the F/A ENV VEL handlers flip this per EG
         },
       });
       // The worklet reads the k-rate AudioParams (attackS/releaseS) every block, which would
@@ -285,6 +287,13 @@ export class CourierModule extends ModuleBase {
     this.inputBus('COU_SUSTAIN_IN').connect(gateBus);
     gateBus.connect(this.filterEg, 0, 0);
     gateBus.connect(this.ampEg, 0, 0);
+
+    // velocity bus: per-note velocity (0..5 vv) on EG input 1 (Anvil-style). Default full, so
+    // velocity-insensitive sources (on-screen keys, sequencer) play at full level. Each EG only
+    // scales by it when its ENV VEL toggle set useVelocity (filter default OFF, amp default ON).
+    this.velBus = constant(ctx, 5);
+    this.velBus.connect(this.filterEg, 0, 1);
+    this.velBus.connect(this.ampEg, 0, 1);
 
     // filter EG -> cutoff (bipolar amount)
     this.filterEgAmt = gain(ctx, 0);
@@ -597,8 +606,8 @@ export class CourierModule extends ModuleBase {
         this.filterEg.port.postMessage({ type: 'configure', config: { sustainLevel: num } });
         break;
       case 'COU_F_ENV_VEL':
-        // velocity routing: when ON, the velocity input would scale the EG (Anvil-style). Courier
-        // has no velocity bus yet, so this toggle is stored-only — see the velocity workstream.
+        // ON: the velBus scales the filter EG by note velocity; OFF: full peak (ignores velBus).
+        this.filterEg.port.postMessage({ type: 'configure', config: { useVelocity: value === 'ON' } });
         break;
       case 'COU_F_ENV_LOOP':
         this.filterEg.port.postMessage({ type: 'configure', config: { loop: value === 'ON' } });
@@ -618,7 +627,9 @@ export class CourierModule extends ModuleBase {
         this.ampEg.port.postMessage({ type: 'configure', config: { sustainLevel: num } });
         break;
       case 'COU_A_ENV_VEL':
-        break; // see COU_F_ENV_VEL (Courier velocity bus deferred to the velocity workstream)
+        // ON: the velBus scales the amp EG by note velocity; OFF: full peak (ignores velBus).
+        this.ampEg.port.postMessage({ type: 'configure', config: { useVelocity: value === 'ON' } });
+        break;
       case 'COU_A_ENV_LOOP':
         this.ampEg.port.postMessage({ type: 'configure', config: { loop: value === 'ON' } });
         break;
@@ -684,6 +695,12 @@ export class CourierModule extends ModuleBase {
   /** Set the keyboard gate (0/5 vv) at an exact time. */
   gateAt(on: boolean, time: number): void {
     this.kbGate.offset.setValueAtTime(on ? 5 : 0, time);
+  }
+
+  /** Set note velocity (0..5 vv) on the shared velocity bus at an exact time. Only EGs whose
+   *  ENV VEL is ON scale by it; the default-full bus keeps everything else at full level. */
+  setVelocityAt(velocityVv: number, time: number): void {
+    this.velBus.offset.setValueAtTime(clamp(velocityVv, 0, 5), time);
   }
 
   /** PITCH WHEEL: live bend in SEMITONES (vv = semitones/12), summed onto the pitch bus so all

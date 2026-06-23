@@ -375,7 +375,7 @@ interface BridgePrivates {
   studioInstance: {
     monarchNoteOn(noteVv: number, retrigger: boolean): void;
     monarchNoteOff(): void;
-    courierNoteOn(noteVv: number, retrigger: boolean): void;
+    courierNoteOn(noteVv: number, retrigger: boolean, velocityVv?: number): void;
     courierNoteOff(): void;
     courierPitchBend(semitones: number): void;
     courierModWheel(amount01: number): void;
@@ -619,7 +619,7 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     monarchNoteOff.mockClear(); // the flip released a (empty) stack — ignore any gate-off here
     engineBridge.noteOn(72, 100); // noteToVv(72) = +1
     expect(courierNoteOn).toHaveBeenCalledTimes(1);
-    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true); // fresh attack retriggers
+    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true, expect.any(Number)); // fresh attack retriggers
     expect(monarchNoteOn).not.toHaveBeenCalled();
     expect(monarchNoteOff).not.toHaveBeenCalled();
   });
@@ -640,7 +640,7 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     courierNoteOn.mockClear();
     engineBridge.noteOn(64, 100); // legato
     expect(courierNoteOn).toHaveBeenCalledTimes(1);
-    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(64), false);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(64), false, expect.any(Number));
     expect(courierNoteOff).not.toHaveBeenCalled();
   });
 
@@ -648,7 +648,7 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     engineBridge.setKeyboardTarget('courier');
     engineBridge.setKeyboardOctave(1);
     engineBridge.noteOn(60, 100); // noteToVv(60)=0, +1 octave -> vv 1
-    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true, expect.any(Number));
   });
 
   it('flipping target mid-hold gates OFF the old voice (no stranded gate)', () => {
@@ -659,7 +659,23 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     expect(monarchNoteOff).toHaveBeenCalledTimes(1);
     // The next press now plays Courier with a clean (retriggered) attack.
     engineBridge.noteOn(67, 100);
-    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(67), true);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(67), true, expect.any(Number));
+  });
+
+  it('threads MIDI note velocity into courierNoteOn (0..127 -> 0..5 vv)', () => {
+    engineBridge.setKeyboardTarget('courier');
+    courierNoteOn.mockClear();
+    engineBridge.noteOn(60, 64); // mid MIDI velocity
+    expect(courierNoteOn).toHaveBeenLastCalledWith(0, true, (64 / 127) * 5);
+  });
+
+  it('a legato fall-back uses the still-held note’s own velocity (per-note map)', () => {
+    engineBridge.setKeyboardTarget('courier');
+    engineBridge.noteOn(60, 40); // soft, held underneath
+    engineBridge.noteOn(64, 120); // louder note on top (legato)
+    courierNoteOn.mockClear();
+    engineBridge.noteOff(64); // release the top -> fall back to the still-held 60
+    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(60), false, (40 / 127) * 5);
   });
 
   it('setKeyboardTarget is idempotent (same target does not release a held note)', () => {
