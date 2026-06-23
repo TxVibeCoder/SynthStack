@@ -45,12 +45,13 @@ export const WS_PULSE_MIN_PW = 0.1; // pulse width at waveshape = 1 (narrowest p
 //
 // Fidelity-pass tuning knobs:
 //   FOLD_MAX_DRIVE — deeper fold = more reflections = brighter. 2.0 gives one clean fold at
-//     full depth (monotonic harmonic growth, fundamental preserved). Raising it past ~2.6
-//     starts cancelling the fundamental (a real folder trait) but breaks simple monotonicity.
+//     full depth; 2.4 (fidelity pass) pushes a touch past the first fold-over for more top-end
+//     without thinning the fundamental. Past ~2.6 it starts cancelling the fundamental (a real
+//     folder trait) but breaks simple monotonicity.
 //   FOLD_STAGES    — cascade more sine reflections for a more aggressive/ringing fold.
-export const FOLD_MAX_DRIVE = 2.0; // peak pre-gain into the sine-fold at waveshape = 0
+export const FOLD_MAX_DRIVE = 2.4; // peak pre-gain into the sine-fold at waveshape = 0
 export const FOLD_STAGES = 1; // sine-fold reflections; 1 = a single clean monotonic fold
-export const FOLD_OVERSAMPLE = 4; // extra oversample through the fold region to tame aliasing
+export const FOLD_OVERSAMPLE = 6; // extra oversample through the fold region to tame aliasing (12× total)
 
 /** Two-sample polynomial band-limited step correction. t = phase, dt = phase increment. */
 function polyBlep(t: number, dt: number): number {
