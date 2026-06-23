@@ -413,10 +413,20 @@ function KbOctave({ x, y }: { x: number; y: number }) {
 
 // ---- keybed (32 keys; plays the Courier voice) -------------------------------------------
 
+/** One key-button (centre-positioned). White = light cap, black = dark cap, held = accent. */
 const KeyView = memo(function KeyView({ k, held, onDown, onUp }: { k: CourierKey; held: boolean; onDown: (e: ReactPointerEvent<SVGGElement>, k: CourierKey) => void; onUp: (e: ReactPointerEvent<SVGGElement>) => void }) {
   return (
-    <g className="control" role="button" tabIndex={0} aria-label={`Key ${k.semitone}`} onPointerDown={(e) => onDown(e, k)} onPointerUp={onUp} onPointerCancel={onUp}>
-      <rect x={k.x} y={k.y} width={k.w} height={k.h} rx={k.isBlack ? 2.5 : 3} fill={held ? COLORS.focus : k.isBlack ? COLORS.panelShadow : COLORS.legend} stroke={COLORS.panelEdge} strokeWidth={k.isBlack ? 1 : 1.2} />
+    <g className="control" role="button" tabIndex={0} aria-label={`Key ${k.semitone}`} style={{ cursor: 'pointer' }} onPointerDown={(e) => onDown(e, k)} onPointerUp={onUp} onPointerCancel={onUp}>
+      <rect
+        x={k.x - k.w / 2}
+        y={k.y - k.h / 2}
+        width={k.w}
+        height={k.h}
+        rx={3.5}
+        fill={held ? COLORS.focus : k.isBlack ? COLORS.panelShadow : COLORS.legend}
+        stroke={k.isBlack ? COLORS.panelEdge : COLORS.jackRingDark}
+        strokeWidth={1.1}
+      />
     </g>
   );
 });
@@ -478,10 +488,12 @@ function CourierKeybed() {
     };
   }, [flush]);
 
-  const { x0, x1, y0, y1 } = COURIER_KEYBED;
+  const { x0, x1, blackRowY, whiteRowY, btnH } = COURIER_KEYBED;
+  const top = blackRowY - btnH / 2 - 8;
+  const bot = whiteRowY + btnH / 2 + 8;
   return (
     <g>
-      <rect x={x0 - 6} y={y0 - 6} width={x1 - x0 + 12} height={y1 - y0 + 12} rx={6} fill={COLORS.panelShadow} />
+      <rect x={x0 - 6} y={top} width={x1 - x0 + 12} height={bot - top} rx={8} fill={COLORS.panelShadow} opacity={0.55} />
       {COURIER_WHITE_KEYS.map((k) => (
         <KeyView key={k.semitone} k={k} held={held.has(k.semitone)} onDown={onDown} onUp={onUp} />
       ))}

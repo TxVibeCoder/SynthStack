@@ -32,7 +32,7 @@ import type { PanelLayout, KnobSize } from '../types.ts';
 
 /** Landscape canvas — the panel's own viewBox (App.tsx frames the tab to this). */
 export const COURIER_W = 1360;
-export const COURIER_H = 772;
+export const COURIER_H = 690;
 
 /** Editor→canvas vertical shift (the editor reserves y0..~90 for app chrome we drop). */
 // (applied already in the literal Y values below; documented for re-measurement)
@@ -230,11 +230,11 @@ export const COURIER_SILK: SilkText[] = [
   // section headers for the placeholder blocks
   { x: 430, y: 400, text: 'PRESET SETTINGS', size: 11, anchor: 'middle', spacing: 1.5 },
   { x: 1010, y: 400, text: 'MOD ASSIGN', size: 11, anchor: 'middle', spacing: 1.5 },
-  // wordmark (replaces the brand mark) — our identity, plain type
-  { x: 286, y: 588, text: 'COURIER', size: 28, bold: true, anchor: 'start', spacing: 4 },
+  // wordmark (replaces the brand mark) — our identity, plain type; sits above the keybed
+  { x: 300, y: 614, text: 'COURIER', size: 26, bold: true, anchor: 'start', spacing: 4 },
   // wheel labels
-  { x: 125, y: 598, text: 'PITCH', size: 9, dim: true, anchor: 'middle' },
-  { x: 210, y: 598, text: 'MOD', size: 9, dim: true, anchor: 'middle' },
+  { x: 125, y: 634, text: 'PITCH', size: 9, dim: true, anchor: 'middle' },
+  { x: 210, y: 634, text: 'MOD', size: 9, dim: true, anchor: 'middle' },
 ];
 
 /** Bracket / divider lines (e.g. the LFO 2 DESTINATION bracket under PITCH/CUTOFF/AMP). */
@@ -347,8 +347,8 @@ export interface Wheel {
   kind: 'pitch' | 'mod';
 }
 export const COURIER_WHEELS: Wheel[] = [
-  { x: 125, y: 545, w: 40, h: 86, kind: 'pitch' },
-  { x: 210, y: 545, w: 40, h: 86, kind: 'mod' },
+  { x: 125, y: 588, w: 40, h: 78, kind: 'pitch' },
+  { x: 210, y: 588, w: 40, h: 78, kind: 'mod' },
 ];
 
 /** Bottom patch-button row — omitted (ambiguous preset-bank chrome; the keybed fills the base). */
@@ -360,15 +360,18 @@ export const COURIER_SEQ_STEPS: number[] = Array.from({ length: 16 }, (_, i) => 
 export const COURIER_SEQ_STEP_Y = STEP;
 
 // ===========================================================================
-// KEYBED — 32 keys (low C..G), 19 white + 13 black, playable for the Courier voice.
+// KEYBED — 32 keys (low C..G), 19 white + 13 black, rendered as the editor's
+// BUTTON keyboard: a lower row of light white-key buttons + an upper row of dark
+// black-key buttons (piano 2-3 grouping). Playable for the Courier voice.
 // ===========================================================================
 
 export const COURIER_KEYBED_KEYS = 32;
-const KEYBED_X0 = 40;
-const KEYBED_X1 = 1322;
-const KEYBED_Y0 = 612;
-const KEYBED_Y1 = 760;
-export const COURIER_KEYBED = { x0: KEYBED_X0, x1: KEYBED_X1, y0: KEYBED_Y0, y1: KEYBED_Y1 };
+const KEYBED_X0 = 298; // left edge (first white centre sits half a pitch in)
+const KEYBED_X1 = 1318; // right edge
+const WHITE_ROW_Y = 662; // white-key button centres (lower row)
+const BLACK_ROW_Y = 635; // black-key button centres (upper row)
+const KEY_BTN_H = 18;
+export const COURIER_KEYBED = { x0: KEYBED_X0, x1: KEYBED_X1, whiteRowY: WHITE_ROW_Y, blackRowY: BLACK_ROW_Y, btnH: KEY_BTN_H };
 
 /** Black semitones within an octave (after C, D, F, G, A). */
 const BLACK_IN_OCT = new Set([1, 3, 6, 8, 10]);
@@ -376,13 +379,14 @@ const BLACK_IN_OCT = new Set([1, 3, 6, 8, 10]);
 export interface CourierKey {
   semitone: number;
   isBlack: boolean;
+  /** Button CENTRE. */
   x: number;
   y: number;
   w: number;
   h: number;
 }
 
-/** Build the 32 placed key rects (whites tile the bed; blacks centre on white boundaries). */
+/** Build the 32 key-buttons: whites tile the lower row; blacks centre on white boundaries above. */
 function buildKeybed(): CourierKey[] {
   const shape = Array.from({ length: COURIER_KEYBED_KEYS }, (_, s) => ({
     semitone: s,
@@ -390,18 +394,18 @@ function buildKeybed(): CourierKey[] {
   }));
   const whiteCount = shape.filter((k) => !k.isBlack).length; // 19
   const whiteW = (KEYBED_X1 - KEYBED_X0) / whiteCount;
-  const h = KEYBED_Y1 - KEYBED_Y0;
-  const blackW = whiteW * 0.6;
-  const blackH = h * 0.62;
+  const whiteBtnW = whiteW - 5; // gap between adjacent white buttons
+  const blackBtnW = whiteW * 0.74;
   const out: CourierKey[] = [];
   let whiteSeen = 0;
   for (const k of shape) {
     if (!k.isBlack) {
-      out.push({ ...k, x: KEYBED_X0 + whiteSeen * whiteW, y: KEYBED_Y0, w: whiteW, h });
+      out.push({ ...k, x: KEYBED_X0 + whiteSeen * whiteW + whiteW / 2, y: WHITE_ROW_Y, w: whiteBtnW, h: KEY_BTN_H });
       whiteSeen += 1;
     } else {
+      // boundary = left edge of the next white = midpoint between the flanking white centres
       const boundary = KEYBED_X0 + whiteSeen * whiteW;
-      out.push({ ...k, x: boundary - blackW / 2, y: KEYBED_Y0, w: blackW, h: blackH });
+      out.push({ ...k, x: boundary, y: BLACK_ROW_Y, w: blackBtnW, h: KEY_BTN_H });
     }
   }
   return out;
