@@ -14,6 +14,7 @@ import { MasterFxChain, type MasterFxId } from './fx/masterFxChain';
 import { MonarchModule } from './modules/monarch';
 import { AnvilModule } from './modules/anvil';
 import { CascadeModule } from './modules/cascade';
+import { CourierModule } from './modules/courier';
 import { MixerModule } from './modules/mixer';
 import { SamplerModule } from './modules/sampler';
 import type { ModuleBase } from './modules/moduleBase';
@@ -66,6 +67,7 @@ export class Studio {
   anvil!: AnvilModule;
   cascade!: CascadeModule;
   sampler!: SamplerModule;
+  courier!: CourierModule;
   mixer!: MixerModule;
   router!: RouterBinding;
   scheduler!: Scheduler;
@@ -133,7 +135,7 @@ export class Studio {
     this.built = true;
 
     // Build every module from the MODULES registry (single source of truth). Construction
-    // order == registry order [monarch, anvil, cascade, sampler]; each entry's factory is
+    // order == registry order [monarch, anvil, cascade, sampler, courier]; each entry's factory is
     // exactly the old `new *Module(ctx, def)`. Keep the typed named fields the rest of the
     // class + binders read — each factory returns the concrete subclass, so the downcast is
     // sound (every module id is a registry entry).
@@ -143,10 +145,11 @@ export class Studio {
     this.anvil = instances.get('anvil') as AnvilModule;
     this.cascade = instances.get('cascade') as CascadeModule;
     this.sampler = instances.get('sampler') as SamplerModule;
+    this.courier = instances.get('courier') as CourierModule;
     this.mixer = new MixerModule(ctx, this.context.masterIn);
-    // bundle arrangement: ch1 Cascade, ch2 Anvil, ch3 Monarch, ch4 sampler mix — each
-    // (mainOutJack, mixerChannel) is read per-entry, reproducing the explicit connectInput
-    // calls: (CAS_VCA_OUT,0) (ANV_VCA_OUT,1) (MON_VCA_OUT,2) (SAMP_MIX_OUT,3).
+    // bundle arrangement: ch1 Cascade, ch2 Anvil, ch3 Monarch, ch4 sampler mix, ch5 Courier —
+    // each (mainOutJack, mixerChannel) is read per-entry, reproducing the explicit connectInput
+    // calls: (CAS_VCA_OUT,0) (ANV_VCA_OUT,1) (MON_VCA_OUT,2) (SAMP_MIX_OUT,3) (COU_*_OUT,4).
     for (const m of mixedModules) {
       const tap = instances.get(m.id)!.outputTap(m.mainOutJack!);
       if ((VOICE_FX_IDS as string[]).includes(m.id)) {
@@ -651,6 +654,24 @@ export class Studio {
     this.monarch.gateAt(false, this.context.audioContext.currentTime + 0.03);
   }
 
+  /**
+   * Keyboard / MIDI live-play NOTE ON for the Courier voice — the exact parallel of
+   * monarchNoteOn (Courier exposes the same setPitchAt/gateAt binding surface). Used when the
+   * bridge's keyboard target is 'courier'.
+   *   glide=true: setPitchAt reads the module's glideTimeS and only glides when GLIDE is up.
+   *   retrigger=false (legato / held-note fall-back): pitch moves, gate stays high (no re-attack).
+   */
+  courierNoteOn(noteVv: number, retrigger: boolean): void {
+    const t = this.context.audioContext.currentTime + 0.03;
+    this.courier.setPitchAt(noteVv, t, true);
+    if (retrigger) this.courier.gateAt(true, t);
+  }
+
+  /** Courier live-play NOTE OFF: drop the gate (mirrors monarchNoteOff). */
+  courierNoteOff(): void {
+    this.courier.gateAt(false, this.context.audioContext.currentTime + 0.03);
+  }
+
   anvilRun(): void {
     this.anvilSeq.start(this.context.audioContext.currentTime + 0.03);
   }
@@ -945,11 +966,17 @@ export class Studio {
     this.anvilSeq.steps = s.transport.anvil.steps.map((st) => ({ ...st }));
   }
 
-  /** Resolve a control-bearing module instance by id (the named voice fields). Mirrors the
-   *  old monarch/anvil/cascade ternary; called only after an ownsControlDefaults gate, so the
-   *  three control modules are the only inputs (sampler never reaches here). */
-  private controlModule(id: string): MonarchModule | AnvilModule | CascadeModule {
-    return id === 'monarch' ? this.monarch : id === 'anvil' ? this.anvil : this.cascade;
+  /** Resolve a control-bearing module instance by id (the named voice fields). Called only
+   *  after an ownsControlDefaults gate, so the four control modules (monarch/anvil/cascade/
+   *  courier) are the only inputs (sampler never reaches here). */
+  private controlModule(id: string): MonarchModule | AnvilModule | CascadeModule | CourierModule {
+    return id === 'monarch'
+      ? this.monarch
+      : id === 'anvil'
+        ? this.anvil
+        : id === 'courier'
+          ? this.courier
+          : this.cascade;
   }
 
   /** Apply a full state tree to the engine (setState path). */
@@ -981,6 +1008,7 @@ export class Studio {
     this.mixer.setLevel(1, state.mixer.channelLevels[1]);
     this.mixer.setLevel(2, state.mixer.channelLevels[2]);
     this.mixer.setLevel(3, state.mixer.channelLevels[3]);
+    this.mixer.setLevel(4, state.mixer.channelLevels[4]);
     this.context.setMasterVolume(state.mixer.masterVolume);
     // Sampler pad LEVEL/TUNE/LOOP + global QUANTIZE -> module (synchronous). Buffer
     // (de)coding is async and lives in the bridge (powerOn calls reloadPadBuffers

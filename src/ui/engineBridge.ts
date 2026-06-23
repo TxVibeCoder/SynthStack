@@ -214,6 +214,13 @@ class EngineBridge {
   private readonly voice = new MonoVoice();
   private readonly midi = new WebMidiInput();
   private keyboardOctave = 0;
+  /** Which voice the on-screen piano + Web MIDI play. Both feed the ONE shared mono stack
+   *  (this.voice); only the engine WRITE in applyVoiceAction is re-targeted, so the octave,
+   *  legato/last-note semantics and step-record arm are identical for either voice. RUNTIME
+   *  ONLY — never serialized (mirrors the MIDI-enabled flag; the persisted keyboard slice is
+   *  octave only). 'monarch' is the default so the existing keyboard voice plays unchanged
+   *  until the selector flips it to 'courier'. */
+  private keyboardTarget: 'monarch' | 'courier' = 'monarch';
   /** Set by the MonarchStepEditor while REC is armed: each keyboard/MIDI note ON writes the
    *  cursor step + advances it (step-record). null = not recording. Runtime-only. */
   private monarchRecordHandler: ((noteVv: number) => void) | null = null;
@@ -222,12 +229,13 @@ class EngineBridge {
   private previewSrc: AudioBufferSourceNode | null = null;
 
   // pending debounced store mirrors for mixer drags (engine writes are immediate)
-  private readonly pendingLevels: [number | null, number | null, number | null, number | null] = [
-    null,
-    null,
-    null,
-    null,
-  ];
+  private readonly pendingLevels: [
+    number | null,
+    number | null,
+    number | null,
+    number | null,
+    number | null,
+  ] = [null, null, null, null, null];
   private pendingMaster: number | null = null;
   private mirrorTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -530,9 +538,9 @@ class EngineBridge {
 
   /** Mixer channel level: immediate engine write; store mirror debounced (drag-safe). */
   setMixerLevel(channel: number, level01: number): void {
-    if (channel < 0 || channel > 3) return;
+    if (channel < 0 || channel > 4) return;
     if (this._powered) this.studio.setMixerLevel(channel, level01);
-    this.pendingLevels[channel as 0 | 1 | 2 | 3] = level01;
+    this.pendingLevels[channel as 0 | 1 | 2 | 3 | 4] = level01;
     this.scheduleStoreMirror();
   }
 
@@ -663,8 +671,12 @@ class EngineBridge {
     // Monarch step-record: while armed, the pressed note ALSO writes the cursor step and
     // advances it (hardware-style step record). Uses the RAW pressed note (not the mono
     // allocator's result) + the same octave the live voice plays, so what you hear is what
-    // gets written. Engine-independent (works powered or not — it's a store edit).
-    this.monarchRecordHandler?.(noteToVv(noteNumber) + this.keyboardOctave);
+    // gets written. Engine-independent (works powered or not — it's a store edit). Gated on
+    // the Monarch target: with Courier selected the keyboard plays Courier, so a note must
+    // NOT bleed into the Monarch step grid.
+    if (this.keyboardTarget === 'monarch') {
+      this.monarchRecordHandler?.(noteToVv(noteNumber) + this.keyboardOctave);
+    }
   }
 
   /** Note OFF from the keyboard / MIDI. Drives the mono allocator -> applyVoiceAction. */
@@ -689,6 +701,25 @@ class EngineBridge {
   /** Current keyboard octave (KeyboardPanel snapshot source). Coalesce-safe before power-on. */
   getKeyboardOctave(): number {
     return coalesceKeyboardState(this.store.getState().keyboard).octave;
+  }
+
+  /**
+   * Select which voice the on-screen piano + Web MIDI play ('monarch' = the original
+   * keyboard voice, unchanged; 'courier' = the Courier voice). Drops any currently-held
+   * note FIRST so flipping the target mid-hold can never strand the old voice's gate high
+   * (the shared mono stack is cleared, exactly like the panic/blur path). RUNTIME ONLY —
+   * not serialized, so a reload returns to the 'monarch' default. Safe unpowered (the
+   * release is a no-op engine write; only the field flips).
+   */
+  setKeyboardTarget(target: 'monarch' | 'courier'): void {
+    if (target === this.keyboardTarget) return;
+    this.releaseAllNotes(); // gate-off the OLD target before retargeting (no stranded gate)
+    this.keyboardTarget = target;
+  }
+
+  /** Current keyboard target (selector snapshot source). */
+  getKeyboardTarget(): 'monarch' | 'courier' {
+    return this.keyboardTarget;
   }
 
   /**
@@ -747,20 +778,24 @@ class EngineBridge {
   }
 
   /**
-   * Apply one allocator VoiceAction to the Monarch voice. The allocator has ALREADY run (the
-   * held-note stack is correct regardless of power), so this only performs the engine WRITE,
-   * and only when powered. Octave is applied HERE — the ONLY place — as +keyboardOctave on
-   * the vv AFTER noteToVv((note-60)/12), so the panel's raw notes never double-shift.
-   *   gate 'on'        -> studio.monarchNoteOn(noteToVv(note)+octave, retrigger)
-   *   gate 'off'       -> studio.monarchNoteOff()
+   * Apply one allocator VoiceAction to the SELECTED voice (keyboardTarget). The allocator has
+   * ALREADY run (the held-note stack is correct regardless of power), so this only performs the
+   * engine WRITE, and only when powered. Octave is applied HERE — the ONLY place — as
+   * +keyboardOctave on the vv AFTER noteToVv((note-60)/12), so the panel's raw notes never
+   * double-shift. The two targets are byte-for-byte parallel (same vv, same retrigger):
+   *   gate 'on'        -> {monarch,courier}NoteOn(noteToVv(note)+octave, retrigger)
+   *   gate 'off'       -> {monarch,courier}NoteOff()
    *   gate 'unchanged' -> nothing (a held lower note released; the voice did not change)
    */
   private applyVoiceAction(a: VoiceAction): void {
     if (!this._powered) return;
     if (a.gate === 'on' && a.note != null) {
-      this.studio.monarchNoteOn(noteToVv(a.note) + this.keyboardOctave, a.retrigger);
+      const vv = noteToVv(a.note) + this.keyboardOctave;
+      if (this.keyboardTarget === 'courier') this.studio.courierNoteOn(vv, a.retrigger);
+      else this.studio.monarchNoteOn(vv, a.retrigger);
     } else if (a.gate === 'off') {
-      this.studio.monarchNoteOff();
+      if (this.keyboardTarget === 'courier') this.studio.courierNoteOff();
+      else this.studio.monarchNoteOff();
     }
     // a.gate === 'unchanged': no engine write
   }
@@ -1573,7 +1608,7 @@ class EngineBridge {
     this.mirrorTimer = setTimeout(() => {
       this.mirrorTimer = null;
       const s = this.store.getState();
-      for (let i = 0 as 0 | 1 | 2 | 3; i < 4; i = (i + 1) as 0 | 1 | 2 | 3) {
+      for (let i = 0 as 0 | 1 | 2 | 3 | 4; i < 5; i = (i + 1) as 0 | 1 | 2 | 3 | 4) {
         const v = this.pendingLevels[i];
         if (v !== null) s.mixer.channelLevels[i] = v;
         this.pendingLevels[i] = null;

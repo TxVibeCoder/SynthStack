@@ -47,7 +47,7 @@ describe('coalesceStudioState — load-safety net totality', () => {
       expect(s.transport.anvil.steps).toHaveLength(8);
       expect(s.sampler.pads).toHaveLength(8);
       expect(s.sampler.pattern).toHaveLength(DRUM_TRACKS);
-      expect(s.mixer.channelLevels).toHaveLength(4);
+      expect(s.mixer.channelLevels).toHaveLength(5);
       // JSON round-trips cleanly
       expect(JSON.parse(JSON.stringify(s))).toEqual(s);
     }
@@ -67,7 +67,7 @@ describe('coalesceStudioState — load-safety net totality', () => {
     const s = coalesceStudioState(corrupt as unknown);
     expect(s.version).toBe(1);
     expect(s.power).toBe(false);
-    expect(s.mixer.channelLevels).toEqual([0.8, 2 > 1 ? 1 : 2, 0.5, 0.8]); // 2 clamps to 1, 'a' -> 0.8, missing -> 0.8
+    expect(s.mixer.channelLevels).toEqual([0.8, 2 > 1 ? 1 : 2, 0.5, 0.8, 0.8]); // 2 clamps to 1, 'a' -> 0.8, missing (ch4 sampler + ch5 Courier) -> 0.8
     expect(s.mixer.masterVolume).toBe(0.8);
     expect(s.mixer.tempoLink).toBe(false);
     expect(s.keyboard.octave).toBe(0);
@@ -205,11 +205,11 @@ describe('coalesceStudioState — load-safety net totality', () => {
     expect(s.transport.anvil.steps[1]).toEqual({ pitchVv: 0, velocityVv: 4 }); // defaults
   });
 
-  it('clamps the 4 mixer channel levels and master volume to 0..1', () => {
+  it('clamps the 5 mixer channel levels and master volume to 0..1', () => {
     const s = coalesceStudioState({
       mixer: { channelLevels: [2, -1, 0.5], masterVolume: 9, tempoLink: true },
     });
-    expect(s.mixer.channelLevels).toEqual([1, 0, 0.5, 0.8]);
+    expect(s.mixer.channelLevels).toEqual([1, 0, 0.5, 0.8, 0.8]); // ch4 sampler + ch5 Courier default to 0.8
     expect(s.mixer.masterVolume).toBe(1);
     expect(s.mixer.tempoLink).toBe(true);
   });

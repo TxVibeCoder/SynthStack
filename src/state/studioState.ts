@@ -110,9 +110,9 @@ export interface MasterEffectsState {
   delay: DelayState;
   reverb: ReverbState;
 }
-/** The three voices that carry their own insert-FX chain (same 3-effect shape as the master). */
-export type VoiceFxId = 'cascade' | 'anvil' | 'monarch';
-export const VOICE_FX_IDS: VoiceFxId[] = ['cascade', 'anvil', 'monarch'];
+/** The voices that carry their own insert-FX chain (same 3-effect shape as the master). */
+export type VoiceFxId = 'cascade' | 'anvil' | 'monarch' | 'courier';
+export const VOICE_FX_IDS: VoiceFxId[] = ['cascade', 'anvil', 'monarch', 'courier'];
 export interface EffectsState {
   master: MasterEffectsState;
   /** Per-voice insert FX (flanger→delay→reverb on each voice→mixer edge). The voice's
@@ -128,7 +128,7 @@ export interface StudioState {
   cables: CableState[];
   transport: TransportState;
   mixer: {
-    channelLevels: [number, number, number, number];
+    channelLevels: [number, number, number, number, number];
     masterVolume: number;
     tempoLink: boolean;
   };
@@ -253,6 +253,7 @@ export function defaultEffectsState(): EffectsState {
       cascade: defaultFxChainState(),
       anvil: defaultFxChainState(),
       monarch: defaultFxChainState(),
+      courier: defaultFxChainState(),
     },
   };
 }
@@ -304,6 +305,7 @@ export function coalesceEffectsState(raw: Partial<EffectsState> | undefined): Ef
       cascade: coalesceFxChain(raw?.voices?.cascade, d),
       anvil: coalesceFxChain(raw?.voices?.anvil, d),
       monarch: coalesceFxChain(raw?.voices?.monarch, d),
+      courier: coalesceFxChain(raw?.voices?.courier, d),
     },
   };
 }
@@ -312,7 +314,7 @@ export function defaultStudioState(): StudioState {
   return {
     version: 1,
     power: false,
-    controls: { monarch: {}, anvil: {}, cascade: {}, sampler: {} },
+    controls: { monarch: {}, anvil: {}, cascade: {}, sampler: {}, courier: {} },
     cables: [],
     transport: {
       monarch: {
@@ -327,7 +329,7 @@ export function defaultStudioState(): StudioState {
       },
       cascade: { playing: false },
     },
-    mixer: { channelLevels: [0.8, 0.8, 0.8, 0.8], masterVolume: 0.8, tempoLink: false },
+    mixer: { channelLevels: [0.8, 0.8, 0.8, 0.8, 0.8], masterVolume: 0.8, tempoLink: false },
     sampler: defaultSamplerState(),
     keyboard: defaultKeyboardState(),
     effects: defaultEffectsState(),

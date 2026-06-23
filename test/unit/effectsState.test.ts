@@ -83,7 +83,7 @@ describe('effects state', () => {
 
   it('defaults a per-voice insert chain for each voice, all off', () => {
     const e = defaultEffectsState();
-    for (const v of ['cascade', 'anvil', 'monarch'] as const) {
+    for (const v of ['cascade', 'anvil', 'monarch', 'courier'] as const) {
       expect(e.voices[v].flanger.on, v).toBe(false);
       expect(e.voices[v].delay.on, v).toBe(false);
       expect(e.voices[v].reverb.on, v).toBe(false);
@@ -101,6 +101,7 @@ describe('effects state', () => {
     expect(out.voices.cascade.flanger.on).toBe(false); // missing effect -> default
     expect(out.voices.anvil).toEqual(defaultEffectsState().voices.anvil); // absent voice -> all-off
     expect(out.voices.monarch).toEqual(defaultEffectsState().voices.monarch);
+    expect(out.voices.courier).toEqual(defaultEffectsState().voices.courier);
   });
 
   it('a per-voice slice round-trips through the full load-safety net', () => {

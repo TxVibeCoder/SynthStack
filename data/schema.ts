@@ -38,7 +38,7 @@ export interface JackDef {
 }
 
 export interface ModuleDef {
-  id: 'monarch' | 'anvil' | 'cascade' | 'sampler';
+  id: 'monarch' | 'anvil' | 'cascade' | 'sampler' | 'courier';
   displayName: string;
   /** Internal (non-jack) signal sources that normals may reference via 'INTERNAL:<id>'. */
   internalSources: string[];
@@ -57,7 +57,7 @@ export function validateModuleDef(def: ModuleDef): string[] {
   const errors: string[] = [];
   const err = (msg: string) => errors.push(`[${def.id}] ${msg}`);
 
-  if (!['monarch', 'anvil', 'cascade', 'sampler'].includes(def.id)) err(`bad module id`);
+  if (!['monarch', 'anvil', 'cascade', 'sampler', 'courier'].includes(def.id)) err(`bad module id`);
   if (!def.displayName) err('missing displayName');
 
   // --- controls ---

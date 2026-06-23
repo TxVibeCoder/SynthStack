@@ -76,7 +76,9 @@ describe('studio state round-trip (work order §3.6)', () => {
 
   it('default state pre-loads the 8-piece factory kit and keeps an open spare mixer channel', () => {
     const s = defaultStudioState();
+    expect(s.mixer.channelLevels).toHaveLength(5);
     expect(s.mixer.channelLevels[3]).toBe(0.8); // SAMP_MIX_OUT audible un-patched
+    expect(s.mixer.channelLevels[4]).toBe(0.8); // Courier (MIX_CH5_LEVEL) default
     expect(s.sampler.pads).toHaveLength(8);
     expect(s.sampler.pads[0]).toEqual({
       sampleId: 'factory-kick',

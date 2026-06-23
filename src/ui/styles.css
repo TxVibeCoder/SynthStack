@@ -30,6 +30,7 @@
   --color-group-anvil: #4caf5f;
   --color-group-monarch: #4f8fd9;
   --color-group-mixer: #9d6fd6;
+  --color-group-courier: #d97a3c;
   --font-stack: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
   --font-condensed: 'Arial Narrow', 'Roboto Condensed', 'Helvetica Neue', 'Segoe UI', Arial,
     sans-serif;
@@ -219,6 +220,9 @@ body {
 .tab-bar__tab--monarch {
   box-shadow: inset 0 3px 0 var(--color-group-monarch);
 }
+.tab-bar__tab--courier {
+  box-shadow: inset 0 3px 0 var(--color-group-courier);
+}
 .tab-bar__tab--active.tab-bar__tab--cascade {
   background: var(--color-group-cascade);
   border-color: var(--color-group-cascade);
@@ -230,6 +234,10 @@ body {
 .tab-bar__tab--active.tab-bar__tab--monarch {
   background: var(--color-group-monarch);
   border-color: var(--color-group-monarch);
+}
+.tab-bar__tab--active.tab-bar__tab--courier {
+  background: var(--color-group-courier);
+  border-color: var(--color-group-courier);
 }
 
 /* The global focus ring (amber on gold) is ~1.19:1 on the active tab — effectively

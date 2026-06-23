@@ -145,7 +145,45 @@ describe('ladder.worklet core — Huovilainen (work order §7.3)', () => {
     }
   });
 
-  it('HP mode passes highs, attenuates lows', () => {
+  it('LP2 mode: ≈ 12 dB/octave rolloff above cutoff (2-pole tap)', () => {
+    const core = new LadderCore(FS);
+    core.mode = 'LP2';
+    core.setCutoffHz(500);
+    core.setResonance01(0);
+    const out = processAll(core, whiteNoise(12, 42, 1.0));
+    const spec = fftMagAveraged(out.subarray(FS), FS, 16384, 4096);
+    const oct1 = db(magAtHz(spec, 2000, 2) / magAtHz(spec, 1000, 2));
+    const oct2 = db(magAtHz(spec, 4000, 2) / magAtHz(spec, 2000, 2));
+    for (const slope of [oct1, oct2]) {
+      expect(slope).toBeLessThan(-6); // 12 dB/oct ± 6
+      expect(slope).toBeGreaterThan(-18);
+    }
+    // and it is clearly shallower than the LP4 path on the same signal
+    const lp4 = new LadderCore(FS);
+    lp4.setCutoffHz(500);
+    lp4.setResonance01(0);
+    const out4 = processAll(lp4, whiteNoise(12, 42, 1.0));
+    const spec4 = fftMagAveraged(out4.subarray(FS), FS, 16384, 4096);
+    const lp4Oct = db(magAtHz(spec4, 4000, 2) / magAtHz(spec4, 2000, 2));
+    expect(lp4Oct).toBeLessThan(oct2 - 6); // LP4 falls off at least ~one octave's worth faster
+  });
+
+  it('BP mode: attenuates both bands, peaks near cutoff', () => {
+    const core = new LadderCore(FS);
+    core.mode = 'BP';
+    const fc = 2000;
+    core.setCutoffHz(fc);
+    core.setResonance01(0.4); // a little resonance sharpens the band
+    const out = processAll(core, whiteNoise(6, 23));
+    const spec = fftMagAveraged(out.subarray(FS), FS, 8192);
+    const center = magAtHz(spec, fc, 3);
+    const lowOct = magAtHz(spec, fc / 4, 3); // two octaves below
+    const highOct = magAtHz(spec, fc * 4, 3); // two octaves above
+    expect(db(lowOct / center)).toBeLessThan(-6); // low side rejected
+    expect(db(highOct / center)).toBeLessThan(-6); // high side rejected
+  });
+
+  it('HP mode passes highs, attenuates lows (LP4/HP backward-compat unchanged)', () => {
     const core = new LadderCore(FS);
     core.mode = 'HP';
     core.setCutoffHz(2000);
@@ -153,6 +191,24 @@ describe('ladder.worklet core — Huovilainen (work order §7.3)', () => {
     const out = processAll(core, whiteNoise(4, 11));
     const spec = fftMagAveraged(out.subarray(FS), FS, 8192);
     expect(db(magAtHz(spec, 100, 4) / magAtHz(spec, 8000, 4))).toBeLessThan(-30);
+  });
+
+  it('RES BASS: preserves low-end energy under resonance vs. off (no NaN)', () => {
+    const lowEnergy = (resBass: boolean): number => {
+      const core = new LadderCore(FS);
+      core.mode = 'LP'; // LP4 with high resonance thins the bass
+      core.resBass = resBass;
+      core.setCutoffHz(800);
+      core.setResonance01(0.85);
+      const out = processAll(core, whiteNoise(4, 31));
+      for (const v of out) expect(Number.isFinite(v)).toBe(true);
+      const spec = fftMagAveraged(out.subarray(FS), FS, 8192);
+      // sub-bass band, well below the 800 Hz corner
+      return magAtHz(spec, 80, 4) + magAtHz(spec, 120, 4) + magAtHz(spec, 160, 4);
+    };
+    const off = lowEnergy(false);
+    const on = lowEnergy(true);
+    expect(on).toBeGreaterThan(off * 1.2); // RES BASS measurably re-adds low end
   });
 
   it('saturation: drive increases odd-harmonic distortion (analog-ism #2)', () => {

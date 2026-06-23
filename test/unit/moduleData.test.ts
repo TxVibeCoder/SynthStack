@@ -4,12 +4,14 @@ import monarch from '../../data/monarch.json';
 import anvil from '../../data/anvil.json';
 import cascade from '../../data/cascade.json';
 import sampler from '../../data/sampler.json';
+import courier from '../../data/courier.json';
 
 const modules = [
   { def: monarch as unknown as ModuleDef, inputs: 18, outputs: 14 },
   { def: anvil as unknown as ModuleDef, inputs: 15, outputs: 9 },
   { def: cascade as unknown as ModuleDef, inputs: 17, outputs: 15 },
   { def: sampler as unknown as ModuleDef, inputs: 8, outputs: 9 },
+  { def: courier as unknown as ModuleDef, inputs: 4, outputs: 5 },
 ];
 
 describe('module data (work order §5, Appendices A–C)', () => {

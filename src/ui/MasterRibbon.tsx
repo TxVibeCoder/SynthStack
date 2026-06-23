@@ -421,16 +421,16 @@ export const MasterRibbon = memo(function MasterRibbon({
 
         {/* MIXER CHANNEL FADERS — relocated from the in-stage mixer Region (which App no
          * longer mounts) onto the ribbon. The row carries data-testid="tier-mixer" so the
-         * existing mixer e2e finds the faders here. Origin places the 4 knobs (Cascade /
-         * Anvil / Monarch / AUX) left of the MASTER divider, dials at y≈42 with labels
-         * below inside the 90-tall ribbon box. */}
+         * existing mixer e2e finds the faders here. Origin places the 5 knobs (Cascade /
+         * Anvil / Monarch / Sampler / Courier) left of the MASTER divider, dials at y≈42 with
+         * labels below inside the 90-tall ribbon box. */}
         <ChannelFaders x={1300} y={-22} />
 
-        {/* divider before MASTER */}
-        <line x1={1640} x2={1640} y1={14} y2={76} stroke={COLORS.panelEdge} strokeWidth={1} />
+        {/* divider before MASTER (right of the 5th Courier fader at ~1668) */}
+        <line x1={1700} x2={1700} y1={14} y2={76} stroke={COLORS.panelEdge} strokeWidth={1} />
 
         {/* MASTER volume knob — relocated from the mixer panel; self-wired. */}
-        <MasterKnob x={1720} y={45} size="l" />
+        <MasterKnob x={1770} y={45} size="l" />
       </svg>
     </div>
   );

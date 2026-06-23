@@ -375,6 +375,8 @@ interface BridgePrivates {
   studioInstance: {
     monarchNoteOn(noteVv: number, retrigger: boolean): void;
     monarchNoteOff(): void;
+    courierNoteOn(noteVv: number, retrigger: boolean): void;
+    courierNoteOff(): void;
   } | null;
 }
 
@@ -556,5 +558,119 @@ describe('engineBridge keyboard mono semantics (engine writes spied; AudioContex
     monarchNoteOn.mockClear();
     engineBridge.noteOn(67, 100); // empty stack -> fresh attack
     expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(67), true);
+  });
+});
+
+describe('engineBridge keyboard target select (Courier vs Monarch; engine writes spied)', () => {
+  // Spy BOTH voices' Studio passthroughs (mockImplementation replaces the body, so no
+  // AudioContext is touched) and prove a note reaches exactly one. The vv + retrigger args are
+  // observable identically for either target — only applyVoiceAction's dispatch differs.
+  const priv = engineBridge as unknown as BridgePrivates;
+  let monarchNoteOn: ReturnType<typeof vi.fn>;
+  let monarchNoteOff: ReturnType<typeof vi.fn>;
+  let courierNoteOn: ReturnType<typeof vi.fn>;
+  let courierNoteOff: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    void engineBridge.store;
+    const studio = priv.studioInstance!;
+    monarchNoteOn = vi.fn();
+    monarchNoteOff = vi.fn();
+    courierNoteOn = vi.fn();
+    courierNoteOff = vi.fn();
+    vi.spyOn(studio, 'monarchNoteOn').mockImplementation(monarchNoteOn);
+    vi.spyOn(studio, 'monarchNoteOff').mockImplementation(monarchNoteOff);
+    vi.spyOn(studio, 'courierNoteOn').mockImplementation(courierNoteOn);
+    vi.spyOn(studio, 'courierNoteOff').mockImplementation(courierNoteOff);
+    engineBridge.releaseAllNotes();
+    engineBridge.setKeyboardOctave(0);
+    engineBridge.setKeyboardTarget('monarch');
+    monarchNoteOn.mockClear();
+    monarchNoteOff.mockClear();
+    courierNoteOn.mockClear();
+    courierNoteOff.mockClear();
+    priv._powered = true;
+  });
+
+  afterEach(() => {
+    engineBridge.releaseAllNotes();
+    priv._powered = false;
+    vi.restoreAllMocks();
+    engineBridge.setKeyboardTarget('monarch');
+    engineBridge.setKeyboardOctave(0);
+  });
+
+  it('defaults to monarch: the original keyboard voice is unchanged', () => {
+    expect(engineBridge.getKeyboardTarget()).toBe('monarch');
+    engineBridge.noteOn(60, 100);
+    expect(monarchNoteOn).toHaveBeenCalledTimes(1);
+    expect(courierNoteOn).not.toHaveBeenCalled();
+  });
+
+  it('with Courier selected, a fresh note routes to courierNoteOn(vv, true), NOT Monarch', () => {
+    engineBridge.setKeyboardTarget('courier');
+    monarchNoteOff.mockClear(); // the flip released a (empty) stack — ignore any gate-off here
+    engineBridge.noteOn(72, 100); // noteToVv(72) = +1
+    expect(courierNoteOn).toHaveBeenCalledTimes(1);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true); // fresh attack retriggers
+    expect(monarchNoteOn).not.toHaveBeenCalled();
+    expect(monarchNoteOff).not.toHaveBeenCalled();
+  });
+
+  it('Courier noteOff routes to courierNoteOff, and Monarch is untouched', () => {
+    engineBridge.setKeyboardTarget('courier');
+    engineBridge.noteOn(60, 100);
+    courierNoteOff.mockClear();
+    monarchNoteOff.mockClear();
+    engineBridge.noteOff(60);
+    expect(courierNoteOff).toHaveBeenCalledTimes(1);
+    expect(monarchNoteOff).not.toHaveBeenCalled();
+  });
+
+  it('Courier legato: second note is retrigger=false (pitch follows the new top)', () => {
+    engineBridge.setKeyboardTarget('courier');
+    engineBridge.noteOn(60, 100); // fresh attack, retrigger=true
+    courierNoteOn.mockClear();
+    engineBridge.noteOn(64, 100); // legato
+    expect(courierNoteOn).toHaveBeenCalledTimes(1);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(64), false);
+    expect(courierNoteOff).not.toHaveBeenCalled();
+  });
+
+  it('octave applies once on the Courier path too (no double-shift)', () => {
+    engineBridge.setKeyboardTarget('courier');
+    engineBridge.setKeyboardOctave(1);
+    engineBridge.noteOn(60, 100); // noteToVv(60)=0, +1 octave -> vv 1
+    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true);
+  });
+
+  it('flipping target mid-hold gates OFF the old voice (no stranded gate)', () => {
+    engineBridge.noteOn(60, 100); // held on Monarch
+    expect(monarchNoteOn).toHaveBeenCalledTimes(1);
+    monarchNoteOff.mockClear();
+    engineBridge.setKeyboardTarget('courier'); // releaseAllNotes() fires the Monarch gate-off
+    expect(monarchNoteOff).toHaveBeenCalledTimes(1);
+    // The next press now plays Courier with a clean (retriggered) attack.
+    engineBridge.noteOn(67, 100);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(67), true);
+  });
+
+  it('setKeyboardTarget is idempotent (same target does not release a held note)', () => {
+    engineBridge.noteOn(60, 100);
+    monarchNoteOff.mockClear();
+    engineBridge.setKeyboardTarget('monarch'); // no change -> no release
+    expect(monarchNoteOff).not.toHaveBeenCalled();
+  });
+
+  it('step-record is gated on the Monarch target (no bleed into the Monarch grid from Courier)', () => {
+    const recorded: number[] = [];
+    engineBridge.setMonarchRecordHandler((vv) => recorded.push(vv));
+    engineBridge.setKeyboardTarget('courier');
+    engineBridge.noteOn(60, 100); // plays Courier; must NOT write a Monarch step
+    expect(recorded).toEqual([]);
+    engineBridge.setKeyboardTarget('monarch');
+    engineBridge.noteOn(62, 100); // now Monarch -> records
+    expect(recorded).toEqual([noteToVv(62)]);
+    engineBridge.setMonarchRecordHandler(null);
   });
 });

@@ -76,6 +76,7 @@ import { REGIONS, STAGE, type RegionBox } from './stage16x9';
 import { MonarchPanel } from './panels/MonarchPanel';
 import { AnvilPanel } from './panels/AnvilPanel';
 import { CascadePanel } from './panels/CascadePanel';
+import { CourierPanel } from './panels/CourierPanel';
 import { JackFieldPanel } from './panels/JackFieldPanel';
 import { MonarchStepEditor } from './sequencer/MonarchStepEditor';
 import { CableLayer } from './cables/CableLayer';
@@ -86,6 +87,7 @@ import { SAMPLER_REGION, DRUM_REGION } from './panels/samplerLayout';
 import { KeyboardPanel } from './keyboard/KeyboardPanel';
 import { KB_W, KB_H } from './keyboard/keyboardLayout';
 import { cascadeLayout } from './panels/cascadeLayout';
+import { courierLayout } from './panels/courierLayout';
 import { anvilLayout } from './panels/anvilLayout';
 import { monarchLayout } from './panels/monarchLayout';
 import { FIELD_H } from './panels/jackFieldLayout';
@@ -174,6 +176,7 @@ function union(...bs: RegionBox[]): RegionBox {
  * tabs carry no cables, so a narrower-than-STAGE bbox is safe (same as before).
  */
 const CASCADE_BOX: RegionBox = { x: 0, y: 0, w: cascadeLayout.width, h: cascadeLayout.height };
+const COURIER_BOX: RegionBox = { x: 0, y: 0, w: courierLayout.width, h: courierLayout.height };
 const ANVIL_BOX: RegionBox = { x: 0, y: 0, w: anvilLayout.width, h: anvilLayout.height };
 /** FX tab — its own landscape canvas (UI-only master effects), decoupled like the voices. */
 const FX_BOX: RegionBox = { x: 0, y: 0, w: FX_W, h: FX_H };
@@ -226,6 +229,8 @@ const BBOX: Record<ModuleTabId, RegionBox> = {
   cascade: CASCADE_BOX,
   anvil: ANVIL_BOX,
   monarch: union(MON_CONTROLS_BOX, MON_SEQ_BOX, MON_KB_BOX),
+  // Courier fill-zooms to its OWN landscape canvas (the densest voice control field).
+  courier: COURIER_BOX,
   patchbay: union(JACKFIELD_BOX, SAMPLER_PATCH_BOX),
   sampler: union(SAMPLER_REGION, DRUM_REGION),
   fx: FX_BOX,
@@ -293,6 +298,7 @@ export function App() {
   const isCascade = tab === 'cascade';
   const isAnvil = tab === 'anvil';
   const isMonarch = tab === 'monarch';
+  const isCourier = tab === 'courier';
   const isPatchbay = tab === 'patchbay';
   const isSampler = tab === 'sampler';
   const isFx = tab === 'fx';
@@ -376,6 +382,15 @@ export function App() {
                   <KeyboardPanel />
                 </Region>
               </>
+            )}
+
+            {/* ===== COURIER TAB: the Courier voice controls only (landscape canvas).
+             * The densest voice; its 64-step param-lock seq/arp is deferred, so the panel
+             * is controls-only (no seq strip / keyboard here). ===== */}
+            {isCourier && (
+              <Region box={COURIER_BOX} testId="tier-courier" dimmed={dim}>
+                <CourierPanel />
+              </Region>
             )}
 
             {/* The old in-stage utility strip Region (REGIONS.utilityStrip) and the in-

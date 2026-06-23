@@ -21,11 +21,13 @@ import monarchDef from '../../../data/monarch.json';
 import anvilDef from '../../../data/anvil.json';
 import cascadeDef from '../../../data/cascade.json';
 import samplerDef from '../../../data/sampler.json';
+import courierDef from '../../../data/courier.json';
 import { ModuleBase } from './moduleBase';
 import { MonarchModule } from './monarch';
 import { AnvilModule } from './anvil';
 import { CascadeModule } from './cascade';
 import { SamplerModule } from './sampler';
+import { CourierModule } from './courier';
 
 /** Which UI tab a module's panels live under. Each of the 3 voices now has its OWN tab
  *  ('cascade' / 'anvil' / 'monarch') — there is no longer a shared 'studio' tab; the
@@ -40,7 +42,14 @@ import { SamplerModule } from './sampler';
  *  'fx' is likewise a UI-ONLY tab (Wave 2 master effects) with no module — the EffectsPanel
  *  writes the store's `effects` slice directly through the bridge. (The Patchbook guide is NOT
  *  a tab — the ribbon's GUIDE link opens it in its own window; see MasterRibbon.tsx.) */
-export type ModuleTabId = 'cascade' | 'anvil' | 'monarch' | 'patchbay' | 'sampler' | 'fx';
+export type ModuleTabId =
+  | 'cascade'
+  | 'anvil'
+  | 'monarch'
+  | 'courier'
+  | 'patchbay'
+  | 'sampler'
+  | 'fx';
 
 /**
  * Everything the build, persistence, validation and (future) teardown paths need to
@@ -76,7 +85,7 @@ export interface ModuleConfig {
 
 /**
  * THE registry — ordered exactly as studio.ts builds the modules (monarch, anvil,
- * cascade, sampler). Order is load-bearing for the `defs` array and the resetAll /
+ * cascade, sampler, courier). Order is load-bearing for the `defs` array and the resetAll /
  * coalesce seed order (the completeness test pins it).
  */
 export const MODULES: ModuleConfig[] = [
@@ -124,9 +133,20 @@ export const MODULES: ModuleConfig[] = [
     ownsControlDefaults: false, // pad params live in state.sampler, not state.controls
     hasTransport: true,
   },
+  {
+    id: 'courier',
+    displayName: (courierDef as unknown as ModuleDef).displayName, // 'Courier'
+    def: courierDef as unknown as ModuleDef,
+    tabId: 'courier',
+    factory: (ctx, def) => new CourierModule(ctx, def),
+    mainOutJack: 'COU_AUDIO_OUT', // main out (post-VOLUME) -> mixer ch5
+    mixerChannel: 4, // mixer.connectInput(courier.outputTap('COU_AUDIO_OUT'), 4)
+    ownsControlDefaults: true,
+    hasTransport: false, // Phase A: sequencer/arp deferred — no transport yet
+  },
 ];
 
-/** Module ids in registry/build order: ['monarch','anvil','cascade','sampler']. */
+/** Module ids in registry/build order: ['monarch','anvil','cascade','sampler','courier']. */
 export const MODULE_IDS: string[] = MODULES.map((m) => m.id);
 
 /** The control-bearing modules whose JSON defaults coalesce/resetAll seed and whose

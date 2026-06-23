@@ -195,14 +195,14 @@ export function coalesceStudioState(raw: unknown): StudioState {
 
   base.transport.cascade.playing = false;
 
-  // 8. mixer — exactly 4 channel levels clamp 0..1; master 0..1; tempoLink boolean.
+  // 8. mixer — exactly 5 channel levels clamp 0..1; master 0..1; tempoLink boolean.
   const mixerRaw = isObject(raw.mixer) ? raw.mixer : {};
   const levelsRaw = Array.isArray(mixerRaw.channelLevels) ? mixerRaw.channelLevels : [];
-  const levels = Array.from({ length: 4 }, (_, i) => {
+  const levels = Array.from({ length: 5 }, (_, i) => {
     const v = levelsRaw[i];
     return typeof v === 'number' && Number.isFinite(v) ? clampNumber(v, 0, 1) : 0.8;
   });
-  base.mixer.channelLevels = [levels[0]!, levels[1]!, levels[2]!, levels[3]!];
+  base.mixer.channelLevels = [levels[0]!, levels[1]!, levels[2]!, levels[3]!, levels[4]!];
   base.mixer.masterVolume =
     typeof mixerRaw.masterVolume === 'number' && Number.isFinite(mixerRaw.masterVolume)
       ? clampNumber(mixerRaw.masterVolume, 0, 1)

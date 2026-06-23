@@ -31,7 +31,7 @@ const KNOB_Y = 64;
 /** MASTER knob x in the mixer-panel layout (right of the channel/master divider). */
 const MASTER_X_DEFAULT = 424;
 
-type MixChannel = 0 | 1 | 2 | 3;
+type MixChannel = 0 | 1 | 2 | 3 | 4;
 
 // ---- synthesized ControlDefs (the mixer has no data/*.json module) ---------------------
 // min/max/default mirror state/studioState.ts defaultStudioState().mixer so
@@ -57,6 +57,11 @@ const CHANNEL_SPECS: ReadonlyArray<{ channel: MixChannel; def: ControlDef; x: nu
     channel: 3,
     x: 288,
     def: { id: 'MIX_CH4_LEVEL', panelLabel: 'Sampler', type: 'knob', min: 0, max: 1, default: 0 },
+  },
+  {
+    channel: 4,
+    x: 368,
+    def: { id: 'MIX_CH5_LEVEL', panelLabel: 'Courier', type: 'knob', min: 0, max: 1, default: 0.8 },
   },
 ];
 

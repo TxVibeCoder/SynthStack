@@ -1,0 +1,79 @@
+{
+  "id": "courier",
+  "displayName": "Courier",
+  "internalSources": ["COU_NOISE"],
+  "controls": [
+    { "id": "COU_LFO1_RATE", "panelLabel": "LFO 1 RATE", "type": "knob", "min": 0.05, "max": 12, "default": 2, "taper": "exp", "unit": "Hz", "manualRef": "Courier p.12" },
+    { "id": "COU_LFO1_WAVE", "panelLabel": "LFO 1 WAVE", "type": "switch", "positions": ["TRI", "SAW", "RAMP", "SQ"], "default": "TRI", "manualRef": "Courier p.12" },
+    { "id": "COU_LFO1_DEPTH", "panelLabel": "LFO 1 DEPTH", "type": "knob", "min": -1, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.12", "notes": "bipolar; center = none" },
+    { "id": "COU_LFO1_DEST", "panelLabel": "LFO 1 DEST", "type": "switch", "positions": ["CUTOFF", "OSC2_FREQ", "OSC1_WAVE", "SUB_WAVE"], "default": "CUTOFF", "manualRef": "Courier p.12" },
+    { "id": "COU_LFO1_SYNC", "panelLabel": "LFO 1 SYNC", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Courier p.12", "notes": "syncs LFO 1 rate to clock" },
+    { "id": "COU_LFO1_KB_RESET", "panelLabel": "LFO 1 KB RESET", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Courier p.12", "notes": "retrigger LFO 1 phase on each key press" },
+
+    { "id": "COU_OSC1_OCTAVE", "panelLabel": "OSC 1 OCTAVE", "type": "switch", "positions": ["16", "8", "4", "2"], "default": "8", "manualRef": "Courier p.13", "notes": "foot setting in feet (16'/8'/4'/2')" },
+    { "id": "COU_TUNE", "panelLabel": "TUNE", "type": "knob", "min": -7, "max": 7, "default": 0, "taper": "lin", "unit": "st", "manualRef": "Courier p.13", "notes": "bipolar master tune in semitones" },
+    { "id": "COU_SUB_WAVE", "panelLabel": "SUB WAVE", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.13", "notes": "continuous sub-oscillator waveshape morph" },
+    { "id": "COU_OSC1_WAVESHAPE", "panelLabel": "OSC 1 WAVESHAPE", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.13", "notes": "continuous wavefold/waveshape morph for OSC 1" },
+    { "id": "COU_OSC2_OCTAVE", "panelLabel": "OSC 2 OCTAVE", "type": "switch", "positions": ["16", "8", "4", "2"], "default": "8", "manualRef": "Courier p.14" },
+    { "id": "COU_OSC2_FREQ", "panelLabel": "OSC 2 FREQ", "type": "knob", "min": -7, "max": 7, "default": 0, "taper": "lin", "unit": "st", "manualRef": "Courier p.14", "notes": "bipolar OSC 2 detune in semitones" },
+    { "id": "COU_OSC2_WAVESHAPE", "panelLabel": "OSC 2 WAVESHAPE", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.14", "notes": "continuous wavefold/waveshape morph for OSC 2" },
+    { "id": "COU_SYNC", "panelLabel": "SYNC", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Courier p.14", "notes": "OSC 2 hard-synced to OSC 1" },
+    { "id": "COU_MOD_AMOUNT", "panelLabel": "MOD AMOUNT", "type": "knob", "min": -1, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.14", "notes": "bipolar; depth of MOD DEST routing" },
+    { "id": "COU_MOD_DEST", "panelLabel": "MOD DEST", "type": "switch", "positions": ["FM_1_2", "FENV_OSC2_FREQ", "FENV_OSC2_WAVE", "FENV_SUB_WAVE"], "default": "FM_1_2", "manualRef": "Courier p.14" },
+
+    { "id": "COU_MIX_OSC1", "panelLabel": "MIX OSC 1", "type": "knob", "min": 0, "max": 1, "default": 0.8, "taper": "lin", "manualRef": "Courier p.15", "notes": "hot mixer = warm drive into filter" },
+    { "id": "COU_MIX_OSC2", "panelLabel": "MIX OSC 2", "type": "knob", "min": 0, "max": 1, "default": 0.8, "taper": "lin", "manualRef": "Courier p.15" },
+    { "id": "COU_MIX_SUB", "panelLabel": "MIX SUB", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.15" },
+    { "id": "COU_MIX_NOISE", "panelLabel": "MIX NOISE", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.15" },
+    { "id": "COU_MIX_FB_EXT", "panelLabel": "MIX FB / EXT", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.15", "notes": "feedback or EXT IN level when patched (pattern-2 normal)" },
+
+    { "id": "COU_CUTOFF", "panelLabel": "CUTOFF", "type": "knob", "min": 20, "max": 20000, "default": 2000, "taper": "exp", "unit": "Hz", "manualRef": "Courier p.16" },
+    { "id": "COU_EG_AMOUNT", "panelLabel": "EG AMOUNT", "type": "knob", "min": -1, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.16", "notes": "bipolar filter-EG amount into cutoff" },
+    { "id": "COU_OSC2_CUTOFF", "panelLabel": "OSC 2 → CUTOFF", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.16", "notes": "OSC 2 audio-rate modulation of cutoff" },
+    { "id": "COU_RESONANCE", "panelLabel": "RESONANCE", "type": "knob", "min": 0, "max": 1, "default": 0, "taper": "lin", "manualRef": "Courier p.16", "notes": "self-oscillation at max resonance + low cutoff" },
+    { "id": "COU_RES_BASS", "panelLabel": "RES BASS", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Courier p.16", "notes": "low-end compensation when resonance is high" },
+    { "id": "COU_KB_TRACKING", "panelLabel": "KB TRACKING", "type": "switch", "positions": ["OFF", "ON"], "default": "ON", "manualRef": "Courier p.16", "notes": "keyboard CV tracks cutoff" },
+    { "id": "COU_FILTER_MODE", "panelLabel": "FILTER MODE", "type": "switch", "positions": ["LP4", "LP2", "BP", "HP"], "default": "LP4", "manualRef": "Courier p.16" },
+
+    { "id": "COU_F_ATTACK", "panelLabel": "FILTER ATTACK", "type": "knob", "min": 0.001, "max": 10, "default": 0.005, "taper": "exp", "unit": "s", "manualRef": "Courier p.17" },
+    { "id": "COU_F_DECAY", "panelLabel": "FILTER DECAY", "type": "knob", "min": 0.005, "max": 10, "default": 0.3, "taper": "exp", "unit": "s", "manualRef": "Courier p.17" },
+    { "id": "COU_F_RELEASE", "panelLabel": "FILTER RELEASE", "type": "knob", "min": 0.005, "max": 10, "default": 0.2, "taper": "exp", "unit": "s", "manualRef": "Courier p.17" },
+    { "id": "COU_F_SUSTAIN", "panelLabel": "FILTER SUSTAIN", "type": "knob", "min": 0, "max": 1, "default": 0.5, "taper": "lin", "manualRef": "Courier p.17" },
+    { "id": "COU_F_ENV_VEL", "panelLabel": "FILTER ENV VEL", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Courier p.17", "notes": "velocity scales filter-EG amount" },
+    { "id": "COU_F_ENV_LOOP", "panelLabel": "FILTER ENV LOOP", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Courier p.17", "notes": "filter EG loops as an LFO" },
+
+    { "id": "COU_A_ATTACK", "panelLabel": "AMP ATTACK", "type": "knob", "min": 0.001, "max": 10, "default": 0.005, "taper": "exp", "unit": "s", "manualRef": "Courier p.18" },
+    { "id": "COU_A_DECAY", "panelLabel": "AMP DECAY", "type": "knob", "min": 0.005, "max": 10, "default": 0.3, "taper": "exp", "unit": "s", "manualRef": "Courier p.18" },
+    { "id": "COU_A_RELEASE", "panelLabel": "AMP RELEASE", "type": "knob", "min": 0.005, "max": 10, "default": 0.2, "taper": "exp", "unit": "s", "manualRef": "Courier p.18" },
+    { "id": "COU_A_SUSTAIN", "panelLabel": "AMP SUSTAIN", "type": "knob", "min": 0, "max": 1, "default": 0.8, "taper": "lin", "manualRef": "Courier p.18" },
+    { "id": "COU_A_ENV_VEL", "panelLabel": "AMP ENV VEL", "type": "switch", "positions": ["OFF", "ON"], "default": "ON", "manualRef": "Courier p.18", "notes": "velocity scales amp-EG level" },
+    { "id": "COU_A_ENV_LOOP", "panelLabel": "AMP ENV LOOP", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Courier p.18", "notes": "amp EG loops as an LFO" },
+    { "id": "COU_MULTI_TRIG", "panelLabel": "MULTI TRIG", "type": "switch", "positions": ["OFF", "ON"], "default": "OFF", "manualRef": "Courier p.18", "notes": "legato off = retrigger EGs on every key press" },
+
+    { "id": "COU_VOLUME", "panelLabel": "VOLUME", "type": "knob", "min": 0, "max": 1, "default": 0.7, "taper": "lin", "manualRef": "Courier p.19" },
+    { "id": "COU_GLIDE", "panelLabel": "GLIDE", "type": "knob", "min": 0.001, "max": 10, "default": 0.001, "taper": "exp", "unit": "s", "manualRef": "Courier p.19", "notes": "portamento time" },
+    { "id": "COU_LFO2_RATE", "panelLabel": "LFO 2 RATE", "type": "knob", "min": 0.05, "max": 12, "default": 4, "taper": "exp", "unit": "Hz", "manualRef": "Courier p.19", "notes": "left-hand modulation LFO" },
+    { "id": "COU_LFO2_DEST", "panelLabel": "LFO 2 DEST", "type": "switch", "positions": ["PITCH", "CUTOFF", "AMP"], "default": "PITCH", "manualRef": "Courier p.19" }
+  ],
+  "jacks": [
+    { "id": "COU_CLOCK_IN", "panelLabel": "CLOCK", "direction": "in", "signal": "clock", "rangeVv": [0, 10], "normalledTo": null, "feedsInternal": "Rising edges replace the internal clock", "manualRef": "Courier p.20" },
+    { "id": "COU_EXP_IN", "panelLabel": "EXP", "direction": "in", "signal": "cv", "rangeVv": [0, 5], "normalledTo": null, "feedsInternal": "Expression pedal CV; assignable to volume or a mod destination", "manualRef": "Courier p.20" },
+    { "id": "COU_SUSTAIN_IN", "panelLabel": "SUSTAIN", "direction": "in", "signal": "gate", "rangeVv": [0, 10], "normalledTo": null, "feedsInternal": "Sustain-pedal gate; holds the amp EG at sustain", "manualRef": "Courier p.20" },
+    { "id": "COU_EXT_IN", "panelLabel": "EXT", "direction": "in", "signal": "audio", "rangeVv": [-5, 5], "normalledTo": "INTERNAL:COU_NOISE", "feedsInternal": "External audio into the mixer FB / EXT channel; replaces noise at that channel when patched", "manualRef": "Courier p.20" },
+    { "id": "COU_AUDIO_OUT", "panelLabel": "AUDIO OUT", "direction": "out", "signal": "audio", "rangeVv": [-5, 5], "manualRef": "Courier p.21", "notes": "main voice out to the mixer, post-VOLUME" },
+    { "id": "COU_VCA_OUT", "panelLabel": "VCA", "direction": "out", "signal": "audio", "rangeVv": [-5, 5], "manualRef": "Courier p.21", "notes": "post-VCA tap, pre-VOLUME" },
+    { "id": "COU_GATE_OUT", "panelLabel": "GATE", "direction": "out", "signal": "gate", "rangeVv": [0, 10], "manualRef": "Courier p.21", "notes": "key gate out" },
+    { "id": "COU_CV_OUT", "panelLabel": "CV", "direction": "out", "signal": "cv", "rangeVv": [-5, 5], "manualRef": "Courier p.21", "notes": "1 vv/oct keyboard pitch CV" },
+    { "id": "COU_CLOCK_OUT", "panelLabel": "CLOCK", "direction": "out", "signal": "clock", "rangeVv": [0, 10], "manualRef": "Courier p.21", "notes": "internal clock out" }
+  ],
+  "sequencer": {
+    "type": "courier",
+    "steps": 64,
+    "paramLock": true,
+    "modes": ["SEQ", "ARP"],
+    "tempoHz": { "min": 0.05, "max": 50, "default": 2 },
+    "behavior": "64-step parameter-lock sequencer / arpeggiator. Each step can lock per-step pitch plus parameter values. Phase-A authors the sound engine only; sequencer/arp controls are deferred to a later phase.",
+    "deferred": "step controls and arp mode switches authored in a later phase",
+    "manualRef": "Courier pp.22-24"
+  }
+}

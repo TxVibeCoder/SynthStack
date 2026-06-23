@@ -76,6 +76,7 @@ export const GROUP_BORDER = {
   anvil: '#4caf5f', // green
   monarch: '#4f8fd9', // blue
   mixer: '#9d6fd6', // violet (4th color)
+  courier: '#d97a3c', // burnt orange (5th color — the densest voice)
 } as const;
 
 /** Group-border stroke width (intentionally "thick"). */

@@ -26,7 +26,15 @@ const VV_DENORM = 5;
  */
 const INPUT_SCALE = 1e4;
 
-export type FilterMode = 'LP' | 'HP';
+/**
+ * Filter response mode. `'LP'` is the 4-pole (24 dB/oct) ladder lowpass and is the
+ * default; the multimode taps are derived from the same ladder stages via pole-mixing:
+ *   - `'LP'`  — LP4, 24 dB/oct (stage 4 output, the classic ladder)
+ *   - `'LP2'` — LP2, 12 dB/oct (2-pole tap)
+ *   - `'BP'`  — 2-pole band-pass (difference of the LP2 and LP4 taps)
+ *   - `'HP'`  — HP4, the (1−L)^4 pole-mix (non-resonant HP; resonance re-adds bottom)
+ */
+export type FilterMode = 'LP' | 'HP' | 'LP2' | 'BP';
 
 export class LadderCore {
   private readonly sampleRate: number;
@@ -40,6 +48,7 @@ export class LadderCore {
   private tune = 0;
   private acr = 0;
   private resQuad = 0;
+  private resApplied = 0; // internal resonance (knob·resScale), used to scale RES BASS re-inject
 
   // params
   private cutoffTargetHz = 1000;
@@ -56,7 +65,19 @@ export class LadderCore {
   drive = 1.0;
   mode: FilterMode = 'LP';
 
+  /**
+   * RES BASS (bass-preserve) flag. A resonant ladder thins out the low end as the
+   * feedback subtracts in-band energy; the source hardware's "RES BASS" switch
+   * compensates by re-injecting a resonance-proportional amount of the pre-filter
+   * low-frequency content. Off by default (false) so LP4/res behavior is unchanged.
+   */
+  resBass = false;
+
   private denormFlip = 1e-18;
+
+  // RES BASS one-pole low-pass state, on the (scaled) pre-filter input. Re-injected in
+  // proportion to resonance to replace the low end the resonant feedback subtracts.
+  private bassLpState = 0;
 
   constructor(sampleRate: number) {
     this.sampleRate = sampleRate;
@@ -81,6 +102,7 @@ export class LadderCore {
     this.stage.fill(0);
     this.stageTanh.fill(0);
     this.delay.fill(0);
+    this.bassLpState = 0;
   }
 
   private updateCoefficients(cutoffHz: number): void {
@@ -98,6 +120,7 @@ export class LadderCore {
     // map panel 0..1 -> internal 0..resScale so robust self-oscillation begins ~1/resScale
     const res = this.resonanceKnob * this.resScale;
     this.resQuad = 4.0 * res * this.acr;
+    this.resApplied = res;
   }
 
   /**
@@ -119,16 +142,28 @@ export class LadderCore {
     const tune = this.tune;
     const resQuad = this.resQuad;
     const drive = this.drive;
-    const hp = this.mode === 'HP';
+    const mode = this.mode;
+
+    // RES BASS: re-inject a resonance-proportional amount of the low-passed input so the
+    // resonant feedback's bass-thinning is compensated. One-pole LP at ~120 Hz (per
+    // audio sample). Gain rises with internal resonance; capped so it stays a "preserve",
+    // not a boost. Only active when the flag is set AND the mode keeps low end (LP*/BP).
+    const bassActive = this.resBass && mode !== 'HP';
+    const bassCoef = bassActive ? 1 - Math.exp((-TWO_PI * 120) / this.sampleRate) : 0;
+    const bassGain = bassActive ? Math.min(this.resApplied * 0.6, 1.2) : 0;
 
     let prevIn = this.lastInput;
     for (let i = 0; i < n; i++) {
       const raw = (input[i] ?? 0) * VV_NORM * drive * INPUT_SCALE + this.denormFlip;
       this.denormFlip = -this.denormFlip;
 
-      // 2× oversampling: half-step (linear-interpolated input), then full step
-      let outSample = 0;
-      let hpSample = 0;
+      // 2× oversampling: half-step (linear-interpolated input), then full step.
+      // Each response tap is a linear pole-mix of the same ladder stages, accumulated
+      // (×0.5) across both passes and selected once after the oversample loop.
+      let lp4Sample = 0; // LP4: stage 4 output (24 dB/oct ladder)
+      let lp2Sample = 0; // LP2: 2-pole tap (12 dB/oct)
+      let bpSample = 0; //  BP:  2-pole band-pass (LP2 − LP4)
+      let hpSample = 0; //  HP4: (1−L)^4 pole-mix
       for (let os = 0; os < 2; os++) {
         const x = os === 0 ? 0.5 * (prevIn + raw) : raw;
         const u = x - resQuad * delay[5]!; // ladder chain input (incl. feedback)
@@ -146,15 +181,33 @@ export class LadderCore {
         // 0.5-sample delay for phase compensation (per reference implementation)
         delay[5] = (stage[3]! + delay[4]!) * 0.5;
         delay[4] = stage[3]!;
-        outSample = delay[5]!;
-        // ladder-topology HP: (1−L)^4 expanded over the per-stage outputs.
-        // The resonant LP core keeps running underneath, so raising resonance in
-        // HP mode re-adds low-end — the authentic Monarch behavior.
+        // Pole-mix taps over [u, stage0, stage1, stage2, stage3]:
+        //   LP4 = stage 4 output (phase-compensated); LP2 = 2-pole tap (stage[1]);
+        //   BP  = LP2 − LP4 (band centered near cutoff); HP = (1−L)^4 = u − 4s0 + 6s1 − 4s2 + s3.
+        // The resonant LP core keeps running underneath every tap, so raising resonance in
+        // HP/BP mode re-adds low-end — the authentic source-hardware behavior.
+        lp4Sample = delay[5]!; // last-pass value (unchanged from the original LP4 path)
+        lp2Sample += 0.5 * stage[1]!;
+        bpSample += 0.5 * (stage[1]! - delay[5]!);
         hpSample += 0.5 * (u - 4 * stage[0]! + 6 * stage[1]! - 4 * stage[2]! + stage[3]!);
       }
       prevIn = raw;
 
-      let y = hp ? hpSample : outSample;
+      let y =
+        mode === 'HP'
+          ? hpSample
+          : mode === 'LP2'
+            ? lp2Sample
+            : mode === 'BP'
+              ? bpSample
+              : lp4Sample;
+
+      // RES BASS re-inject (LP of the pre-filter input, scaled by resonance).
+      if (bassActive) {
+        this.bassLpState += bassCoef * (raw - this.bassLpState);
+        y += bassGain * this.bassLpState;
+      }
+
       if (!Number.isFinite(y)) {
         this.reset();
         prevIn = 0; // also sanitize the cross-sample interpolation history (and lastInput below)
