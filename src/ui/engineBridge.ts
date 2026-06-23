@@ -420,7 +420,23 @@ class EngineBridge {
 
   private moduleFor(moduleId: string): { setControl(id: string, value: number | string): void } {
     const s = this.studio;
-    return moduleId === 'monarch' ? s.monarch : moduleId === 'anvil' ? s.anvil : s.cascade;
+    // Every voice/module must be listed explicitly. A silent default-to-cascade once swallowed the
+    // ENTIRE Courier panel control surface (COU_* ids routed to CascadeModule.setControl, which
+    // no-ops them) — keep this exhaustive so a newly added module can't regress the same way.
+    switch (moduleId) {
+      case 'monarch':
+        return s.monarch;
+      case 'anvil':
+        return s.anvil;
+      case 'cascade':
+        return s.cascade;
+      case 'courier':
+        return s.courier;
+      case 'sampler':
+        return s.sampler;
+      default:
+        return s.cascade;
+    }
   }
 
   /**

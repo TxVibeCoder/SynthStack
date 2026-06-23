@@ -379,6 +379,11 @@ interface BridgePrivates {
     courierNoteOff(): void;
     courierPitchBend(semitones: number): void;
     courierModWheel(amount01: number): void;
+    monarch: { setControl(id: string, value: number | string): void };
+    anvil: { setControl(id: string, value: number | string): void };
+    cascade: { setControl(id: string, value: number | string): void };
+    courier: { setControl(id: string, value: number | string): void };
+    sampler: { setControl(id: string, value: number | string): void };
   } | null;
 }
 
@@ -730,5 +735,56 @@ describe('engineBridge Courier wheels (pitch bend + mod wheel, runtime-only)', (
     engineBridge.setCourierPitchBend(0.4);
     engineBridge.setCourierModWheel(0.6);
     expect(JSON.stringify(engineBridge.store.getState())).toBe(before); // round-trip unchanged
+  });
+});
+
+describe('engineBridge module routing (applyControlInput -> the right module.setControl)', () => {
+  // Regression guard: moduleFor() once defaulted every non-monarch/anvil id to cascade, so the
+  // ENTIRE Courier (and sampler) panel surface routed to CascadeModule.setControl and was silently
+  // dropped. Prove each module id reaches ITS OWN setControl and nobody else's. The real module
+  // fields aren't built until powerOn (needs an AudioContext), so swap in mock modules + restore.
+  const priv = engineBridge as unknown as BridgePrivates;
+  const IDS = ['monarch', 'anvil', 'cascade', 'courier', 'sampler'] as const;
+  let studio: Record<string, { setControl: (id: string, value: number | string) => void }>;
+  let originals: Record<string, unknown>;
+  let spies: Record<string, ReturnType<typeof vi.fn>>;
+
+  beforeEach(() => {
+    void engineBridge.store;
+    studio = priv.studioInstance as unknown as typeof studio;
+    originals = {};
+    spies = {};
+    for (const id of IDS) {
+      originals[id] = studio[id];
+      spies[id] = vi.fn();
+      studio[id] = { setControl: spies[id]! };
+    }
+    priv._powered = true;
+  });
+  afterEach(() => {
+    priv._powered = false;
+    for (const id of IDS) studio[id] = originals[id] as (typeof studio)[string];
+  });
+
+  it('routes a Courier control to CourierModule.setControl (not Cascade)', () => {
+    engineBridge.applyControlInput('courier', 'COU_OSC1_WAVESHAPE', 0.3);
+    expect(spies['courier']).toHaveBeenCalledWith('COU_OSC1_WAVESHAPE', 0.3);
+    expect(spies['cascade']).not.toHaveBeenCalled();
+  });
+
+  it('routes a Sampler control to SamplerModule.setControl (not Cascade)', () => {
+    engineBridge.applyControlInput('sampler', 'SAMP_PAD1_LEVEL', 0.5);
+    expect(spies['sampler']).toHaveBeenCalledWith('SAMP_PAD1_LEVEL', 0.5);
+    expect(spies['cascade']).not.toHaveBeenCalled();
+  });
+
+  it('still routes monarch / anvil / cascade to their own modules (no regression)', () => {
+    engineBridge.applyControlInput('monarch', 'MON_VCF_CUTOFF', 0.6);
+    engineBridge.applyControlInput('anvil', 'ANV_VCO_DECAY', 0.4);
+    engineBridge.applyControlInput('cascade', 'CAS_CUTOFF', 0.7);
+    expect(spies['monarch']).toHaveBeenCalledWith('MON_VCF_CUTOFF', 0.6);
+    expect(spies['anvil']).toHaveBeenCalledWith('ANV_VCO_DECAY', 0.4);
+    expect(spies['cascade']).toHaveBeenCalledWith('CAS_CUTOFF', 0.7);
+    expect(spies['courier']).not.toHaveBeenCalled();
   });
 });
