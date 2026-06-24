@@ -240,6 +240,59 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(coalesceSamplerState(lit).seqRunning).toBe(true);
   });
 
+  // ---- G4 drum var-length (numSteps) + swing (swingPct) -----------------------------------
+
+  it('default sampler numSteps is 16 and swingPct is 50 (no swing)', () => {
+    const s = defaultStudioState();
+    expect(s.sampler.numSteps).toBe(16);
+    expect(s.sampler.swingPct).toBe(50);
+  });
+
+  it('coalesceSamplerState(undefined) yields numSteps 16 + swingPct 50', () => {
+    const s = coalesceSamplerState(undefined);
+    expect(s.numSteps).toBe(16);
+    expect(s.swingPct).toBe(50);
+  });
+
+  it('coalesceSamplerState fills numSteps 16 + swingPct 50 for an older tree lacking them', () => {
+    const oldTree = {
+      pads: [{ sampleId: 'x', sampleName: 'y', level: 0.5, tuneSemis: 0 }],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    const s = coalesceSamplerState(oldTree);
+    expect(s.numSteps).toBe(16);
+    expect(s.swingPct).toBe(50);
+  });
+
+  it('coalesceSamplerState clamps/guards garbage numSteps + swingPct', () => {
+    const c = (raw: unknown) =>
+      coalesceSamplerState(raw as Parameters<typeof coalesceSamplerState>[0]);
+    // numSteps: non-finite/huge -> 16; below 1 -> 1; non-integer -> rounded; in-range kept
+    expect(c({ numSteps: 1e308 }).numSteps).toBe(16);
+    expect(c({ numSteps: 0 }).numSteps).toBe(1);
+    expect(c({ numSteps: -5 }).numSteps).toBe(1);
+    expect(c({ numSteps: 3.7 }).numSteps).toBe(4);
+    expect(c({ numSteps: 99 }).numSteps).toBe(16);
+    expect(c({ numSteps: 'x' }).numSteps).toBe(16);
+    expect(c({ numSteps: NaN }).numSteps).toBe(16);
+    // swingPct: over 100 -> 100; below 0 -> 0; non-number -> 50; in-range kept
+    expect(c({ swingPct: 200 }).swingPct).toBe(100);
+    expect(c({ swingPct: -10 }).swingPct).toBe(0);
+    expect(c({ swingPct: 'x' }).swingPct).toBe(50);
+    expect(c({ swingPct: NaN }).swingPct).toBe(50);
+    expect(c({ swingPct: 66 }).swingPct).toBe(66);
+  });
+
+  it('round-trips a drum numSteps 8 + swingPct 66 across the store', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.sampler.numSteps = 8;
+    s.sampler.swingPct = 66;
+    store.setState(s);
+    expect(store.getState().sampler.numSteps).toBe(8);
+    expect(store.getState().sampler.swingPct).toBe(66);
+    expect(store.getState()).toEqual(s);
+  });
+
   it('coalesceSamplerState clamps/guards a garbage pad (level / tuneSemis / sampleId / sampleName)', () => {
     // A hand-edited bundle could inject junk per pad. Before the field-level guards, `...p`
     // spread these through verbatim: tuneSemis: 1e308 would reach setPadTune -> playbackRate

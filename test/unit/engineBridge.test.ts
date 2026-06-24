@@ -365,6 +365,41 @@ describe('engineBridge drum step sequencer surface', () => {
     expect(engineBridge.getStepPosition('drum')).toBe(-1);
     expect(engineBridge.getTransportFlags().drumRunning).toBe(false);
   });
+
+  it('setDrumNumSteps / getDrumNumSteps round-trip + clamp (commit-only LENGTH)', () => {
+    expect(engineBridge.getDrumNumSteps()).toBe(16); // default
+    engineBridge.setDrumNumSteps(8);
+    expect(engineBridge.getDrumNumSteps()).toBe(8);
+    expect(engineBridge.store.getState().sampler.numSteps).toBe(8);
+    // clamp + round on the bridge write
+    engineBridge.setDrumNumSteps(99);
+    expect(engineBridge.getDrumNumSteps()).toBe(16);
+    engineBridge.setDrumNumSteps(0);
+    expect(engineBridge.getDrumNumSteps()).toBe(1);
+    engineBridge.setDrumNumSteps(3.7);
+    expect(engineBridge.getDrumNumSteps()).toBe(4);
+    engineBridge.setDrumNumSteps(16); // restore default for other tests
+  });
+
+  it('setDrumSwing / getDrumSwing round-trip + clamp (commit-only SWING)', () => {
+    expect(engineBridge.getDrumSwing()).toBe(50); // default = no swing
+    engineBridge.setDrumSwing(66);
+    expect(engineBridge.getDrumSwing()).toBe(66);
+    expect(engineBridge.store.getState().sampler.swingPct).toBe(66);
+    engineBridge.setDrumSwing(200);
+    expect(engineBridge.getDrumSwing()).toBe(100);
+    engineBridge.setDrumSwing(-10);
+    expect(engineBridge.getDrumSwing()).toBe(0);
+    engineBridge.setDrumSwing(50); // restore default
+  });
+
+  it('LENGTH / SWING never leak into the controls map', () => {
+    engineBridge.setDrumNumSteps(8);
+    engineBridge.setDrumSwing(66);
+    expect(engineBridge.store.getState().controls['sampler'] ?? {}).toEqual({});
+    engineBridge.setDrumNumSteps(16);
+    engineBridge.setDrumSwing(50);
+  });
 });
 
 /**

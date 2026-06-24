@@ -1488,6 +1488,42 @@ class EngineBridge {
     return coalesceSamplerState(this.store.getState().sampler).seqRunning;
   }
 
+  /**
+   * Wrap length 1..16 (default 16). Commit-only LENGTH control. Immediate engine write when
+   * powered + ONE coalesced store commit (mirrors the drum-step bridge idiom). Columns >=
+   * numSteps are RETAINED in the pattern but greyed + unplayed (mirror monarch endStep).
+   */
+  setDrumNumSteps(n: number): void {
+    if (this._powered) this.studio.setDrumNumSteps(n);
+    const s = this.store.getState();
+    s.sampler = coalesceSamplerState(s.sampler);
+    s.sampler.numSteps = Math.max(1, Math.min(16, Math.round(n)));
+    this.store.setState(s);
+  }
+
+  /**
+   * Drum swing 0..100 (50 = none). Commit-only (no live-drag guard needed — syncTransportConfig
+   * only reads the committed store value). Immediate engine write when powered + ONE coalesced
+   * store commit.
+   */
+  setDrumSwing(pct: number): void {
+    if (this._powered) this.studio.setDrumSwing(pct);
+    const s = this.store.getState();
+    s.sampler = coalesceSamplerState(s.sampler);
+    s.sampler.swingPct = Math.max(0, Math.min(100, pct));
+    this.store.setState(s);
+  }
+
+  /** Persisted wrap length (DrumMachinePanel snapshot source). */
+  getDrumNumSteps(): number {
+    return coalesceSamplerState(this.store.getState().sampler).numSteps;
+  }
+
+  /** Persisted swing amount (DrumMachinePanel snapshot source). */
+  getDrumSwing(): number {
+    return coalesceSamplerState(this.store.getState().sampler).swingPct;
+  }
+
   // ---- reference-aware user-sample-byte freeing (FIX 1: never delete bytes still in use) ----
   // EVERY user-sample-byte delete (loadPadSample replace, resetAll/INIT, applyPreset load) is
   // gated through isUserSampleUnreferenced so we never free bytes a LIVE state or ANY saved slot

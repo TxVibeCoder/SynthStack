@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SamplerStepSeq } from '../../src/engine/sequencers/samplerSeq';
 import { Scheduler, type TransportEvent } from '../../src/engine/scheduler';
 import { nextBoundary, type PhaseRef } from '../../src/engine/quantGrid';
-import { monarchStepDurS } from '../../src/engine/units';
+import { monarchStepDurS, swingOffsetS } from '../../src/engine/units';
 
 /** A running master phase whose bar downbeat sits at `anchorTime`. */
 function runningPhase(anchorTime = 0, bpm = 120): PhaseRef {
@@ -298,6 +298,88 @@ describe('SamplerStepSeq (feature: drum machine)', () => {
     seq.setNumSteps(99);
     seq.setNumSteps(0);
     expect(() => seq.pullEventsAt(seq.nextEventTime)).not.toThrow();
+  });
+
+  // ---- G4: swing (odd-column offset) + var-length interaction ----------------------------
+
+  it('swing: odd columns land at base + swingOffsetS, even columns unchanged', () => {
+    const box = { phase: runningPhase(0, 120) };
+    const seq = wired(box);
+    const sixteenth = box.phase.sixteenthDurS;
+    seq.setSwing(75);
+    seq.start(0); // origin = first 16th boundary at/after 0 = 0
+    const swing = swingOffsetS(75, sixteenth);
+    expect(swing).toBeGreaterThan(0);
+    const times: number[] = [];
+    const cols: number[] = [];
+    for (let k = 0; k < 6; k++) {
+      const evs = seq.pullEventsAt(seq.nextEventTime);
+      cols.push(evs[0]!.data!['stepIndex'] as number);
+      times.push(seq.nextEventTime);
+      seq.advance();
+    }
+    // base lattice = k*sixteenth; odd columns (1,3,5) get + swing, even (0,2,4) get nothing
+    for (let k = 0; k < 6; k++) {
+      const base = k * sixteenth;
+      const expected = cols[k]! % 2 === 1 ? base + swing : base;
+      expect(times[k]!).toBeCloseTo(expected, 9);
+    }
+  });
+
+  it('swing=50 is a byte-identical no-op (every step on the un-swung lattice)', () => {
+    const box = { phase: runningPhase(0, 120) };
+    const plain = wired(box);
+    const swung = wired({ phase: runningPhase(0, 120) });
+    swung.setSwing(50); // explicit no-op
+    plain.start(0);
+    swung.start(0);
+    for (let k = 0; k < 32; k++) {
+      expect(swung.nextEventTime).toBe(plain.nextEventTime); // exact equality, not close
+      plain.advance();
+      swung.advance();
+    }
+  });
+
+  it('phase parity keys off the WRAPPED col, not stepCounter (odd numSteps stays bar-stable)', () => {
+    // numSteps=3: columns cycle 0,1,2,0,1,2,... so the SWUNG columns are the wrapped-odd ones
+    // (col 1 of every group). stepCounter parity (0,1,0,1,...) would instead walk the swing
+    // across bars — this pins it to the wrapped column.
+    const box = { phase: runningPhase(0, 120) };
+    const seq = wired(box);
+    const sixteenth = box.phase.sixteenthDurS;
+    const swing = swingOffsetS(75, sixteenth);
+    seq.setNumSteps(3);
+    seq.setSwing(75);
+    seq.start(0);
+    for (let k = 0; k < 12; k++) {
+      const evs = seq.pullEventsAt(seq.nextEventTime);
+      const col = evs[0]!.data!['stepIndex'] as number;
+      const expected = k * sixteenth + (col % 2 === 1 ? swing : 0);
+      expect(seq.nextEventTime).toBeCloseTo(expected, 9);
+      expect(col).toBe(k % 3); // wrapped column
+      seq.advance();
+    }
+  });
+
+  it('through the real Scheduler at swing=75 with numSteps 2 AND 16: never throws "did not advance"', () => {
+    for (const n of [2, 16]) {
+      const box = { phase: runningPhase(0, 137) }; // awkward tempo
+      const seq = wired(box);
+      seq.setStep(0, 0, true);
+      seq.setStep(1, 1, true);
+      seq.setNumSteps(n);
+      seq.setSwing(75);
+      let now = 0;
+      const fired: TransportEvent[] = [];
+      const sched = new Scheduler(() => now, 0.1);
+      sched.add(seq, (e) => fired.push(e));
+      seq.start(0);
+      for (let i = 0; i < 2000; i++) {
+        expect(() => sched.pump(), `numSteps ${n}`).not.toThrow();
+        now += 0.025;
+      }
+      expect(steps(fired).length, `numSteps ${n} emitted`).toBeGreaterThan(0);
+    }
   });
 
   it('runs through the real Scheduler with fake time without ever throwing "did not advance"', () => {

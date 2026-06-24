@@ -1149,6 +1149,16 @@ export class Studio {
     this.samplerSeq.setPattern(pattern);
   }
 
+  /** Wrap length 1..16 (engine clamps). Columns >= numSteps stay in the pattern but unplayed. */
+  setDrumNumSteps(n: number): void {
+    this.samplerSeq.setNumSteps(n);
+  }
+
+  /** Drum swing 0..100 (50 = none). Offsets odd columns; conversion via units.swingOffsetS. */
+  setDrumSwing(pct: number): void {
+    this.samplerSeq.setSwing(pct);
+  }
+
   /** Live read for the RUN/STOP latch lamp (user playing flag, mirrored into the store). */
   drumSeqPlaying(): boolean {
     return this.samplerSeq.isPlaying();
@@ -1235,6 +1245,12 @@ export class Studio {
     // mode SEQ/ARP gates whether the arp runs: pass the whole widened arpMode through, but force
     // OFF unless mode is ARP (the engine CourierArpMode is the same widened union).
     this.courierSeq.arpMode = c.mode === 'ARP' ? c.arpMode : 'OFF';
+    // Drum grid var-length + swing — pushed on every store notification (mirrors the monarch
+    // endStep/swing mirror above). Coalesce guarantees the slice + both fields exist on every
+    // load path; both are commit-only controls so there is no live-drag clobber to guard.
+    const samp = coalesceSamplerState(s.sampler);
+    this.samplerSeq.setNumSteps(samp.numSteps);
+    this.samplerSeq.setSwing(samp.swingPct);
   }
 
   /** Resolve a control-bearing module instance by id (the named voice fields). Called only
@@ -1305,6 +1321,9 @@ export class Studio {
     // was already restored to the store by this.store.setState(state) at the top; the live
     // samplerSeq boots STOPPED. INIT halts a running grid via the bridge's resetAll (drumStop).
     this.samplerSeq.setPattern(samp.pattern);
+    // Drum var-length + swing from the coalesced slice (declarative restore; never auto-runs).
+    this.samplerSeq.setNumSteps(samp.numSteps);
+    this.samplerSeq.setSwing(samp.swingPct);
     this.tempoLink = state.mixer.tempoLink;
     this.applyTempoLink();
     // FX: push the whole effects slice into the graph (coalesce fills an older tree's missing

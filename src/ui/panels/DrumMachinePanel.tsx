@@ -22,10 +22,11 @@
  * re-read only when a JSON dirty-key changes — the MonarchStepEditor.readSeq idiom.
  */
 
-import { memo, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import type { ControlDef } from '../../../data/schema';
 import { COLORS, FONT_CONDENSED } from '../theme';
 import { Button } from '../controls/Button';
+import { Knob } from '../controls/Knob';
 import { engineBridge } from '../engineBridge';
 import { useStepPosition, useTransportFlags } from '../useStudio';
 import {
@@ -60,17 +61,49 @@ const CLEAR_DEF: ControlDef = {
   positions: [CLEAR_IDLE, CLEAR_FIRE],
 };
 
-/** The panel's whole snapshot: the 8×16 pattern + per-row pad-name meta (for labels). */
+// LENGTH: commit-only stepped Knob, wrap length 1..16 (16 detents). Columns >= length are
+// greyed + unplayed (the engine RETAINS the hidden cells — mirror monarch endStep). onInput is a
+// no-op so a drag/step never writes the engine mid-gesture; onCommit pushes the value once.
+const LENGTH_DEF: ControlDef = {
+  id: 'DRUM_LENGTH',
+  panelLabel: 'LENGTH',
+  type: 'stepKnob', // integer detents 1..16 (one per integer in range)
+  min: 1,
+  max: 16,
+  default: 16,
+};
+// SWING: commit-only Knob. State allows 0..100 but the knob is CAPPED at the musical 75 — the
+// by-ear range (flagged for Will). 50 = no swing. Commit-only avoids any liveDrumSwingPct guard
+// (syncTransportConfig only reads the committed store value).
+const SWING_DEF: ControlDef = {
+  id: 'DRUM_SWING',
+  panelLabel: 'SWING',
+  type: 'knob',
+  min: 0,
+  max: 75,
+  default: 50,
+};
+
+/** The panel's whole snapshot: the 8×16 pattern + per-row pad-name meta + var-length/swing. */
 interface DrumSnapshot {
   pattern: boolean[][];
   /** Row labels: the raw pad sample name, or null when the pad is empty (dims the label). */
   labels: (string | null)[];
+  /** Wrap length 1..16: columns >= numSteps are greyed (retained but unplayed). */
+  numSteps: number;
+  /** Swing 0..100 (50 = none). */
+  swingPct: number;
 }
 
 function readSnapshot(): DrumSnapshot {
   const pattern = engineBridge.getPattern();
   const labels = Array.from({ length: TRACKS }, (_, t) => engineBridge.getPadState(t).sampleName);
-  return { pattern, labels };
+  return {
+    pattern,
+    labels,
+    numSteps: engineBridge.getDrumNumSteps(),
+    swingPct: engineBridge.getDrumSwing(),
+  };
 }
 
 // ---- single cell -----------------------------------------------------------------------
@@ -79,14 +112,19 @@ interface DrumCellProps {
   track: number;
   step: number;
   on: boolean;
+  /** True when step >= numSteps: the cell is RETAINED in state but greyed + unplayed. */
+  beyondLength: boolean;
 }
 
 /**
- * One toggle. Memoized on (track, step, on) so a single click re-renders only the cell it
- * flipped — the 128-cell grid never redraws wholesale. The handler reads the bridge
- * directly (no per-cell callback prop) so the props stay primitive for the memo bailout.
+ * One toggle. Memoized on (track, step, on, beyondLength) so a single click — or a LENGTH change
+ * that only flips the greyed band — re-renders the minimum number of cells. The handler reads the
+ * bridge directly (no per-cell callback prop) so the props stay primitive for the memo bailout.
+ *
+ * beyondLength cells stay TOGGLEABLE (mirror monarch endStep: cells past the wrap are retained,
+ * not deleted) — they just render dimmed to signal they will not play at the current length.
  */
-const DrumCell = memo(function DrumCell({ track, step, on }: DrumCellProps) {
+const DrumCell = memo(function DrumCell({ track, step, on, beyondLength }: DrumCellProps) {
   const r = cellRect(track, step);
   const beat = BEAT_COLS.has(step);
   return (
@@ -94,7 +132,7 @@ const DrumCell = memo(function DrumCell({ track, step, on }: DrumCellProps) {
       data-testid={`drum-cell-${track}-${step}`}
       role="button"
       tabIndex={0}
-      aria-label={`Track ${track + 1} step ${step + 1}: ${on ? 'on' : 'off'}`}
+      aria-label={`Track ${track + 1} step ${step + 1}: ${on ? 'on' : 'off'}${beyondLength ? ' (beyond length)' : ''}`}
       x={r.x}
       y={r.y}
       width={r.w}
@@ -103,6 +141,7 @@ const DrumCell = memo(function DrumCell({ track, step, on }: DrumCellProps) {
       fill={on ? COLORS.knob : beat ? COLORS.panelRaised : COLORS.panel}
       stroke={on ? COLORS.knobHi : COLORS.panelEdge}
       strokeWidth={beat ? 1.4 : 1}
+      opacity={beyondLength ? 0.32 : 1}
       style={{ cursor: 'pointer' }}
       onPointerDown={() => engineBridge.toggleStep(track, step)}
       onKeyDown={(e) => {
@@ -138,6 +177,13 @@ export function DrumMachinePanel() {
   }, []);
 
   const chaseActive = drumRunning && pos >= 0;
+
+  // Commit-only handlers: onInput is a no-op (no mid-gesture engine write), onCommit pushes once
+  // through the bridge (engine write when powered + a single coalesced store commit). No
+  // liveDrumSwingPct guard is needed because syncTransportConfig only reads the committed value.
+  const onLength = useCallback((v: number) => engineBridge.setDrumNumSteps(v), []);
+  const onSwing = useCallback((v: number) => engineBridge.setDrumSwing(v), []);
+  const noop = useCallback(() => undefined, []); // commit-only: onInput must not write the engine
 
   return (
     <svg
@@ -197,7 +243,14 @@ export function DrumMachinePanel() {
           fontFamily={FONT_CONDENSED}
           fontSize={9.5}
           letterSpacing={0.5}
-          fill={BEAT_COLS.has(s) ? COLORS.legend : COLORS.legendDim}
+          fill={
+            s >= snap.numSteps
+              ? COLORS.legendDim
+              : BEAT_COLS.has(s)
+                ? COLORS.legend
+                : COLORS.legendDim
+          }
+          opacity={s >= snap.numSteps ? 0.4 : 1}
           pointerEvents="none"
         >
           {s + 1}
@@ -227,7 +280,13 @@ export function DrumMachinePanel() {
       {/* 8×16 toggle grid */}
       {Array.from({ length: TRACKS }, (_, t) =>
         Array.from({ length: STEPS }, (_, s) => (
-          <DrumCell key={`${t}-${s}`} track={t} step={s} on={snap.pattern[t]?.[s] ?? false} />
+          <DrumCell
+            key={`${t}-${s}`}
+            track={t}
+            step={s}
+            on={snap.pattern[t]?.[s] ?? false}
+            beyondLength={s >= snap.numSteps}
+          />
         )),
       )}
 
@@ -255,6 +314,18 @@ export function DrumMachinePanel() {
           x={DRUM_TRANSPORT.clearX}
           y={DRUM_TRANSPORT.y}
         />
+      </g>
+
+      {/* LENGTH (1..16 wrap) + SWING (0..75 musical cap) — commit-only Knobs in the right strip
+          below the transport buttons. onInput is a no-op (commit-only): the engine is written once
+          on release/step, so there is no live-drag clobber against syncTransportConfig. */}
+      <g data-testid="drum-length">
+        <Knob def={LENGTH_DEF} value={snap.numSteps} onInput={noop} onCommit={onLength}
+          x={DRUM_TRANSPORT.lengthX} y={DRUM_TRANSPORT.lengthY} />
+      </g>
+      <g data-testid="drum-swing">
+        <Knob def={SWING_DEF} value={snap.swingPct} onInput={noop} onCommit={onSwing}
+          x={DRUM_TRANSPORT.swingX} y={DRUM_TRANSPORT.swingY} />
       </g>
 
       {/* MASTER-STOPPED hint: the grid follows the Monarch master clock, so a lit drum RUN

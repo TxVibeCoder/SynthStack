@@ -70,6 +70,8 @@ export interface SamplerState {
   quantize: QuantizeDivision; // global launch grid, default '1 BAR'
   pattern: boolean[][]; // [8][16]; pattern[track][step] === step ON for pad `track`
   seqRunning: boolean; // drum-seq RUN/STOP, persisted, independent of SynthStack RUN ALL
+  numSteps: number; // wrap length 1..16, default 16; columns >= numSteps are RETAINED but unplayed
+  swingPct: number; // 0..100, default 50 (=no swing); offsets odd grid columns (state allows 0..100, UI caps at 75)
 }
 
 export interface CascadeSequencerState {
@@ -178,6 +180,8 @@ export function defaultSamplerState(): SamplerState {
     quantize: '1 BAR',
     pattern: defaultPattern(),
     seqRunning: false,
+    numSteps: 16,
+    swingPct: 50,
   };
 }
 
@@ -224,7 +228,18 @@ export function coalesceSamplerState(raw: Partial<SamplerState> | undefined): Sa
     Array.from({ length: DRUM_STEPS }, (_, s) => raw.pattern?.[t]?.[s] === true),
   );
   const seqRunning = raw.seqRunning === true;
-  return { pads, quantize, pattern, seqRunning };
+  // numSteps wrap length: finite -> round + clamp 1..16; else default 16.
+  const numSteps =
+    typeof raw.numSteps === 'number' && Number.isFinite(raw.numSteps)
+      ? Math.max(1, Math.min(16, Math.round(raw.numSteps)))
+      : 16;
+  // swingPct: finite -> clamp 0..100; else default 50 (no swing). State allows the full 0..100;
+  // the UI caps the knob at the musical 75 (see DrumMachinePanel SWING — flagged for Will's ears).
+  const swingPct =
+    typeof raw.swingPct === 'number' && Number.isFinite(raw.swingPct)
+      ? Math.max(0, Math.min(100, raw.swingPct))
+      : 50;
+  return { pads, quantize, pattern, seqRunning, numSteps, swingPct };
 }
 
 export function defaultKeyboardState(): KeyboardState {
