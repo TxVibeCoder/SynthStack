@@ -25,7 +25,7 @@ import { Button } from '../controls/Button';
 import { StepLed } from '../controls/StepLed';
 import { engineBridge } from '../engineBridge';
 import { useStepPosition, useTransportFlags } from '../useStudio';
-import { keyToMonarchAction, nextNoteSemis, nextSelection } from './monarchKeyNav';
+import { clampSemis, keyToMonarchAction, nextNoteSemis, nextSelection } from './monarchKeyNav';
 
 /** Strip-local origin (the old in-panel band offset is gone). */
 const BAND_Y = 6;
@@ -157,7 +157,11 @@ export const MonarchStepEditor = memo(function MonarchStepEditor() {
     if (!armed) return;
     engineBridge.setMonarchRecordHandler((noteVv) => {
       const cur = selectedRef.current;
-      engineBridge.updateMonarchStep(cur, { noteVv, rest: false });
+      // Clamp to the NOTE knob's editable rail (±24 semis = ±2 vv): with the keyboard octave
+      // shifted, a recorded note can otherwise exceed the rail and the first manual NOTE edit
+      // silently jumps the pitch (B9). Math.round mirrors onNote's stepped-detent contract.
+      const clampedVv = clampSemis(Math.round(noteVv * 12)) / 12;
+      engineBridge.updateMonarchStep(cur, { noteVv: clampedVv, rest: false });
       const next = (cur + 1) % Math.max(1, endStepRef.current);
       setSelected(next);
       setPage(Math.floor(next / 8)); // follow the cursor onto the next page

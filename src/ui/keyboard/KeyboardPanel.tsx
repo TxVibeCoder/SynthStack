@@ -218,23 +218,42 @@ export function KeyboardPanel() {
     });
   }, []);
 
+  /** Per-semitone holder count — the SAME pitch can be held by a pointer AND a PC key (and a
+   *  glissando slide). The shared MonoVoice + lamp toggle ONLY on the 0<->1 transition, so
+   *  releasing one source never silences a still-held other source or desyncs the lamp (B8). */
+  const holders = useRef<Map<number, number>>(new Map());
+
+  const acquireNote = useCallback(
+    (semitone: number) => {
+      const n = (holders.current.get(semitone) ?? 0) + 1;
+      holders.current.set(semitone, n);
+      if (n === 1) {
+        engineBridge.noteOn(keyToNote(semitone, 0), SCREEN_VELOCITY);
+        mark(semitone, true);
+      }
+    },
+    [mark],
+  );
+
+  const releaseNote = useCallback(
+    (semitone: number) => {
+      const cur = holders.current.get(semitone) ?? 0;
+      if (cur <= 0) return;
+      if (cur === 1) {
+        holders.current.delete(semitone);
+        engineBridge.noteOff(keyToNote(semitone, 0));
+        mark(semitone, false);
+      } else {
+        holders.current.set(semitone, cur - 1);
+      }
+    },
+    [mark],
+  );
+
   // ---- on-screen key pointer handling (with glissando) --------------------------------
 
-  const startNote = useCallback(
-    (semitone: number) => {
-      engineBridge.noteOn(keyToNote(semitone, 0), SCREEN_VELOCITY);
-      mark(semitone, true);
-    },
-    [mark],
-  );
-
-  const stopNote = useCallback(
-    (semitone: number) => {
-      engineBridge.noteOff(keyToNote(semitone, 0));
-      mark(semitone, false);
-    },
-    [mark],
-  );
+  const startNote = useCallback((semitone: number) => acquireNote(semitone), [acquireNote]);
+  const stopNote = useCallback((semitone: number) => releaseNote(semitone), [releaseNote]);
 
   const onKeyDown = useCallback(
     (e: ReactPointerEvent<SVGGElement>, k: KeyRect) => {
@@ -287,16 +306,13 @@ export function KeyboardPanel() {
   /** Flush EVERY held pointer/PC note — guards a hung gate (the shared voice means a
    *  stranded gate also blocks the sequencer). Wired to blur + unmount + power changes. */
   const flushAll = useCallback(() => {
-    for (const semitone of pointerNote.current.values()) {
-      engineBridge.noteOff(keyToNote(semitone, 0));
-    }
+    for (const semitone of pointerNote.current.values()) releaseNote(semitone);
     pointerNote.current.clear();
-    for (const semitone of pcKeyNote.current.values()) {
-      engineBridge.noteOff(keyToNote(semitone, 0));
-    }
+    for (const semitone of pcKeyNote.current.values()) releaseNote(semitone);
     pcKeyNote.current.clear();
+    holders.current.clear(); // drop any residual counts so a later acquire starts clean (B8)
     setHeld((prev) => (prev.size === 0 ? prev : new Set()));
-  }, []);
+  }, [releaseNote]);
 
   // Flush held notes when the window loses focus (alt-tab / click-away mid-hold) and
   // on unmount, so a dropped pointerup can't leave kbGate stuck high.
@@ -356,16 +372,14 @@ export function KeyboardPanel() {
       if (pcKeyNote.current.has(e.key.toLowerCase())) return; // already sounding (held)
       e.preventDefault();
       pcKeyNote.current.set(e.key.toLowerCase(), semitone);
-      engineBridge.noteOn(keyToNote(semitone, 0), SCREEN_VELOCITY);
-      mark(semitone, true);
+      acquireNote(semitone);
     };
     const up = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       const semitone = pcKeyNote.current.get(key);
       if (semitone == null) return;
       pcKeyNote.current.delete(key);
-      engineBridge.noteOff(keyToNote(semitone, 0));
-      mark(semitone, false);
+      releaseNote(semitone);
     };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
@@ -373,13 +387,10 @@ export function KeyboardPanel() {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
       // Releasing the latch (or unmount) must drop any keys still down.
-      for (const semitone of pcKeyNote.current.values()) {
-        engineBridge.noteOff(keyToNote(semitone, 0));
-        mark(semitone, false);
-      }
+      for (const semitone of pcKeyNote.current.values()) releaseNote(semitone);
       pcKeyNote.current.clear();
     };
-  }, [pcKeysOn, mark]);
+  }, [pcKeysOn, acquireNote, releaseNote]);
 
   // ---- render -------------------------------------------------------------------------
 

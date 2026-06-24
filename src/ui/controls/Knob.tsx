@@ -67,6 +67,8 @@ interface InteractionState {
   lastY: number;
   /** True while a keyboard adjust session awaits its keyup commit. */
   kbActive: boolean;
+  /** True once a real pointermove has occurred this drag — gates the release commit (B4). */
+  moved: boolean;
 }
 
 /**
@@ -135,7 +137,7 @@ export function Knob({
   /** Reveal the value readout at rest while the pointer is over / the knob is focused. */
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
-  const drag = useRef<InteractionState>({ pointerId: -1, norm: 0, lastY: 0, kbActive: false });
+  const drag = useRef<InteractionState>({ pointerId: -1, norm: 0, lastY: 0, kbActive: false, moved: false });
   const gRef = useRef<SVGGElement | null>(null);
   const wheelTimer = useRef<number | null>(null);
   /** Long-press arm timer (started on pointerdown, cleared on travel / release). */
@@ -210,6 +212,7 @@ export function Knob({
     s.pointerId = e.pointerId;
     s.lastY = e.clientY;
     s.kbActive = false;
+    s.moved = false; // reset travel tracking; a zero-travel focusing click must NOT commit (B4)
 
     // Arm-on-hold: a stationary press for ARM_HOLD_MS fires onLongPress (a normal quick drag
     // cancels it once travel passes ARM_TRAVEL_PX). Same idiom as the wheel idle timer.
@@ -236,6 +239,7 @@ export function Knob({
   const onPointerMove = (e: ReactPointerEvent<SVGGElement>) => {
     const s = drag.current;
     if (s.pointerId !== e.pointerId) return;
+    s.moved = true; // a real pointermove occurred → the release is allowed to commit (B4)
     const upPx = s.lastY - e.clientY; // up = increase
     s.lastY = e.clientY;
     holdTravel.current += Math.abs(upPx);
@@ -274,7 +278,7 @@ export function Knob({
     }
 
     setLive(null);
-    onCommit(normToValue(s.norm, def));
+    if (s.moved) onCommit(normToValue(s.norm, def)); // skip the redundant no-travel focusing-click commit (B4)
   };
 
   const onDoubleClick = () => {

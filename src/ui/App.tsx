@@ -11,15 +11,17 @@
  * PER-TAB FILL-ZOOM MODEL (Wave-1 split → per-voice tabs). A <TabBar> + a dynamic
  * <MasterRibbon> render as OUT-OF-STAGE chrome — siblings ABOVE .stage-viewport, sized
  * in SCREEN pixels (NOT inside the transform:scale <main>) — so they never touch the
- * stage16x9 geometry. `tab` (cascade | anvil | monarch | patchbay | sampler — UI_TABS)
+ * stage16x9 geometry. `tab` (cascade | anvil | monarch | courier | patchbay | sampler | fx — UI_TABS)
  * gates which stage Regions mount AND picks the per-tab CONTENT BBOX the stage zooms to
  * fill:
  *   - 'cascade' : the Cascade voice controls.
  *   - 'anvil'   : the Anvil voice controls.
  *   - 'monarch' : the Monarch controls + the 32-step seq strip + the docked keyboard.
+ *   - 'courier' : the Courier voice controls + its sequencer/mod-assign surface.
  *   - 'patchbay': the consolidated 88-jack field + the 16 sampler pad jacks + the group
  *                 borders + the CableLayer. This is the ONLY tab cables render on.
  *   - 'sampler' : the SAMPLER pad-control section + the DRUM MACHINE grid (no jacks).
+ *   - 'fx'      : the master effects panel (flanger/delay/reverb).
  * The 3 voices each get their OWN control tab, but all 104 jacks (88 voice + 16 sampler)
  * still co-mount together on 'patchbay' (HARD CONSTRAINT: every jack a cable touches must
  * be in the DOM together or the cable vanishes — CableLayer renders null for an unmounted
@@ -336,7 +338,7 @@ export function App() {
         powered={powered}
         busy={busy}
         onTogglePower={togglePower}
-        onOpenPicker={(mode) => setPicker(mode)}
+        onOpenPicker={setPicker}
       />
       <TabBar tab={tab} onTab={setTab} />
 

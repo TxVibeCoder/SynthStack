@@ -20,6 +20,10 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
   const positions = def.positions ?? [];
   const count = positions.length;
   const idx = Math.max(0, positions.indexOf(value));
+  // Lever, ticks and caption all paint at `idx`; derive the announced label from the SAME
+  // resolved position so an unknown/stale `value` can't make the aria-label disagree with the
+  // visible lever (B5). Falls back to the raw value only in the degenerate empty-positions case.
+  const shownPos = positions[idx] ?? value;
   const yOf = (i: number) => (i - (count - 1) / 2) * NOTCH_SPACING;
   const slotH = Math.max(count - 1, 1) * NOTCH_SPACING + 14;
 
@@ -50,7 +54,7 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
       transform={`translate(${x} ${y})`}
       tabIndex={0}
       role="button"
-      aria-label={`${def.panelLabel}: ${value}`}
+      aria-label={`${def.panelLabel}: ${shownPos}`}
       onClick={onClick}
       onKeyDown={onKeyDown}
     >
