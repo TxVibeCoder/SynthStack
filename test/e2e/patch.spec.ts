@@ -160,3 +160,68 @@ test('unplugging the HOLD cable releases hold (no stranded freeze)', async ({ pa
   await bridge('commitCables', [{ id: 'x1', from: 'MON_LFO_TRI_OUT', to: 'MON_VCF_CUTOFF_IN', color: '#fff' }]);
   expect(await holdActive()).toBe(true);
 });
+
+test('swapping the HOLD cable source releases hold; an unrelated edit while held keeps it', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('power').click();
+  await page.waitForFunction(() => (window.__synthstackStudio as any)?.powered === true);
+
+  const bridge = (fn: string, ...args: unknown[]) =>
+    page.evaluate(([f, a]) => (window.__synthstackStudio as any)[f as string](...(a as unknown[])), [fn, args] as const);
+  const holdActive = () =>
+    page.evaluate(() => (window.__synthstackStudio as any).studioInstance.monarchSeq.holdActive as boolean);
+  const setHold = (v: boolean) =>
+    page.evaluate((on) => { (window.__synthstackStudio as any).studioInstance.monarchSeq.holdActive = on; }, v);
+
+  // Patch source A into MON_HOLD_IN and simulate it having driven the gate HIGH.
+  await bridge('commitCables', [{ id: 'h1', from: 'MON_ASSIGN_OUT', to: 'MON_HOLD_IN', color: '#fff' }]);
+  await setHold(true);
+  expect(await holdActive()).toBe(true);
+
+  // SWAP: replace the HOLD cable's source with a DIFFERENT (low) source in ONE patch update — the
+  // preset-load shape. findCable still returns a cable, so before the fix the pure-remove release
+  // never ran and holdActive stranded TRUE, freezing the sequence on one step. The swap must
+  // release it (the new low source raises no rising edge; a high source would re-raise via the
+  // worklet's connect-time rising edge — released, never frozen).
+  await bridge('commitCables', [{ id: 'h2', from: 'MON_LFO_TRI_OUT', to: 'MON_HOLD_IN', color: '#fff' }]);
+  expect(await holdActive()).toBe(false);
+
+  // SAME-source unrelated edit: the HOLD cable's source is unchanged, only another cable is added.
+  // A live hold (set again) must NOT be disturbed (the swap-release only fires on a source change).
+  await setHold(true);
+  await bridge('commitCables', [
+    { id: 'h2', from: 'MON_LFO_TRI_OUT', to: 'MON_HOLD_IN', color: '#fff' },
+    { id: 'u1', from: 'MON_EG_OUT', to: 'MON_VCA_CV_IN', color: '#fff' },
+  ]);
+  expect(await holdActive()).toBe(true);
+});
+
+test('CAS_RESET_IN: unplugging while reset-held clears resetHeld (no stranded step-1 pin)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('power').click();
+  await page.waitForFunction(() => (window.__synthstackStudio as any)?.powered === true);
+
+  const bridge = (fn: string, ...args: unknown[]) =>
+    page.evaluate(([f, a]) => (window.__synthstackStudio as any)[f as string](...(a as unknown[])), [fn, args] as const);
+  const resetHeld = () =>
+    page.evaluate(() => (window.__synthstackStudio as any).studioInstance.cascadeClock.resetHeld as boolean);
+  const setResetHeld = (v: boolean) =>
+    page.evaluate((on) => { (window.__synthstackStudio as any).studioInstance.cascadeClock.resetHeld = on; }, v);
+
+  // Patch a source into CAS_RESET_IN and simulate a SUSTAINED HIGH gate having pinned step 1.
+  // (Set resetHeld directly so the assertion is independent of a live signal phase — same shape as
+  // the MON_HOLD test above.)
+  await bridge('commitCables', [{ id: 'r1', from: 'MON_ASSIGN_OUT', to: 'CAS_RESET_IN', color: '#fff' }]);
+  await setResetHeld(true);
+  expect(await resetHeld()).toBe(true);
+
+  // UNPLUG: no cable = gate low = release. Without the teardown clear, the falling-edge follower
+  // that would release resetHeld is torn down with the cable, stranding the step-1 pin.
+  await bridge('commitCables', []);
+  expect(await resetHeld()).toBe(false);
+
+  // An unrelated edit must NOT clobber a panel-set RESET-hold (no RESET cable present -> branch inert).
+  await setResetHeld(true);
+  await bridge('commitCables', [{ id: 'x2', from: 'MON_LFO_TRI_OUT', to: 'MON_VCF_CUTOFF_IN', color: '#fff' }]);
+  expect(await resetHeld()).toBe(true);
+});
