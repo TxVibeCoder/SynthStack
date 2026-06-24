@@ -4,6 +4,8 @@ import {
   formatElapsed,
   buildRecordingFilename,
   recordingExtForMime,
+  recordingExtForFormat,
+  type RecordFormat,
 } from '../../src/engine/recordHelpers';
 import { MasterRecorder } from '../../src/engine/recorder';
 
@@ -58,6 +60,14 @@ describe('recordHelpers — pure recording core (feature: recording)', () => {
     expect(recordingExtForMime('')).toBe('audio');
     expect(recordingExtForMime('application/octet-stream')).toBe('audio');
   });
+
+  it('recordingExtForFormat maps the RecordFormat to a container extension', () => {
+    expect(recordingExtForFormat('wav')).toBe('wav');
+    expect(recordingExtForFormat('webm')).toBe('webm');
+    // exhaustive over the union (a compile-time guard the switch stays total)
+    const all: RecordFormat[] = ['webm', 'wav'];
+    expect(all.map(recordingExtForFormat)).toEqual(['webm', 'wav']);
+  });
 });
 
 describe('MasterRecorder — graceful degradation under Node (no MediaRecorder)', () => {
@@ -84,5 +94,49 @@ describe('MasterRecorder — graceful degradation under Node (no MediaRecorder)'
   it('stop() resolves null without throwing', async () => {
     const rec = new MasterRecorder({} as unknown as AudioContext, {} as unknown as AudioNode);
     await expect(rec.stop()).resolves.toBeNull();
+  });
+});
+
+describe('MasterRecorder — WAV format degradation under Node (no AudioWorkletNode)', () => {
+  // Node has no global AudioWorkletNode and ctx={} as any has no audioWorklet, so the WAV path's
+  // `wavSupported` is false. Selecting 'wav' must keep every method a no-throw no-op returning the
+  // idle shape — exactly parallel to the webm degradation above.
+  const makeWav = (): MasterRecorder => {
+    const rec = new MasterRecorder({} as unknown as AudioContext, {} as unknown as AudioNode);
+    rec.setFormat('wav');
+    return rec;
+  };
+
+  it('getFormat reflects the selection and isSupported is false for WAV under Node', () => {
+    const rec = makeWav();
+    expect(rec.getFormat()).toBe('wav');
+    expect(rec.isSupported).toBe(false);
+  });
+
+  it('start() returns false without throwing in WAV mode', () => {
+    const rec = makeWav();
+    expect(() => rec.start()).not.toThrow();
+    expect(rec.start()).toBe(false);
+  });
+
+  it('isRecording is false and getState() is idle after a WAV start attempt', () => {
+    const rec = makeWav();
+    rec.start();
+    expect(rec.isRecording).toBe(false);
+    expect(rec.getState()).toEqual({ recording: false, elapsedMs: 0 });
+  });
+
+  it('stop() resolves null without throwing in WAV mode', async () => {
+    const rec = makeWav();
+    await expect(rec.stop()).resolves.toBeNull();
+  });
+
+  it('setFormat defaults to webm and round-trips both values', () => {
+    const rec = new MasterRecorder({} as unknown as AudioContext, {} as unknown as AudioNode);
+    expect(rec.getFormat()).toBe('webm');
+    rec.setFormat('wav');
+    expect(rec.getFormat()).toBe('wav');
+    rec.setFormat('webm');
+    expect(rec.getFormat()).toBe('webm');
   });
 });

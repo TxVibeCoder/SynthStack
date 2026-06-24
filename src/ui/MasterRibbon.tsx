@@ -40,6 +40,7 @@ import {
   PowerButton,
   TempoLinkButton,
   RecordButton,
+  RecordFormatToggle,
   FullScreenButton,
 } from './UtilityStrip';
 import { MasterKnob, ChannelFaders } from './MixerKnobs';
@@ -472,6 +473,10 @@ export const MasterRibbon = memo(function MasterRibbon({
 
         {/* RECORD — capture master output; keeps record/record-elapsed testids. */}
         <RecordButton x={1010} y={28} />
+
+        {/* WEBM/WAV format selector — picks the next take's container (lossy default vs lossless
+         * WAV). Sits on the lower row under the RECORD cap. */}
+        <RecordFormatToggle x={992} y={ROW2_Y} />
 
         {/* FULL SCREEN — target the full viewport. */}
         <FullScreenButton x={1100} y={28} />

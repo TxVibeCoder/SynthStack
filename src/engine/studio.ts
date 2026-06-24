@@ -10,6 +10,7 @@
  */
 
 import { StudioContext } from './context';
+import type { RecordFormat } from './recordHelpers';
 import { MasterFxChain, type MasterFxId } from './fx/masterFxChain';
 import { MonarchModule } from './modules/monarch';
 import { AnvilModule } from './modules/anvil';
@@ -1009,6 +1010,10 @@ export class Studio {
   // The recorder is owned by StudioContext (it taps the private softClip); these only
   // delegate. powerOff (above) already routes through context.powerOff, which auto-stops
   // and flushes a recording in progress before suspend — no extra stop is needed here.
+
+  setRecordFormat(format: RecordFormat): void {
+    this.context.setRecordFormat(format);
+  }
 
   startRecording(): boolean {
     return this.context.startRecording();

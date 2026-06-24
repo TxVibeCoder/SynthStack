@@ -51,6 +51,36 @@ describe('engineBridge recording seam (store-level, unpowered)', () => {
     expect(engineBridge.getRecordingState()).toEqual({ recording: false, elapsedMs: 0 });
   });
 
+  it('setRecordFormat is an unpowered no-op on the engine, but updates the UI snapshot', () => {
+    // Default selection is the lossy webm container.
+    expect(engineBridge.getRecordFormat()).toBe('webm');
+    expect(priv._powered).toBe(false); // sanity: never powers on
+    expect(() => {
+      engineBridge.setRecordFormat('wav');
+      engineBridge.setRecordFormat('webm');
+      engineBridge.setRecordFormat('wav');
+    }).not.toThrow();
+    // The selection is held on the bridge (runtime-only UI source of truth) even unpowered.
+    expect(engineBridge.getRecordFormat()).toBe('wav');
+    // The poll is still idle — selecting a format never starts a recorder.
+    expect(engineBridge.getRecordingState()).toEqual({ recording: false, elapsedMs: 0 });
+    // restore the default so test ordering can't leak the WAV pick into a later case
+    engineBridge.setRecordFormat('webm');
+    expect(engineBridge.getRecordFormat()).toBe('webm');
+  });
+
+  it('setRecordFormat never leaks into store.controls or the serialized tree', () => {
+    engineBridge.setRecordFormat('wav');
+    const controls = engineBridge.store.getState().controls;
+    for (const mod of Object.values(controls)) {
+      for (const id of Object.keys(mod)) {
+        expect(id).not.toContain('FORMAT');
+        expect(id).not.toContain('RECORD');
+      }
+    }
+    engineBridge.setRecordFormat('webm');
+  });
+
   it('recording calls never leak into store.controls', () => {
     // Touching store lazily constructs the (audio-free) Studio, but that is orthogonal to
     // the recorder, which only exists post-power-on inside StudioContext. After the calls,

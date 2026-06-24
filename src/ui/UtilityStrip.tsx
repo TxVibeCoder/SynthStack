@@ -416,6 +416,81 @@ export const RecordButton = memo(function RecordButton({
 });
 
 /**
+ * RECORD FORMAT selector (WEBM | WAV): a two-segment toggle that picks the capture container for
+ * the NEXT take. WEBM = the lossy MediaRecorder/opus default (small, universally playable); WAV =
+ * the lossless in-browser PCM-tap capture (CAD-grade fidelity). Runtime-only — the bridge holds
+ * the selection (never serialized), so local state seeded from getRecordFormat() is the source of
+ * truth; a take in flight keeps its own format (the engine ignores a mid-record change). Sits to
+ * the right of the RECORD cap; x/y locate the WEBM segment's left edge. Renders an SVG <g> — mount
+ * inside an <svg>. Carries data-testid="record-format".
+ *
+ * EARS/DECISION: the WAV bit depth (16 default vs 24) is fixed in the engine recorder — this
+ * selector only chooses the container, not the depth; flagged for Will.
+ */
+export const RecordFormatToggle = memo(function RecordFormatToggle({
+  x = 300,
+  y = ROW2_Y,
+}: {
+  x?: number;
+  y?: number;
+} = {}) {
+  const [format, setFormat] = useState<'webm' | 'wav'>(() => engineBridge.getRecordFormat());
+  const pick = useCallback((f: 'webm' | 'wav') => {
+    engineBridge.setRecordFormat(f);
+    setFormat(f);
+  }, []);
+  const seg = (label: 'webm' | 'wav', sx: number) => {
+    const on = format === label;
+    return (
+      <g
+        className="control"
+        role="button"
+        tabIndex={0}
+        aria-pressed={on}
+        aria-label={`Record format ${label.toUpperCase()}`}
+        data-testid={`record-format-${label}`}
+        onClick={() => pick(label)}
+        onKeyDown={(e: ReactKeyboardEvent<SVGGElement>) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          pick(label);
+        }}
+      >
+        <rect
+          x={sx}
+          y={y - 8}
+          width={30}
+          height={16}
+          rx={3}
+          fill={on ? COLORS.ledRed : COLORS.panelShadow}
+          stroke={COLORS.panelEdge}
+          strokeWidth={1}
+        />
+        <text
+          x={sx + 15}
+          y={y + 3}
+          textAnchor="middle"
+          fontFamily={FONT_CONDENSED}
+          fontSize={8}
+          letterSpacing={0.5}
+          fill={on ? COLORS.panelShadow : COLORS.legend}
+          pointerEvents="none"
+        >
+          {label.toUpperCase()}
+        </text>
+      </g>
+    );
+  };
+  return (
+    <g data-testid="record-format">
+      <title>Capture format — WEBM (small, lossy) or WAV (lossless, larger)</title>
+      {seg('webm', x)}
+      {seg('wav', x + 32)}
+    </g>
+  );
+});
+
+/**
  * FULL SCREEN (live): the stage targets the full 1080p viewport. Self-contained
  * (tracks `document.fullscreenElement` via the fullscreenchange event; no engine
  * wiring). Exported for the master ribbon; x/y locate the cap center and default to

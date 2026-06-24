@@ -48,6 +48,7 @@
 
 import { Studio } from '../engine/studio';
 import type { MasterFxId } from '../engine/fx/masterFxChain';
+import type { RecordFormat } from '../engine/recordHelpers';
 import {
   coalesceCourierModAssignState,
   coalesceCourierSequencerState,
@@ -663,13 +664,41 @@ class EngineBridge {
   // (recording is runtime-only, orthogonal to INIT, which leaves the context running).
 
   /**
+   * The selected capture format ('webm' lossy default | 'wav' lossless). RUNTIME-ONLY (never
+   * serialized; recording is orthogonal to the saved tree). Held here as the UI's source of
+   * truth so the selector reflects the choice before power-on, and forwarded to the engine
+   * recorder on selection (re-asserted at start so a pre-power pick still lands).
+   */
+  private recordFormat: RecordFormat = 'webm';
+
+  /**
+   * Select the capture format for the next take. Stores the choice (UI snapshot source) and
+   * forwards to the engine (no-op unpowered — re-asserted at the next start). The engine recorder
+   * ignores a mid-record change (the in-flight take keeps its format); the new pick applies to the
+   * next start().
+   */
+  setRecordFormat(format: RecordFormat): void {
+    this.recordFormat = format;
+    if (this._powered) this.studio.setRecordFormat(format);
+  }
+
+  /** Current capture-format selection (UtilityStrip selector snapshot source). */
+  getRecordFormat(): RecordFormat {
+    return this.recordFormat;
+  }
+
+  /**
    * Start capturing the master output. No-op while unpowered (the engine recorder only
    * exists post-power-on inside StudioContext). The boolean studio.startRecording() returns
    * is discarded at the seam — the UI reads truth from getRecordingState(). Never throws
-   * (the engine recorder degrades to false when MediaRecorder is unavailable).
+   * (the engine recorder degrades to false when MediaRecorder is unavailable). Re-asserts the
+   * selected format first so a format picked before power-on still applies to this take.
    */
   startRecording(): void {
-    if (this._powered) this.studio.startRecording();
+    if (this._powered) {
+      this.studio.setRecordFormat(this.recordFormat);
+      this.studio.startRecording();
+    }
   }
 
   /**
