@@ -88,6 +88,14 @@ test('sampler: studio tiers on load, pad load on the sampler tab, voice↔sample
 
   await page.goto('/');
   await page.getByTestId('power').click();
+  // Wait for the engine to power before any transport/sampler interaction — those guard on the
+  // bridge `_powered` flag, so acting before power-on completes is a silent no-op (power-on lags
+  // the UI rendering under parallel headless load). Mirrors smoke.spec / drumMachine.spec.
+  await page.waitForFunction(
+    () => (window.__synthstackStudio as { powered?: boolean } | undefined)?.powered === true,
+    null,
+    { timeout: 15_000 },
+  );
 
   // ---- a. the console tiers render — each voice on its own tab ----------------------
   // The app boots on the CASCADE voice tab. tier-mixer (the ribbon's 4 channel faders) is
@@ -190,6 +198,14 @@ test('sampler: per-pad LOOP toggle + global QUANTIZE launch a held loop on the g
 
   await page.goto('/');
   await page.getByTestId('power').click();
+  // Wait for the engine to power before launching a loop — the loop clock guards on the bridge
+  // `_powered` flag, so launching before power-on completes is a silent no-op (power-on lags the
+  // UI rendering under parallel headless load). Mirrors smoke.spec / drumMachine.spec.
+  await page.waitForFunction(
+    () => (window.__synthstackStudio as { powered?: boolean } | undefined)?.powered === true,
+    null,
+    { timeout: 15_000 },
+  );
 
   // switch to the SAMPLER tab (the pad + LOOP + QUANTIZE controls live there) and load
   // a real (tiny) buffer into pad 0 — a loop with no sample is a silent no-op, so it
