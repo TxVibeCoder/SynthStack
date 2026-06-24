@@ -13,6 +13,7 @@ import { loadWorklets } from '../../src/engine/context';
 import { MonarchModule } from '../../src/engine/modules/monarch';
 import { AnvilModule } from '../../src/engine/modules/anvil';
 import { CascadeModule } from '../../src/engine/modules/cascade';
+import { CourierModule } from '../../src/engine/modules/courier';
 import { StudioEndpointRegistry } from '../../src/engine/modules/registry';
 import { buildJackIndex, RouterBinding } from '../../src/engine/router';
 import type { ModuleDef } from '../../data/schema';
@@ -28,7 +29,7 @@ export interface AudioTestResult {
 
 type Builder<M> = new (ctx: BaseAudioContext, def: ModuleDef) => M;
 
-export async function buildModule<M extends MonarchModule | AnvilModule | CascadeModule>(
+export async function buildModule<M extends MonarchModule | AnvilModule | CascadeModule | CourierModule>(
   seconds: number,
   Ctor: Builder<M>,
   def: unknown,

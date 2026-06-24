@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:audio": "playwright test audioBattery"
+    "test:audio": "playwright test audioBattery",
+    "test:measure": "playwright test --config playwright.measure.config.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

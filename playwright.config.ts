@@ -11,6 +11,9 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: 'test/e2e',
+  // the fidelity measurement battery runs only via its own config (dedicated port) — keep it
+  // out of the default e2e sweep so it never contends for 5173.
+  testIgnore: /measurement\.spec\.ts/,
   use: {
     channel: 'chrome',
     headless: true,

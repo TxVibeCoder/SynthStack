@@ -19,6 +19,10 @@ const reactRoot = createRoot(root);
 // test-only fft.js dependency) stays out of the normal startup path
 if (window.location.hash.startsWith('#/dev/audio-tests')) {
   void import('./devharness/AudioTests').then(({ AudioTests }) => reactRoot.render(<AudioTests />));
+} else if (window.location.hash.startsWith('#/dev/measure')) {
+  void import('./devharness/MeasurementBattery').then(({ MeasurementBattery }) =>
+    reactRoot.render(<MeasurementBattery />),
+  );
 } else {
   reactRoot.render(<App />);
 }
