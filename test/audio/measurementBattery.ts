@@ -165,10 +165,10 @@ async function cascadeTone(wave: 'SAW' | 'SQUARE', hz: number, o: ToneOpts = {})
 async function courierTone(
   waveshape: number,
   hz: number,
-  o: ToneOpts & { filterMode?: string; resonance?: number } = {},
+  o: ToneOpts & { filterMode?: string; resonance?: number; mixOsc1?: number } = {},
 ): Promise<Float32Array> {
   const { mod, ctx, render } = await buildModule(o.seconds ?? TONE_S, CourierModule, courierDef);
-  mod.setControl('COU_MIX_OSC1', 1);
+  mod.setControl('COU_MIX_OSC1', o.mixOsc1 ?? 1);
   mod.setControl('COU_MIX_OSC2', 0);
   mod.setControl('COU_MIX_SUB', 0);
   mod.setControl('COU_MIX_NOISE', 0);
@@ -222,8 +222,9 @@ async function pitchResult(name: string, tone: ToneFn, midHz = PITCH_REF): Promi
 
 /** Brightness tracks the cutoff control: the saw centroid rises strongly when the filter opens. */
 async function filterResult(name: string, tone: ToneFn, lowCut = 400, highCut = 8000): Promise<AudioTestResult> {
-  const lo = centroid(await tone(PITCH_REF / 2, { cutoffHz: lowCut }));
-  const hi = centroid(await tone(PITCH_REF / 2, { cutoffHz: highCut }));
+  // Base pitch = C4 (in every voice's reachable range, incl. the Cascade knob's 261.63 Hz floor).
+  const lo = centroid(await tone(PITCH_REF, { cutoffHz: lowCut }));
+  const hi = centroid(await tone(PITCH_REF, { cutoffHz: highCut }));
   const ratio = hi / Math.max(lo, 1);
   const pass = ratio > 2.5;
   return {
@@ -304,18 +305,21 @@ async function courierMultimode(): Promise<AudioTestResult> {
 }
 
 async function courierSelfOsc(): Promise<AudioTestResult> {
-  // High resonance with no external pitch should make the filter ring (self-osc onset wired).
-  // Courier's resScale 1.43 puts onset ≈ knob 0.70; drive a near-silent osc and crank resonance.
-  const ringing = await courierTone(WS_TRI, PITCH_REF / 4, { cutoffHz: 1000, resonance: 1, seconds: TONE_S });
+  // Crank resonance with only a TINY excitation (mixOsc1 0.04 → ~±0.2 vv) at a NON-DEFAULT cutoff
+  // (1500 Hz, distinct from the ladder worklet's 1000 Hz defaultValue) so the test proves BOTH things
+  // its name claims: (1) the filter SELF-OSCILLATES — the measured energy is the ring, not osc
+  // passthrough (a 65 Hz fundamental at 0.04 mix would read rms ≈ 0.1, far below the gate), and (2)
+  // COU_CUTOFF reaches the core — the ring sits at the SET 1500 Hz, which a stuck-at-1000-default
+  // param could not produce. Courier's resScale 1.43 puts self-osc onset ≈ knob 0.70, so res 1 rings.
+  const fc = 1500;
+  const ringing = await courierTone(WS_TRI, PITCH_REF / 4, { cutoffHz: fc, resonance: 1, mixOsc1: 0.04 });
   const level = rms(ringing, OFFSET, OFFSET + FFT);
-  const spec = fftMag(ringing, SR, FFT, OFFSET);
-  // dominant spectral peak should sit near the 1 kHz cutoff (the self-oscillation tone)
-  const f = peakFreqHz(spec, 600, 1600);
-  const pass = level > 0.5 && Math.abs(f - 1000) / 1000 < 0.15;
+  const f = peakFreqHz(fftMag(ringing, SR, FFT, OFFSET), fc * 0.6, fc * 1.4);
+  const pass = level > 0.3 && Math.abs(f - fc) / fc < 0.15;
   return {
-    name: 'Courier — resonance self-oscillates near cutoff (filter wired)',
+    name: 'Courier — resonance self-oscillates at the SET cutoff (filter + cutoff wired)',
     pass,
-    detail: `rms=${level.toFixed(2)}vv peak=${f.toFixed(0)}Hz (expect ~1000)`,
+    detail: `rms=${level.toFixed(2)}vv peak=${f.toFixed(0)}Hz (expect ~${fc})`,
   };
 }
 

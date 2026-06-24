@@ -253,7 +253,9 @@ describe('osc.worklet core — waveshape morph + wavefolder (A2)', () => {
     // Triangle: odd harmonics only, even harmonics strongly suppressed.
     expect(db(harm(triS, f0, 2) / harm(triS, f0, 1))).toBeLessThan(-30);
     expect(db(harm(triS, f0, 4) / harm(triS, f0, 1))).toBeLessThan(-30);
-    // Triangle rolls off as 1/k^2 — H3 is weak (~1/9).
+    // H3 is weak: at WS_TRI the detent is a ROUNDED near-sine (the base sine-fold rounds the
+    // triangle), so H3 is even weaker than a true triangle's 1/9 — see the dedicated Tier-A
+    // "WS_TRI waypoint is a rounded near-sine" test below, which characterizes this precisely.
     expect(harm(triS, f0, 3) / harm(triS, f0, 1)).toBeLessThan(0.2);
 
     // Saw: all harmonics present, ~1/k roll-off (H2 is the strongest overtone, ~0.5).
