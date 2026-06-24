@@ -74,6 +74,14 @@ test('recording: RECORD lights, elapsed advances, a second click returns to idle
 
   await page.goto('/');
   await page.getByTestId('power').click();
+  // Wait for the engine to power before touching the recorder: recording guards on the bridge
+  // `_powered` flag, so a RECORD click before power-on completes is a silent no-op (power-on lags
+  // the UI rendering under parallel headless load). Mirrors smoke.spec / drumMachine.spec.
+  await page.waitForFunction(
+    () => (window.__synthstackStudio as { powered?: boolean } | undefined)?.powered === true,
+    null,
+    { timeout: 15_000 },
+  );
 
   const isRecording = () =>
     page.evaluate(() => window.__synthstackStudio!.getRecordingState().recording as boolean);

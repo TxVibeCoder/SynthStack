@@ -74,6 +74,15 @@ test('drum machine: on the sampler tab, cell round-trips, RUN plays, CLEAR zeroe
 
   await page.goto('/');
   await page.getByTestId('power').click();
+  // Wait for the engine to actually power before any transport interaction below: runAll()/drumRun()
+  // guard on the bridge `_powered` flag, so clicking RUN ALL before power-on completes is a silent
+  // no-op and the drum never starts (under parallel headless load power-on lags well past the tiers
+  // merely rendering). Mirrors the second test + smoke.spec.
+  await page.waitForFunction(
+    () => (window.__synthstackStudio as { powered?: boolean } | undefined)?.powered === true,
+    null,
+    { timeout: 15_000 },
+  );
 
   // ---- a. the console tiers render — each voice on its own tab ----------------------
   // The app boots on the CASCADE voice tab. tier-mixer (the ribbon's 4 channel faders)
@@ -133,19 +142,23 @@ test('drum machine: on the sampler tab, cell round-trips, RUN plays, CLEAR zeroe
     })
     .toBe(true);
 
-  // master RUNNING first (the grid only emits while the Monarch master runs — v1
-  // master-stopped semantics: drum RUN arms silently, snaps in on the run edge).
+  // RUN ALL is the single master transport: it starts the Monarch master AND the drum grid in the
+  // same gesture (studio.runAll), so the grid is already running after this. We deliberately do NOT
+  // click the drum-runstop latch to "start" it — that latch toggles off the up-to-250ms-polled
+  // drumRunning flag, so once RUN ALL has already started the grid a click can race the poll and
+  // STOP it (a flake). The "grid plays with no console errors" intent is covered by RUN ALL → play
+  // → STOP ALL; the latch button's own toggle is exercised by drum-only RUN/STOP elsewhere.
   await page.locator('[role="button"][aria-label^="RUN ALL"]').click();
-  // drum RUN — the lit RUN/STOP latch
-  await page.getByTestId('drum-runstop').click();
   await expect
     .poll(() => page.evaluate(() => window.__synthstackStudio!.getDrumSeqRunning() as boolean))
     .toBe(true);
   // let the grid step across at least a full bar at 120 BPM (one bar = 500 ms)
   await page.waitForTimeout(700);
-  // STOP the grid + the master
-  await page.getByTestId('drum-runstop').click();
+  // STOP ALL halts the master + the grid (mirrors RUN ALL).
   await page.locator('[role="button"][aria-label^="STOP ALL"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__synthstackStudio!.getDrumSeqRunning() as boolean))
+    .toBe(false);
 
   // ---- e. CLEAR zeroes the whole pattern back to all-false ------------------------
   await page.getByTestId('drum-clear').click();

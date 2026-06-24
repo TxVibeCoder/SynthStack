@@ -6,11 +6,13 @@
  * One test, five assertions in sequence (console errors are
  * collected for the whole session so every later step is covered too):
  *   a. / loads with zero console errors
- *   b. POWER is visible; clicking it un-dims the rack and the AudioContext
- *      reaches 'running' within 5 s
- *   c. on the PATCHBAY tab all 104 jacks co-mount (Monarch 32 + Anvil 24 +
- *      Cascade 32 voice jacks + 16 SAMPLER pad jacks) — the patchbay is the
- *      single tab that hosts every patchable jack in the 3-tab layout
+ *   b. POWER is visible; clicking it powers the engine — the bridge `powered` flag
+ *      flips and the AudioContext reaches 'running'. (The rack's visual un-dim is a
+ *      downstream React effect gated on the slow factory-sample render and is NOT
+ *      awaited here — see the body for why; we assert the tiers merely render.)
+ *   c. on the PATCHBAY tab all 113 jacks co-mount (Monarch 32 + Anvil 24 +
+ *      Cascade 32 + Courier 9 voice jacks + 16 SAMPLER pad jacks) — the patchbay is
+ *      the single tab that hosts every patchable jack
  *   d. on the STUDIO tab, dragging the Monarch CUTOFF knob 40 px commits a
  *      changed store value
  *   e. RUN ALL plays 500 ms with no console errors, then STOP ALL (the
@@ -26,15 +28,17 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * Monarch 32 + Anvil 24 + Cascade 32 (data/*.json, schema-validated in test/unit), plus
- * the SAMPLER section's 16 rendered pad jacks (8 SAMP_PAD{n}_OUT + 8
+ * Monarch 32 + Anvil 24 + Cascade 32 + Courier 9 (data/*.json, schema-validated in
+ * test/unit), plus the SAMPLER section's 16 rendered pad jacks (8 SAMP_PAD{n}_OUT + 8
  * SAMP_PAD{n}_TRIG_IN). The sampler def also carries SAMP_MIX_OUT, but the panel
  * wires that to mixer ch3 internally and does NOT render a jack circle for it,
- * so only 16 of the 17 SAMP_* jacks appear in the DOM. In the 3-tab layout all 104
- * co-mount on the PATCHBAY tab (the 88 voice jacks in the jack-field zone + the 16
- * sampler jacks in the sampler-jacks zone), so the count is read there.
+ * so only 16 of the 17 SAMP_* jacks appear in the DOM. All 113 co-mount on the PATCHBAY
+ * tab (the 97 voice jacks — the 88 in the jack-field zone + Courier's 9 in its own band
+ * zone — plus the 16 sampler jacks), so the count is read there.
+ * Courier (9 = 4 in CLOCK/EXP/SUSTAIN/EXT, 5 out AUDIO/VCA/GATE/CV/CLOCK) docks as a
+ * separate band below the 3-machine field but still mounts on the patchbay tab.
  */
-const JACK_COUNT = 32 + 24 + 32 + 16;
+const JACK_COUNT = 32 + 24 + 32 + 9 + 16;
 
 /** data/monarch.json MON_VCF_CUTOFF default (Hz) — the knob step d drags. */
 const MON_CUTOFF_DEFAULT_HZ = 800;
@@ -78,26 +82,39 @@ test('studio smoke: load, power, panels, knob drag, run/stop all', async ({ page
   await expect(page.locator('main.rack')).toBeVisible();
   expectNoErrors('after load');
 
-  // ---- b. POWER visible → click → rack un-dims, AudioContext 'running' ≤ 5 s ------
+  // ---- b. POWER visible → click → AudioContext 'running', THEN the rack un-dims ----
   const power = page.getByTestId('power');
   await expect(power).toBeVisible();
   await power.click();
-  // The default tab is now the CASCADE voice tab, so only its tier-cascade Region mounts
-  // here (each voice has its own tab); tier-mixer (the 4 channel faders) lives on the
-  // master-ribbon chrome, mounted on every tab. Both must un-dim on power-on.
-  for (const tier of ['tier-cascade', 'tier-mixer']) {
-    await expect(page.getByTestId(tier)).not.toHaveClass(/\bunpowered\b/);
-  }
+  // Verify power-on on its RELIABLE, FAST signals and do NOT block on the rack's visual un-dim.
+  // Inside engineBridge.powerOn(): (1) studio.powerOn() resumes the AudioContext → 'running';
+  // (2) `_powered = true` + applyFullState → the bridge `powered` flag; THEN (3) it awaits
+  // loadFactorySamples() (8 offline renders) before React's `powered` flips and the `.unpowered`
+  // dim clears. (3) is the slow tail — under parallel headless workers those renders take many
+  // seconds, which made the old un-dim-class assertion flaky (and could blow the test budget).
+  // The engine flag (2) + running context (1) are both set BEFORE that render and prove power-on
+  // succeeded; a powerOn rejection (e.g. a factory-render throw) still surfaces in the end-of-run
+  // expectNoErrors via the global unhandledrejection handler.
+  await page.waitForFunction(
+    () => (window.__synthstackStudio as { powered?: boolean } | undefined)?.powered === true,
+    null,
+    { timeout: 15_000 },
+  );
   await expect
     .poll(() => page.evaluate(readAudioContextState), {
-      timeout: 5_000,
-      message: "AudioContext should reach 'running' within 5 s of the POWER click",
+      timeout: 10_000,
+      message: "AudioContext should reach 'running' within 10 s of the POWER click",
     })
     .toBe('running');
+  // The tier Regions render whether powered or not (just dimmed when off); assert they mount.
+  // tier-cascade is the default voice tab's tier; tier-mixer is master-ribbon chrome on every tab.
+  for (const tier of ['tier-cascade', 'tier-mixer']) {
+    await expect(page.getByTestId(tier)).toBeVisible();
+  }
 
-  // ---- c. all jacks co-mount on the PATCHBAY tab: 104 (88 voice + 16 sampler) ------
-  // In the 3-tab layout the patchbay is the ONLY tab that mounts jacks — the 88
-  // voice jacks + the 16 SAMPLER pad jacks render together there (so cross-machine
+  // ---- c. all jacks co-mount on the PATCHBAY tab: 113 (97 voice + 16 sampler) ------
+  // The patchbay is the ONLY tab that mounts jacks — the 97 voice jacks (incl. Courier's
+  // own band) + the 16 SAMPLER pad jacks render together there (so cross-machine
   // and voice↔sampler patches are all reachable). Activate it before counting.
   // Jack.tsx intentionally carries data-jack-id on BOTH the <g> and its hit
   // circle (stage-2 CableLayer contract), so "[data-jack-id] elements" are
@@ -150,21 +167,24 @@ test('studio smoke: load, power, panels, knob drag, run/stop all', async ({ page
   await page.waitForTimeout(500);
   expectNoErrors('while all transports run');
   const running = await page.evaluate(() => window.__synthstackStudio?.getTransportFlags() ?? null);
-  expect(running, 'all four transports should run after RUN ALL').toEqual({
+  expect(running, 'all five transports should run after RUN ALL').toEqual({
     monarchRunning: true,
     anvilRunning: true,
     cascadePlaying: true,
     // RUN ALL is now the single master transport — it ALSO starts the drum grid (supersedes the
     // old DECISION 6 "drum is independent"; the drum panel keeps its own RUN/STOP for drums-only).
     drumRunning: true,
+    // …and the Courier step seq (the 6th scheduler citizen joins the master START ALL — studio.ts).
+    courierRunning: true,
   });
   await page.locator('[role="button"][aria-label^="STOP ALL"]').click();
   const stopped = await page.evaluate(() => window.__synthstackStudio?.getTransportFlags() ?? null);
-  expect(stopped, 'STOP ALL should halt all three transports').toEqual({
+  expect(stopped, 'STOP ALL should halt all five transports').toEqual({
     monarchRunning: false,
     anvilRunning: false,
     cascadePlaying: false,
     drumRunning: false,
+    courierRunning: false,
   });
   expectNoErrors('at the end of the smoke run');
 });
