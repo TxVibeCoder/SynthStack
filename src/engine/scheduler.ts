@@ -44,6 +44,13 @@ export class Scheduler {
   /** Counts pump passes that found an already-stale boundary. Must stay 0 in the soak. */
   starvationCount = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * OPTIONAL studio-level hook run at the START of every pump (with the pump's now), BEFORE any
+   * transport is advanced. PURE given now(). The studio uses it for the external-MIDI-clock
+   * watchdog (releasing MIDI master when the upstream clock stalls) — a check that lives on the
+   * one lookahead pump, never on a setInterval/setTimeout (CLAUDE.md).
+   */
+  beforePump?: (now: number) => void;
 
   constructor(
     private readonly now: () => number,
@@ -61,6 +68,7 @@ export class Scheduler {
   /** One lookahead pass. Pure given now() — unit-testable with fake time. */
   pump(): void {
     const now = this.now();
+    this.beforePump?.(now);
     for (const { transport, bind } of this.transports.values()) {
       if (!transport.running) continue;
       // refresh transports that follow external state (loop clock ← Monarch phase) before we

@@ -43,6 +43,8 @@ import {
   ENABLE_MIDI,
   MIDI_STATUS_LED,
   MIDI_STATUS_TEXT,
+  CLOCK_MASTER_LED,
+  CLOCK_MASTER_TEXT,
   PC_KEYS,
   type KeyRect,
 } from './keyboardLayout';
@@ -156,6 +158,23 @@ function useMidiStatus(): MidiStatus {
   return status;
 }
 
+/**
+ * CLOCK MASTER poll — true while external MIDI clock (0xFA Start) is driving the studio. RUNTIME
+ * only (implicit enable; no store field), so it shares the MIDI_POLL_MS interval idiom. Master is
+ * released by a 0xFC Stop OR the studio watchdog (a stalled/unplugged upstream clock).
+ */
+function useMidiClockMaster(): boolean {
+  const [master, setMaster] = useState<boolean>(() => engineBridge.isMidiClockMaster());
+  useEffect(() => {
+    const id = setInterval(() => {
+      const next = engineBridge.isMidiClockMaster();
+      setMaster((prev) => (prev === next ? prev : next));
+    }, MIDI_POLL_MS);
+    return () => clearInterval(id);
+  }, []);
+  return master;
+}
+
 // ---- one key (white or black <g role="button">) ---------------------------------------
 
 interface KeyProps {
@@ -199,6 +218,7 @@ const Key = memo(function Key({ k, held, onDown, onUp, onMove }: KeyProps) {
 export function KeyboardPanel() {
   const octave = useKeyboardOctave();
   const midiStatus = useMidiStatus();
+  const clockMaster = useMidiClockMaster();
 
   /** Physically-held semitone indices (drives the amber repaint). */
   const [held, setHeld] = useState<ReadonlySet<number>>(() => new Set());
@@ -495,6 +515,30 @@ export function KeyboardPanel() {
             : {})}
         >
           {status.text.toUpperCase()}
+        </text>
+      </g>
+
+      {/* CLOCK MASTER indicator: amber LED + caption while external MIDI clock drives the studio.
+          EARS: the panel TEMPO readout intentionally still shows the internal value while MIDI
+          silently overrides timing (do not drive the readout from external tempo) — see report. */}
+      <g data-testid="midi-clock-master" aria-label={clockMaster ? 'MIDI clock master' : 'Internal clock'}>
+        <circle
+          cx={CLOCK_MASTER_LED.x}
+          cy={CLOCK_MASTER_LED.y}
+          r={5}
+          fill={clockMaster ? COLORS.ledAmber : COLORS.ledOff}
+          stroke={COLORS.panelShadow}
+          strokeWidth={1}
+        />
+        <text
+          x={CLOCK_MASTER_TEXT.x}
+          y={CLOCK_MASTER_TEXT.y + 4}
+          fontFamily={FONT_CONDENSED}
+          fontSize={10}
+          letterSpacing={1}
+          fill={clockMaster ? COLORS.ledAmber : COLORS.legendDim}
+        >
+          {clockMaster ? 'CLOCK MASTER' : 'INT CLOCK'}
         </text>
       </g>
 

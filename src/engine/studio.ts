@@ -222,6 +222,9 @@ export class Studio {
     // so unlike the sampler clocks it idles at nextEventTime=Infinity until start() and
     // needs no phase provider. The binder drives the Courier voice's pitch/gate surface.
     this.scheduler.add(this.courierSeq, (e) => this.bindCourierEvent(e));
+    // External-MIDI-clock watchdog rides the one lookahead pump (no setInterval/setTimeout): if a
+    // stalled/unplugged upstream clock leaves us master with no fresh ticks, auto-release master.
+    this.scheduler.beforePump = (now) => this.checkMidiClockWatchdog(now);
     this.scheduler.start();
 
     this.store.subscribe(() => this.syncTransportConfig());
@@ -760,6 +763,40 @@ export class Studio {
   onMidiClockStop(): void {
     if (!this.built) return;
     this.midiClock.stop();
+    this.releaseMidiMaster();
+  }
+
+  /** True while external MIDI clock is the studio master (read-only status for the UI poll). */
+  isMidiClockMaster(): boolean {
+    return this.midiClockMaster;
+  }
+
+  /**
+   * Watchdog gap (s). While master, if no 0xF8 has arrived for this long WITHOUT a 0xFC Stop, the
+   * watchdog auto-releases master (a stalled / unplugged upstream clock). GENEROUS by design: at
+   * 120 BPM a tick is ~20.8 ms, so 0.5 s ≈ 24 missed ticks — well past normal main-thread MIDI
+   * jitter or a momentary tab throttle, so it never spuriously drops master mid-song.
+   * EARS: the exact feel of this gap is a by-ear checkpoint for the operator (see report).
+   */
+  static readonly MIDI_CLOCK_WATCHDOG_GAP_S = 0.5;
+
+  /**
+   * Run once per scheduler pump (wired as scheduler.beforePump). When master, if the upstream clock
+   * has gone silent past the watchdog gap (no Stop received), release master exactly like a Stop.
+   * PURE-ish: only reads `now` + the clock's lastTickTime; no AudioContext reads beyond what the
+   * release path already does. NO setInterval/setTimeout — this rides the existing lookahead pump.
+   */
+  checkMidiClockWatchdog(now: number): void {
+    if (!this.built || !this.midiClockMaster) return;
+    if (this.midiClock.staleSince(now, Studio.MIDI_CLOCK_WATCHDOG_GAP_S)) {
+      this.midiClock.stop();
+      this.releaseMidiMaster();
+    }
+  }
+
+  /** Shared MIDI-master release (Stop + watchdog): clear master, recompute follower priority, and
+   *  re-anchor the Monarch if it is now internal and running. */
+  private releaseMidiMaster(): void {
     this.midiClockMaster = false;
     this.rebuildFollowers({ cables: this.store.getState().cables });
     // The Monarch's external-clock advance left nextEventTime=Infinity; if it is now internal and

@@ -441,6 +441,22 @@ describe('engineBridge keyboard surface (store-level, unpowered)', () => {
     expect(status.deviceCount).toBe(0);
     expect(status.deviceNames).toEqual([]);
   });
+
+  it('isMidiClockMaster is false while unpowered and never throws (parity with getRecordingState)', () => {
+    let master: boolean | undefined;
+    expect(() => {
+      master = engineBridge.isMidiClockMaster();
+    }).not.toThrow();
+    expect(master).toBe(false);
+  });
+
+  it('getMidiClockTempo returns the 120 BPM default while unpowered and never throws', () => {
+    let tempo: number | undefined;
+    expect(() => {
+      tempo = engineBridge.getMidiClockTempo();
+    }).not.toThrow();
+    expect(tempo).toBe(120);
+  });
 });
 
 describe('engineBridge keyboard mono semantics (engine writes spied; AudioContext-free)', () => {

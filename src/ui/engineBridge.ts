@@ -693,6 +693,22 @@ class EngineBridge {
       : { recording: false, elapsedMs: 0 };
   }
 
+  /**
+   * Is external MIDI clock currently driving the studio (the CLOCK MASTER indicator polls this on
+   * MIDI_POLL_MS)? Guarded false when unpowered / before first power-on — reads this.studioInstance
+   * DIRECTLY (never the lazy getter), parity with getRecordingState, so a poll never constructs a
+   * Studio and never throws. MIDI master is implicit: sending 0xFA makes the studio master, there is
+   * no opt-in toggle.
+   */
+  isMidiClockMaster(): boolean {
+    return this._powered && this.studioInstance ? this.studioInstance.isMidiClockMaster() : false;
+  }
+
+  /** Smoothed external-MIDI tempo estimate (BPM); 120 default when unpowered / no Studio yet. */
+  getMidiClockTempo(): number {
+    return this._powered && this.studioInstance ? this.studioInstance.midiClock.tempoBpm : 120;
+  }
+
   // ---- keyboard / Web MIDI note surface (feature: keyboard; consumed by KeyboardPanel) --
   // The on-screen piano AND Web MIDI both call noteOn/noteOff so they share ONE mono
   // last-note stack (this.voice). The allocator runs UNCONDITIONALLY (so the held-note

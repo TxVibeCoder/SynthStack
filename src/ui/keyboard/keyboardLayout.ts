@@ -140,5 +140,9 @@ export const ENABLE_MIDI = { x: 60, y: CLUSTER_LOW_Y };
 export const MIDI_STATUS_LED = { x: 120, y: CLUSTER_LOW_Y - 4 };
 export const MIDI_STATUS_TEXT = { x: 134, y: CLUSTER_LOW_Y - 1 };
 
+/** CLOCK MASTER indicator (external MIDI clock driving the studio) — sits beside the MIDI LED. */
+export const CLOCK_MASTER_LED = { x: 120, y: CLUSTER_LOW_Y + 14 };
+export const CLOCK_MASTER_TEXT = { x: 134, y: CLUSTER_LOW_Y + 17 };
+
 /** PC KEYS latch (computer-key row mapping). */
 export const PC_KEYS = { x: 240, y: CLUSTER_MID_Y };
