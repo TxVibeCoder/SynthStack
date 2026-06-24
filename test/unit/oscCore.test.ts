@@ -3,13 +3,23 @@ import {
   OscCore,
   SHAPE_PULSE,
   SHAPE_SAW,
+  SHAPE_SQUARE,
   SHAPE_TRIANGLE,
   WS_SAW,
   WS_SQUARE,
   WS_TRI,
   type OscSampleIn,
 } from '../../src/engine/dsp/oscCore';
-import { db, fftMag, magAtHz, rms, spectralCentroidHz, zeroCrossFreq } from '../helpers/spectral';
+import {
+  db,
+  fftMag,
+  harmonicAmpsDb,
+  magAtHz,
+  peakFreqHz,
+  rms,
+  spectralCentroidHz,
+  zeroCrossFreq,
+} from '../helpers/spectral';
 
 const FS = 48000;
 
@@ -340,5 +350,169 @@ describe('osc.worklet core — waveshape morph + wavefolder (A2)', () => {
     }
     expect(max).toBeLessThan(6.0);
     expect(min).toBeGreaterThan(-6.0);
+  });
+});
+
+// =======================================================================================
+// Tier A — fidelity MEASUREMENT gates (recording-free spectral battery).
+// The objective ~80% of fidelity: pitch (1 V/oct), closed-form waveshape harmonic
+// fingerprints, and the anti-aliasing floor — asserted against MATH, not any analog
+// recording, on the pure core (no DriftSource, deterministic). Analog CHARACTER (fold
+// voicing, overdrive timbre) is a separate ears + self-capture tier — NOT gated here.
+// =======================================================================================
+
+const PITCH_REF = 261.63; // units.ts PITCH_REF_HZ (C4 at 0 vv)
+
+/** Signed cents difference of a measured frequency (or frequency ratio vs an expected ratio). */
+function cents(measured: number, expected: number): number {
+  return 1200 * Math.log2(measured / expected);
+}
+
+// f0 aligned to the FFT grid so every harmonic k·f0 lands exactly on a bin: zero Hann
+// scalloping loss → peak-bin harmonic ratios are EXACT, which lets the fingerprints assert
+// tightly (±1 dB) instead of the ±1.5–2 dB a non-aligned musical f0 forces. ≈ 219.73 Hz.
+const ALIGNED_F0 = 75 * (FS / FFT_SIZE);
+
+describe('osc core — pitch 1 V/oct precision (Tier A, pure core, no drift)', () => {
+  it('absolute pitch within ±5 cents across a 4-octave grid, exact exponential CV', () => {
+    // f = PITCH_REF × 2^vv. Pure OscCore has no DriftSource, so this is the TIGHT pitch home
+    // (the assembled-graph Tier-B battery loosens to absorb ±3-cent live drift).
+    const grid = [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2];
+    for (const vv of grid) {
+      const expected = PITCH_REF * Math.pow(2, vv);
+      const buf = render(new OscCore(FS), 2, { baseHz: PITCH_REF, pitchCvVv: vv, shape: SHAPE_SAW });
+      const spec = fftMag(buf, FS, 32768, FS); // 0.68 s window starting 1 s in (transient settled)
+      const f = peakFreqHz(spec, expected * 0.5, expected * 1.5);
+      expect(Math.abs(cents(f, expected))).toBeLessThan(5);
+    }
+  });
+
+  it('clean 2:1 octave tracking end-to-end — no error growth at the extremes', () => {
+    // A classic VA bug is octave-error that grows toward the pitch extremes; assert the
+    // measured ratio across the WHOLE 4-octave span equals ×16 to within a few cents.
+    const measure = (vv: number): number => {
+      const expected = PITCH_REF * Math.pow(2, vv);
+      const buf = render(new OscCore(FS), 2, { baseHz: PITCH_REF, pitchCvVv: vv, shape: SHAPE_SAW });
+      return peakFreqHz(fftMag(buf, FS, 32768, FS), expected * 0.5, expected * 1.5);
+    };
+    const fLow = measure(-2);
+    const fHigh = measure(2);
+    expect(Math.abs(cents(fHigh / fLow, 16))).toBeLessThan(5); // 4 octaves = ×16
+    // and each adjacent octave is a clean 2:1
+    const f0 = measure(0);
+    expect(Math.abs(cents(measure(1) / f0, 2))).toBeLessThan(5);
+    expect(Math.abs(cents(f0 / measure(-1), 2))).toBeLessThan(5);
+  });
+});
+
+// Closed-form H1-normalized dB fingerprints (H1..H8). Suppressed harmonics assert ≤ −30 dB.
+const FP_SAW = [0, -6.02, -9.54, -12.04, -13.98, -15.56, -16.9, -18.06]; // 1/k, all present
+const SUPPRESS = -30;
+
+/** Assert a present harmonic Hk (1-based) is within `tol` dB of its ideal. */
+function expectHarm(amps: number[], k: number, idealDb: number, tol: number): void {
+  expect(Math.abs(amps[k - 1]! - idealDb)).toBeLessThan(tol);
+}
+
+describe('osc core — waveshape fingerprints vs closed form (Tier A, discrete shapes)', () => {
+  // discrete `shape` path = the Monarch / Anvil / Cascade oscillators.
+  const fp = (inp: Partial<OscSampleIn>): number[] =>
+    harmonicAmpsDb(fftMag(render(new OscCore(FS), 1.5, { baseHz: ALIGNED_F0, ...inp }), FS, FFT_SIZE, FS), ALIGNED_F0, 8);
+
+  it('SAW: all harmonics present at 1/k (−6 dB/oct)', () => {
+    const a = fp({ shape: SHAPE_SAW });
+    for (let k = 2; k <= 5; k++) expectHarm(a, k, FP_SAW[k - 1]!, 1.0);
+    for (let k = 6; k <= 8; k++) expectHarm(a, k, FP_SAW[k - 1]!, 1.8); // looser SNR near the top
+  });
+
+  it('SQUARE: odd-only 1/k, evens suppressed (kills a saw, H3 ≈ −9.5 kills a triangle)', () => {
+    const a = fp({ shape: SHAPE_SQUARE });
+    expectHarm(a, 3, -9.54, 1.5);
+    expectHarm(a, 5, -13.98, 1.5);
+    for (const evenIdx of [1, 3, 5, 7]) expect(a[evenIdx]!).toBeLessThan(SUPPRESS); // H2,H4,H6,H8
+  });
+
+  it('TRIANGLE: odd-only 1/k² (−12 dB/oct), evens suppressed (H3 ≈ −19 kills a square)', () => {
+    const a = fp({ shape: SHAPE_TRIANGLE });
+    expectHarm(a, 3, -19.08, 2.0); // 1/9; the −12 dB/oct discriminator vs square's −9.5
+    for (const evenIdx of [1, 3]) expect(a[evenIdx]!).toBeLessThan(SUPPRESS); // H2,H4
+  });
+
+  it('PULSE(0.25): saw·sin(kπd) envelope — notches at H4/H8, non-monotone H6 > H5', () => {
+    const a = fp({ shape: SHAPE_PULSE, pulseWidth: 0.25 });
+    expectHarm(a, 2, -3.01, 1.3);
+    expectHarm(a, 3, -9.54, 1.3);
+    expect(a[3]!).toBeLessThan(SUPPRESS); // H4 notch (k·d integer)
+    expect(a[7]!).toBeLessThan(SUPPRESS); // H8 notch
+    expect(a[5]! - a[4]!).toBeGreaterThan(-1); // H6 ≥ H5: the sin(kπd) lobe a plain saw can't fake
+  });
+});
+
+describe('osc core — morph waypoint fingerprints (Tier A, Courier continuous waveshape)', () => {
+  // continuous `waveshape` morph path = the Courier oscillators.
+  const fp = (ws: number): number[] =>
+    harmonicAmpsDb(fftMag(render(new OscCore(FS), 1.5, { baseHz: ALIGNED_F0, waveshape: ws }), FS, FFT_SIZE, FS), ALIGNED_F0, 8);
+
+  it('WS_SAW waypoint reproduces the saw fingerprint', () => {
+    const a = fp(WS_SAW);
+    for (let k = 2; k <= 5; k++) expectHarm(a, k, FP_SAW[k - 1]!, 1.0);
+  });
+
+  it('WS_SQUARE waypoint is odd-only 1/k with suppressed evens', () => {
+    const a = fp(WS_SQUARE);
+    expectHarm(a, 3, -9.54, 1.5);
+    for (const evenIdx of [1, 3]) expect(a[evenIdx]!).toBeLessThan(SUPPRESS);
+  });
+
+  it('WS_TRI waypoint is a rounded near-sine; the 1/k² triangle emerges just CW of it', () => {
+    // SURFACING CURRENT STATE (not a bug gate): at EXACTLY WS_TRI the fold branch runs with
+    // drive 1, i.e. sineFold(tri, 1) = sin((π/2)·tri), which rounds the naive triangle toward a
+    // pure sine — so H3 sits far below an ideal triangle's −19 dB. The textbook odd-1/k² triangle
+    // appears immediately ABOVE WS_TRI (the raw naive-triangle blend region). Flagged for the
+    // fidelity pass: the panel "triangle" detent is a rounded triangle, not a sharp 1/k² triangle.
+    const atTri = fp(WS_TRI);
+    expect(atTri[2]!).toBeLessThan(SUPPRESS); // H3 strongly suppressed → near-sine, NOT −19 dB
+    expect(atTri[1]!).toBeLessThan(SUPPRESS); // even H2 suppressed
+    const justAbove = fp(WS_TRI + 0.005); // raw naive triangle dominates (≈2% saw blend)
+    expect(justAbove[2]!).toBeGreaterThan(-24); // odd 1/k² H3 now present (~−19)
+    expect(justAbove[2]!).toBeLessThan(-14); // …but still triangle-ish, well below a square's −9.5
+    expect(justAbove[2]! - atTri[2]!).toBeGreaterThan(20); // dramatically brighter than the rounded detent
+  });
+});
+
+describe('osc core — alias-floor matrix completes the anti-aliasing gate (Tier A)', () => {
+  // saw / narrow-pulse / max-fold are covered above; add square, triangle and 25% pulse so all
+  // shapes are gated. Off-grid f0 = 2001 so folded aliases do not hide under true partials.
+  function worstAliasDb(buf: Float32Array): number {
+    const f0 = 2001;
+    const spec = fftMag(buf, FS, FFT_SIZE, FS);
+    const binHz = spec.binHz;
+    const trueBins = new Set<number>();
+    for (let k = 1; k * f0 < FS / 2; k++) {
+      const bin = Math.round((k * f0) / binHz);
+      for (let d = -10; d <= 10; d++) trueBins.add(bin + d);
+    }
+    let strongestTrue = 0;
+    for (let k = 1; k * f0 < FS / 2; k++) strongestTrue = Math.max(strongestTrue, magAtHz(spec, k * f0));
+    let worst = 0;
+    const lowGuard = Math.round(50 / binHz);
+    const highGuard = Math.round(23400 / binHz); // half-band transition edge (same scope as the saw test)
+    for (let i = lowGuard; i < highGuard; i++) {
+      if (trueBins.has(i)) continue;
+      if (spec.mags[i]! > worst) worst = spec.mags[i]!;
+    }
+    return db(worst / strongestTrue);
+  }
+
+  it('SQUARE, TRIANGLE and PULSE(0.25) at 2001 Hz: aliases ≥ 40 dB below the strongest partial', () => {
+    const cases: Partial<OscSampleIn>[] = [
+      { shape: SHAPE_SQUARE },
+      { shape: SHAPE_TRIANGLE },
+      { shape: SHAPE_PULSE, pulseWidth: 0.25 },
+    ];
+    for (const c of cases) {
+      const buf = render(new OscCore(FS), 2, { baseHz: 2001, ...c });
+      expect(worstAliasDb(buf)).toBeLessThanOrEqual(-40);
+    }
   });
 });

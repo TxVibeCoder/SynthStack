@@ -232,3 +232,108 @@ describe('ladder.worklet core — Huovilainen (work order §7.3)', () => {
     expect(driven).toBeGreaterThan(-40); // audibly present when driven
   });
 });
+
+// =======================================================================================
+// Tier A — fidelity MEASUREMENT gates for the transistor ladder: slope vs spec, the
+// multimode matrix, self-oscillation == cutoff, resonance emphasis, and bass behavior.
+// All asserted against the model spec (Huovilainen / −24 dB/oct ladder), not a recording.
+// =======================================================================================
+describe('ladder core — fidelity measurement gates (Tier A)', () => {
+  it('self-oscillation frequency tracks the cutoff control within ±4% (500–3000 Hz)', () => {
+    // (c) at max resonance, ~no input → a sustained near-sine whose pitch == cutoff. Extends the
+    // single-1 kHz existing case to a range, proving the corner tracks the control end to end.
+    for (const fc of [500, 1000, 2000, 3000]) {
+      const core = new LadderCore(FS);
+      core.setCutoffHz(fc);
+      core.setResonance01(1);
+      const input = new Float32Array(3 * FS);
+      input[0] = 1; // tiny kick, then silence
+      const out = processAll(core, input);
+      const f = zeroCrossFreq(out, FS, FS, 3 * FS);
+      expect(Math.abs(f - fc) / fc).toBeLessThanOrEqual(0.04);
+    }
+  }, 15000);
+
+  it('resonance emphasis at cutoff rises monotonically below self-oscillation', () => {
+    // (b) the peak at cutoff (relative to a fixed passband reference an octave-and-more below)
+    // grows with the resonance control; flat (lowest) at zero.
+    const fc = 1500;
+    const emphasisDb = (res: number): number => {
+      const core = new LadderCore(FS);
+      core.setCutoffHz(fc);
+      core.setResonance01(res);
+      const out = processAll(core, whiteNoise(8, 5, 1.0));
+      const spec = fftMagAveraged(out.subarray(FS), FS, 16384, 4096);
+      return db(magAtHz(spec, fc, 3) / magAtHz(spec, 200, 3)); // peak-at-cutoff vs passband
+    };
+    const e0 = emphasisDb(0);
+    const e3 = emphasisDb(0.3);
+    const e6 = emphasisDb(0.6);
+    expect(e3).toBeGreaterThan(e0 + 1); // resonance adds emphasis
+    expect(e6).toBeGreaterThan(e3 + 1); // monotonic
+  }, 15000);
+
+  it('LP4 corner tracks the cutoff control (4 kHz passes far more at cutoff 4k than 500)', () => {
+    const at4kDb = (fc: number): number => {
+      const core = new LadderCore(FS);
+      core.setCutoffHz(fc);
+      core.setResonance01(0);
+      const out = processAll(core, whiteNoise(8, 21, 1.0));
+      const spec = fftMagAveraged(out.subarray(FS), FS, 16384, 4096);
+      return db(magAtHz(spec, 4000, 2) / magAtHz(spec, 200, 2));
+    };
+    const lowCut = at4kDb(500); // 4 kHz ≈ 3 octaves above corner → deeply attenuated
+    const highCut = at4kDb(4000); // 4 kHz ≈ corner → near passband
+    expect(highCut - lowCut).toBeGreaterThan(40); // corner moved with the control by ≥ 40 dB
+  }, 15000);
+
+  it('LP4 low end thins as resonance rises (authentic bass loss, RES BASS off)', () => {
+    // (d) characterize the authentic bass-thinning: the resonant feedback subtracts in-band low
+    // energy, so absolute sub-bass magnitude drops as resonance climbs (RES BASS would re-add it).
+    const lowBand = (res: number): number => {
+      const core = new LadderCore(FS);
+      core.mode = 'LP';
+      core.resBass = false;
+      core.setCutoffHz(1200);
+      core.setResonance01(res);
+      const out = processAll(core, whiteNoise(6, 13, 1.0));
+      const spec = fftMagAveraged(out.subarray(FS), FS, 8192);
+      return magAtHz(spec, 80, 4) + magAtHz(spec, 120, 4) + magAtHz(spec, 160, 4);
+    };
+    expect(lowBand(0.85)).toBeLessThan(lowBand(0.2));
+  }, 20000);
+
+  // ---- multimode slope MATRIX — LOCKS CURRENT AS-BUILT STATE (HP = 4-pole, BP = 2-pole) ----
+  // ⚠️ FLAG: the fidelity handoff notes a PENDING fix ("HP should be 2-pole / BP 4-pole") that
+  // is NOT applied on this branch. These two assertions lock TODAY's behavior so a silent
+  // regression is caught — they are descriptive, not an endorsement. If the fix lands, these
+  // expectations must be updated deliberately (and a human signs off on the swap).
+  it('HP mode is CURRENTLY a steep ~4-pole transition, NOT 2-pole [FLAGGED]', () => {
+    // SURFACING CURRENT STATE: the (1−L)^4 complement gives a steep ~+21 dB/oct transition one
+    // octave below cutoff (4-pole class) — the OPPOSITE of the pending "HP should be 2-pole" fix.
+    // Caveat (characterized via probe, left for the fidelity pass, NOT gated): it is not a textbook
+    // 4-pole everywhere — far below cutoff the skirt PLATEAUS rather than holding −24 dB/oct. We
+    // lock the steepest transition octave so a regression toward a gentle 2-pole skirt is caught.
+    const core = new LadderCore(FS);
+    core.mode = 'HP';
+    core.setCutoffHz(2000);
+    core.setResonance01(0);
+    const out = processAll(core, whiteNoise(12, 42, 1.0));
+    const spec = fftMagAveraged(out.subarray(FS), FS, 16384, 4096);
+    const steepOct = db(magAtHz(spec, 1000, 2) / magAtHz(spec, 500, 2)); // octave just below cutoff
+    expect(steepOct).toBeGreaterThan(17); // clearly steeper than a 2-pole (+12) → 4-pole-class
+    expect(steepOct).toBeLessThan(26);
+  }, 15000);
+
+  it('BP mode is CURRENTLY a 2-pole band: high skirt ≈ −12 dB/oct above cutoff [FLAGGED]', () => {
+    const core = new LadderCore(FS);
+    core.mode = 'BP';
+    core.setCutoffHz(1000);
+    core.setResonance01(0.2);
+    const out = processAll(core, whiteNoise(12, 7, 1.0));
+    const spec = fftMagAveraged(out.subarray(FS), FS, 16384, 4096);
+    const slope = db(magAtHz(spec, 4000, 2) / magAtHz(spec, 2000, 2)); // one+ octave above center
+    expect(slope).toBeLessThan(-6); // 12 dB/oct − 6 (2-pole high side, NOT 24)
+    expect(slope).toBeGreaterThan(-18); // 12 dB/oct + 6
+  }, 15000);
+});

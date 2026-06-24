@@ -1,7 +1,8 @@
 /**
  * Shared measurement helpers: rms, fftMag, spectralCentroidSeries,
- * detectOnsets, zeroCrossFreq. Pure — usable from Vitest (Node) now and from the
- * browser offline-audio harness later. FFT backed by fft.js (test-only dep).
+ * detectOnsets, zeroCrossFreq, peakFreqHz, harmonicAmpsDb. Pure — usable from
+ * Vitest (Node) now and from the browser offline-audio harness later. FFT backed
+ * by fft.js (test-only dep).
  */
 
 import FFT from 'fft.js';
@@ -70,6 +71,42 @@ export function magAtHz(spec: Spectrum, hz: number, searchBins = 2): number {
 
 export function db(ratio: number): number {
   return 20 * Math.log10(Math.max(ratio, 1e-12));
+}
+
+/**
+ * Dominant frequency to sub-bin precision via parabolic (quadratic) interpolation on the
+ * three magnitude bins straddling the peak. Use for "is the fundamental exactly at f0"
+ * assertions where rounding to the nearest bin (binHz ≈ 2.93 Hz at 16k/48k, 0.73 Hz at
+ * 64k/48k) is too coarse to read cents. Searches [minHz, maxHz] for the magnitude max,
+ * then refines: delta = 0.5·(a−c)/(a−2b+c) ∈ [−0.5, 0.5]; freq = (bin + delta)·binHz,
+ * where b is the peak bin and a, c its immediate neighbors. Operates on linear magnitudes
+ * (parabolic interp on a Hann main lobe is near-exact there). Guards a flat top (denom 0).
+ */
+export function peakFreqHz(spec: Spectrum, minHz = 0, maxHz = Infinity): number {
+  const lo = Math.max(1, Math.floor(minHz / spec.binHz));
+  const hi = Math.min(spec.mags.length - 2, Math.ceil(maxHz / spec.binHz));
+  let peak = lo;
+  for (let i = lo; i <= hi; i++) if (spec.mags[i]! > spec.mags[peak]!) peak = i;
+  const a = spec.mags[peak - 1]!;
+  const b = spec.mags[peak]!;
+  const c = spec.mags[peak + 1]!;
+  const denom = a - 2 * b + c;
+  const delta = denom !== 0 ? (0.5 * (a - c)) / denom : 0;
+  return (peak + delta) * spec.binHz;
+}
+
+/**
+ * Harmonic amplitudes H1..Hcount in dB, normalized so H1 = 0 dB. Each Hk is the peak
+ * magnitude within ±searchBins of k·f0 (via magAtHz). The one call that yields a whole
+ * fingerprint vector to compare element-wise against a closed-form table
+ * ([0, −6.02, −9.54, …] for a saw, etc.). out[0] is always 0 by construction; values are
+ * 1e-12-floored by db() so a suppressed/notched harmonic reads as a large negative number.
+ */
+export function harmonicAmpsDb(spec: Spectrum, f0: number, count: number, searchBins = 2): number[] {
+  const h1 = magAtHz(spec, f0, searchBins);
+  const out: number[] = [];
+  for (let k = 1; k <= count; k++) out.push(db(magAtHz(spec, k * f0, searchBins) / h1));
+  return out;
 }
 
 export function spectralCentroidHz(spec: Spectrum): number {
