@@ -13,6 +13,7 @@ import { renderFactorySamples, FACTORY_KIT } from '../../src/engine/factorySampl
 import { MonarchModule } from '../../src/engine/modules/monarch';
 import { AnvilModule } from '../../src/engine/modules/anvil';
 import { CascadeModule } from '../../src/engine/modules/cascade';
+import { CourierModule } from '../../src/engine/modules/courier';
 import { SamplerModule } from '../../src/engine/modules/sampler';
 import { StudioEndpointRegistry } from '../../src/engine/modules/registry';
 import { buildJackIndex, RouterBinding } from '../../src/engine/router';
@@ -26,6 +27,7 @@ import type { ModuleDef } from '../../data/schema';
 import monarchDef from '../../data/monarch.json';
 import anvilDef from '../../data/anvil.json';
 import cascadeDef from '../../data/cascade.json';
+import courierDef from '../../data/courier.json';
 import samplerDef from '../../data/sampler.json';
 import {
   detectOnsets,
@@ -132,6 +134,73 @@ async function monarchGateNoClick(): Promise<AudioTestResult> {
     name: 'Monarch EG gate: one onset, envelope tracks the one-pole profile (no clicks)',
     pass,
     detail: `onsets=${onsets.length} maxProfileDev=${(maxDev * 100).toFixed(0)}% at t=${devAt.toFixed(3)}s`,
+  };
+}
+
+async function monarchVelocity(): Promise<AudioTestResult> {
+  // G1: a higher note-on velocity yields a MEASURABLY louder VCA output, AND the on-screen
+  // constant velocity (100) reproduces today's level (no regression vs the pre-G1 gate-only path).
+  // velocityAt re-centers on vel=100, so a vel=100 note == a plain gate with NO velocity write.
+  const render = async (setVel: ((mod: MonarchModule) => void) | null): Promise<number> => {
+    const { mod, render } = await buildModule(1.4, MonarchModule, monarchDef);
+    mod.setControl('MON_VCA_MODE', 'EG');
+    mod.setControl('MON_ATTACK', 0.02);
+    mod.setControl('MON_DECAY', 0.2);
+    mod.setControl('MON_SUSTAIN', 'ON'); // gateHold sustains at peak while the gate is high
+    mod.setControl('MON_VCF_CUTOFF', 8000);
+    mod.setControl('MON_VOLUME', 0.8);
+    mod.gateAt(true, 0.1);
+    if (setVel) setVel(mod);
+    mod.outputTap('MON_VCA_OUT').connect((mod.ctx as OfflineAudioContext).destination);
+    const buf = await render();
+    // steady sustain window, well past the 20 ms attack
+    return rms(buf, Math.floor(0.4 * SR), Math.floor(1.2 * SR));
+  };
+  const VELOCITY_VV_MAX = 7.5;
+  const hi = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX, 0.1)); // vel 127
+  const lo = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX * (32 / 127), 0.1)); // vel 32
+  const ref100 = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX * (100 / 127), 0.1)); // vel 100
+  const gateOnly = await render(null); // today's path: gate, no velocity write
+  const louder = hi > lo * 1.1; // a clearly audible step up
+  const noRegression = Math.abs(ref100 - gateOnly) / Math.max(gateOnly, 1e-6) < 0.02; // vel100 == today
+  return {
+    name: 'Monarch velocity: vel127 louder than vel32, vel100 == today (no regression)',
+    pass: louder && noRegression,
+    detail: `rms hi=${hi.toFixed(3)} lo=${lo.toFixed(3)} vel100=${ref100.toFixed(3)} gateOnly=${gateOnly.toFixed(3)}`,
+  };
+}
+
+async function courierVelocity(): Promise<AudioTestResult> {
+  // G1 (Courier): the exact parallel — a higher note-on velocity is measurably louder, and vel=100
+  // reproduces the plain-gate level (no regression). The amp EG defaults to gateHold (sustains at
+  // peak while the gate is high), so a held gate gives a steady window to measure.
+  const render = async (setVel: ((mod: CourierModule) => void) | null): Promise<number> => {
+    const { mod, render } = await buildModule(1.4, CourierModule, courierDef);
+    mod.setControl('COU_A_ATTACK', 0.02);
+    mod.setControl('COU_A_DECAY', 0.2);
+    mod.setControl('COU_MIX_OSC1', 0.9);
+    mod.setControl('COU_MIX_OSC2', 0); // single deterministic source — exclude OSC2 / SUB / NOISE so
+    mod.setControl('COU_MIX_SUB', 0); // the RMS window reflects ONLY the velocity-scaled VCA, not
+    mod.setControl('COU_MIX_NOISE', 0); // a random noise floor (which would jitter the no-regression cmp)
+    mod.setControl('COU_CUTOFF', 8000);
+    mod.setControl('COU_VOLUME', 0.8);
+    mod.gateAt(true, 0.1);
+    if (setVel) setVel(mod);
+    mod.outputTap('COU_AUDIO_OUT').connect((mod.ctx as OfflineAudioContext).destination);
+    const buf = await render();
+    return rms(buf, Math.floor(0.4 * SR), Math.floor(1.2 * SR));
+  };
+  const VELOCITY_VV_MAX = 7.5;
+  const hi = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX, 0.1)); // vel 127
+  const lo = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX * (32 / 127), 0.1)); // vel 32
+  const ref100 = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX * (100 / 127), 0.1)); // vel 100
+  const gateOnly = await render(null);
+  const louder = hi > lo * 1.1;
+  const noRegression = Math.abs(ref100 - gateOnly) / Math.max(gateOnly, 1e-6) < 0.02;
+  return {
+    name: 'Courier velocity: vel127 louder than vel32, vel100 == today (no regression)',
+    pass: louder && noRegression,
+    detail: `rms hi=${hi.toFixed(3)} lo=${lo.toFixed(3)} vel100=${ref100.toFixed(3)} gateOnly=${gateOnly.toFixed(3)}`,
   };
 }
 
@@ -632,6 +701,8 @@ export const BATTERY: { name: string; run: () => Promise<AudioTestResult> }[] = 
   { name: 'monarch-voice', run: monarchVoiceBasics },
   { name: 'monarch-wobble', run: monarchWobble },
   { name: 'monarch-gate', run: monarchGateNoClick },
+  { name: 'monarch-velocity', run: monarchVelocity },
+  { name: 'courier-velocity', run: courierVelocity },
   { name: 'anvil-kick', run: anvilKick },
   { name: 'anvil-hat', run: anvilHat },
   { name: 'cascade-2v3', run: cascade2v3 },

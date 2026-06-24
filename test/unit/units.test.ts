@@ -19,6 +19,8 @@ import {
   cascadeVcoKnobHz,
   swingOffsetS,
   vcaGain,
+  velocityToVv,
+  VELOCITY_VV_MAX,
 } from '../../src/engine/units';
 
 describe('param adapters (work order §7.5, D8)', () => {
@@ -110,5 +112,40 @@ describe('param adapters (work order §7.5, D8)', () => {
     expect(swingOffsetS(50, 0.125)).toBe(0);
     expect(swingOffsetS(100, 0.125)).toBeCloseTo(0.0625, 6); // max swing = half a step late
     expect(swingOffsetS(0, 0.125)).toBeCloseTo(-0.0625, 6);
+  });
+});
+
+describe('velocityToVv (G1 — note-on velocity -> VCA-CV vv)', () => {
+  it('maps the full 1..127 range monotonically increasing', () => {
+    let prev = -Infinity;
+    for (let v = 1; v <= 127; v++) {
+      const out = velocityToVv(v);
+      expect(out).toBeGreaterThan(prev); // strictly increasing — monotonic
+      prev = out;
+    }
+  });
+
+  it('vel 127 -> the VELOCITY_VV_MAX ceiling; vel 1 -> a small floor; both in the 0..7.5 domain', () => {
+    expect(velocityToVv(127)).toBeCloseTo(VELOCITY_VV_MAX, 6); // 7.5 vv max
+    const floor = velocityToVv(1);
+    expect(floor).toBeGreaterThan(0); // small but non-zero
+    expect(floor).toBeLessThan(0.1);
+    // every velocity lands inside the VCA-CV domain ~0..7.5
+    for (const v of [1, 32, 64, 100, 127]) {
+      const out = velocityToVv(v);
+      expect(out).toBeGreaterThanOrEqual(0);
+      expect(out).toBeLessThanOrEqual(VELOCITY_VV_MAX);
+    }
+  });
+
+  it('vel 0 (running-status note-off) -> 0; out-of-range clamps to the rails', () => {
+    expect(velocityToVv(0)).toBe(0);
+    expect(velocityToVv(-5)).toBe(0); // below the floor -> 0
+    expect(velocityToVv(200)).toBeCloseTo(VELOCITY_VV_MAX, 6); // above 127 clamps to max
+  });
+
+  it('vel 100 (the on-screen reference) is hotter than vel 64 and cooler than vel 127', () => {
+    expect(velocityToVv(64)).toBeLessThan(velocityToVv(100));
+    expect(velocityToVv(100)).toBeLessThan(velocityToVv(127));
   });
 });

@@ -17,6 +17,7 @@ import {
   ACCENT_CUTOFF_BOOST_VV,
   PITCH_REF_HZ,
   clamp,
+  velocityToVv,
 } from '../units';
 
 /**
@@ -31,6 +32,14 @@ import {
  * them against a bench reference (or a vendor spec) before adjusting.
  */
 const LIN_FM_DEPTH_HZ_PER_VV = 150;
+
+/**
+ * Reference note-on velocity in vv (G1): velocityAt re-centers every note-on velocity on this value
+ * so the on-screen keyboard's constant velocity 100 contributes ZERO to vcaCtl = today's level (no
+ * regression for presets / recipes / the audio battery). velocityToVv(100) ≈ 5.91 vv. EARS: this
+ * "vel 100 = unity" anchor + the linear curve are flagged for Will (see units.velocityToVv).
+ */
+const MON_VELOCITY_REF_VV = velocityToVv(100);
 
 export class MonarchModule extends ModuleBase {
   // sources
@@ -65,6 +74,7 @@ export class MonarchModule extends ModuleBase {
   private readonly vcfModAmount: GainNode;
   private readonly egToVca: GainNode;
   private readonly onToVca: GainNode;
+  private readonly velocityCv: ConstantSourceNode; // INTERNAL note-on velocity CV (vv), summed into vcaCtl
   private readonly vcaGainNode: GainNode;
   private readonly volume: GainNode;
   private readonly vcoModBus: GainNode; // pattern-2 bus: EG by default, jack replaces
@@ -229,10 +239,18 @@ export class MonarchModule extends ModuleBase {
     constant(ctx, 1).connect(this.onToVca);
     const vcaCvNorm = gain(ctx, 1 / 7.5);
     this.inputBus('MON_VCA_CV_IN').connect(vcaCvNorm);
+    // INTERNAL note-on velocity CV: a ConstantSource carrying the RE-CENTERED velocity (vv) — see
+    // velocityAt: vel=100 writes 0 (today's level = no regression), vel=127 a touch positive, vel=1
+    // negative (quieter). Normalized 1/7.5 and summed into the SAME vcaCtl as EG + VCA_CV (the
+    // documented default = a parallel velocity CV, modest scale; flagged for Will).
+    this.velocityCv = constant(ctx, 0);
+    const velocityNorm = gain(ctx, 1 / 7.5);
+    this.velocityCv.connect(velocityNorm);
     const vcaCtl = gain(ctx, 0.5); // into shaper domain (0..~2 -> 0..1)
     this.egToVca.connect(vcaCtl);
     this.onToVca.connect(vcaCtl);
     vcaCvNorm.connect(vcaCtl);
+    velocityNorm.connect(vcaCtl);
     const vcaClip = shaper(ctx, (x) => {
       const g = clamp(x, 0, 1) * 2;
       return g <= 1 ? g : 1 + 0.2 * Math.tanh((g - 1) / 0.2);
@@ -382,12 +400,18 @@ export class MonarchModule extends ModuleBase {
 
   // ---- sequencer binding surface (Phase 3 drives these at scheduled times) ------
 
-  /** Set pitch CV at an exact time, with optional glide. */
-  setPitchAt(noteVv: number, time: number, glide: boolean): void {
+  /**
+   * Set pitch CV at an exact time, with optional glide.
+   *   `glideTimeSOverride` (G1): when provided, glide uses THIS time instead of `this.glideTimeS`.
+   *   DEFAULTS to `this.glideTimeS` so the SEQUENCER binder (studio.ts) is untouched — only the
+   *   keyboard/MIDI live path passes the separate keyboard-glide value.
+   */
+  setPitchAt(noteVv: number, time: number, glide: boolean, glideTimeSOverride?: number): void {
+    const glideS = glideTimeSOverride ?? this.glideTimeS;
     const p = this.kbCv.offset;
     p.cancelAndHoldAtTime?.(time);
-    if (glide && this.glideTimeS > 0.001) {
-      p.setTargetAtTime(noteVv, time, this.glideTimeS / 3);
+    if (glide && glideS > 0.001) {
+      p.setTargetAtTime(noteVv, time, glideS / 3);
     } else {
       p.setValueAtTime(noteVv, time);
     }
@@ -395,6 +419,17 @@ export class MonarchModule extends ModuleBase {
 
   gateAt(on: boolean, time: number): void {
     this.kbGate.offset.setValueAtTime(on ? 5 : 0, time);
+  }
+
+  /**
+   * Set the note-on VELOCITY at an exact time (mirrors gateAt). `velVv` is the velocity already
+   * mapped to vv by units.velocityToVv (1..127 -> 0..7.5). The value is RE-CENTERED on the
+   * reference velocity (100) before it enters vcaCtl, so vel=100 contributes 0 (today's level, no
+   * regression), louder velocities push the soft knee up and quieter ones pull it down. Only the
+   * keyboard/MIDI live path drives this; the sequencer leaves it at 0 (unchanged behavior).
+   */
+  velocityAt(velVv: number, time: number): void {
+    this.velocityCv.offset.setValueAtTime(velVv - MON_VELOCITY_REF_VV, time);
   }
 
   accentAt(on: boolean, time: number): void {

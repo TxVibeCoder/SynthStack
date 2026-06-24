@@ -172,3 +172,23 @@ export function swingOffsetS(swingPct: number, stepDurS: number): number {
 export function monarchStepDurS(bpm: number): number {
   return 60 / clamp(bpm, 20, 300) / 4;
 }
+
+/**
+ * MIDI / keyboard note-on velocity (1..127) -> a VCA-CV value in vv (the same 0..7.5 domain the
+ * VCA_CV bus / EG peak live in). PURE + monotonic; vel 127 -> the ~7.5 vv max, vel 1 -> a small
+ * floor (~0.06 vv), vel 0 -> 0 (a vel-0 note-on is a running-status note-off, never sounded).
+ *
+ * EARS / DECISION (G1 — flagged for Will): the curve is a straightforward LINEAR map (no gamma /
+ * audio taper) so the relationship is predictable and the reference velocity 100 lands exactly at
+ * today's full-open level once the engine re-centers it (see MonarchModule.velocityAt / the velocity
+ * ConstantSource: the contribution is summed into the SAME vcaCtl as EG + VCA_CV *offset by
+ * velocityToVv(100)*, so vel=100 adds 0 = no regression, vel=127 a touch hotter, vel=1 quiet). The
+ * curve SHAPE (linear vs ^1.5 perceptual) + the 7.5 max are the by-ear knobs Will may want to turn.
+ */
+export const VELOCITY_VV_MAX = 7.5;
+export function velocityToVv(velocity127: number): number {
+  const v = clamp(velocity127, 0, 127);
+  if (v <= 0) return 0;
+  // 1..127 -> a small floor..VELOCITY_VV_MAX, linearly.
+  return (v / 127) * VELOCITY_VV_MAX;
+}

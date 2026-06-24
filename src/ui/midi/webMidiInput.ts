@@ -3,8 +3,9 @@
  *
  *  1. parseMidiMessage — PURE, exported, unit-tested in Node (NO MIDIAccess needed):
  *     decodes a raw MIDI status+data triplet into noteOn / noteOff / clock+transport /
- *     controlChange (the mod wheel is CC #1) / pitchBend (14-bit) / other. Channel is
- *     ignored (omni). Active-sensing and unmapped CCs stay 'other'.
+ *     controlChange (the mod wheel is CC #1) / pitchBend (14-bit) / other. Channel defaults to
+ *     OMNI; an optional channelFilter accepts only one channel (system real-time always passes).
+ *     Active-sensing and unmapped CCs stay 'other'.
  *
  *  2. WebMidiInput — the THIN device shell (NOT unit-tested; the prompt + real-device
  *     delivery + hot-plug require a hardware checkpoint). It feature-
@@ -33,23 +34,37 @@ export interface ParsedMidiMessage {
 }
 
 /**
- * PURE decode of a MIDI message (channel ignored = omni, v1). noUncheckedIndexedAccess is
+ * PURE decode of a MIDI message. noUncheckedIndexedAccess is
  * ON, so data[i] is number|undefined — we read into locals BEFORE indexing, never out of bounds.
  *   System real-time (SINGLE-byte, status >= 0xF8) is decoded FIRST, before the length-3 guard:
  *     0xF8 -> clock (24 PPQN), 0xFA -> start, 0xFB -> continue, 0xFC -> stop
  *   0x90 with velocity > 0           -> noteOn { note, velocity }
  *   0x80, OR 0x90 with velocity === 0 (running-status note-off-as-vel-0) -> noteOff
  *   anything else (CC 0xB0, bend 0xE0, active-sensing 0xFE, short/garbage) -> other
+ *
+ * CHANNEL FILTER (G1): pass an optional `channelFilter` 0..15 to accept ONLY that channel; null /
+ * omitted = OMNI (accept every channel — the historical behavior). A CHANNEL-VOICE message
+ * (note/CC/bend, status 0x80..0xEF) on a NON-matching channel decodes to 'other'. SYSTEM REAL-TIME
+ * messages (status >= 0xF8: clock / start / continue / stop) carry NO channel nibble and ALWAYS
+ * pass regardless of the filter — never gate the MIDI clock (G2 sync depends on it). The
+ * channel nibble is `status & 0x0F`; the message kind is `status & 0xF0` (unchanged).
  */
-export function parseMidiMessage(data: ArrayLike<number>): ParsedMidiMessage {
+export function parseMidiMessage(data: ArrayLike<number>, channelFilter: number | null = null): ParsedMidiMessage {
   const status = data[0];
   if (status === undefined) return { type: 'other', note: 0, velocity: 0 };
-  // System real-time messages are single-byte — must be handled before the length-3 guard.
+  // System real-time messages are single-byte — handled before the length-3 guard AND before the
+  // channel filter: they carry no channel nibble, so the clock/transport stream is never gated.
   if (status === 0xf8) return { type: 'clock', note: 0, velocity: 0 };
   if (status === 0xfa) return { type: 'start', note: 0, velocity: 0 };
   if (status === 0xfb) return { type: 'continue', note: 0, velocity: 0 };
   if (status === 0xfc) return { type: 'stop', note: 0, velocity: 0 };
   if (data.length < 3) return { type: 'other', note: 0, velocity: 0 };
+  // Channel filter (channel-voice messages only — status 0x80..0xEF carry the channel in the low
+  // nibble). System real-time already returned above; system-common (0xF0..0xF7) has no channel and
+  // falls through to 'other' regardless. A non-matching channel -> 'other' (silently ignored).
+  if (channelFilter !== null && status >= 0x80 && status <= 0xef && (status & 0x0f) !== channelFilter) {
+    return { type: 'other', note: 0, velocity: 0 };
+  }
   const note = data[1];
   const velocity = data[2];
   if (note === undefined || velocity === undefined) {
@@ -117,6 +132,9 @@ export class WebMidiInput {
   private attached: MIDIInput[] = [];
   /** In-flight enable() (the permission prompt is async); concurrent calls share it. */
   private pending: Promise<MidiStatus> | null = null;
+  /** Channel filter: null = OMNI (accept every channel); 0..15 = accept only that channel. System
+   *  real-time (clock/transport) ALWAYS passes — parseMidiMessage never gates it. */
+  private channelFilter: number | null = null;
 
   /**
    * Request access (one permission prompt) and start routing note events. Idempotent: a
@@ -212,10 +230,21 @@ export class WebMidiInput {
     if (deviceCount === 0) this.onAllNotesOff?.();
   }
 
+  /**
+   * Set the channel filter: null = OMNI (accept all 16 channels); an integer 0..15 = accept ONLY
+   * that channel for channel-voice messages (notes/CC/bend). System real-time (clock/transport)
+   * always passes. A non-integer / out-of-range value falls back to OMNI (defensive). Takes effect
+   * on the NEXT message — no re-attach needed (the live onmidimessage closures read this field).
+   */
+  setChannelFilter(channel: number | null): void {
+    this.channelFilter =
+      channel !== null && Number.isInteger(channel) && channel >= 0 && channel <= 15 ? channel : null;
+  }
+
   private handleMessage(e: MIDIMessageEvent): void {
     // MIDIMessageEvent.data is Uint8Array<ArrayBuffer> | null in this lib — guard first.
     if (!e.data) return;
-    const msg = parseMidiMessage(e.data);
+    const msg = parseMidiMessage(e.data, this.channelFilter);
     if (msg.type === 'noteOn') this.onNoteOn?.(msg.note, msg.velocity);
     else if (msg.type === 'noteOff') this.onNoteOff?.(msg.note);
     else if (msg.type === 'clock') this.clock?.onClock?.();

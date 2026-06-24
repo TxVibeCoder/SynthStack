@@ -306,34 +306,45 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(QUANT_CYCLE).toEqual(QUANTIZE_DIVISIONS);
   });
 
-  it('default state carries keyboard:{octave:0} and version stays 1', () => {
+  it('default state carries keyboard:{octave:0,midiChannel:-1,glideS:0} and version stays 1', () => {
     const s = defaultStudioState();
-    expect(s.keyboard).toEqual({ octave: 0 });
+    expect(s.keyboard).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
     expect(s.version).toBe(1); // additive slice — no version bump (mirrors the sampler slice)
   });
 
-  it('JSON round-trips the keyboard octave across the store', () => {
+  it('JSON round-trips the keyboard octave + midiChannel + glideS across the store', () => {
     const store = new StudioStore();
     const s = store.getState();
     s.keyboard.octave = 2;
+    s.keyboard.midiChannel = 9; // ch 10 (drum)
+    s.keyboard.glideS = 0.25;
     store.setState(s);
-    expect(store.getState().keyboard).toEqual({ octave: 2 });
+    expect(store.getState().keyboard).toEqual({ octave: 2, midiChannel: 9, glideS: 0.25 });
     expect(store.getState()).toEqual(s);
   });
 
-  it('defaultKeyboardState() is {octave:0}', () => {
-    expect(defaultKeyboardState()).toEqual({ octave: 0 });
+  it('defaultKeyboardState() is {octave:0,midiChannel:-1,glideS:0}', () => {
+    expect(defaultKeyboardState()).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
   });
 
-  it('coalesceKeyboardState(undefined) yields {octave:0}', () => {
-    expect(coalesceKeyboardState(undefined)).toEqual({ octave: 0 });
+  it('coalesceKeyboardState(undefined) yields the full default', () => {
+    expect(coalesceKeyboardState(undefined)).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
   });
 
-  it('coalesceKeyboardState coalesces a pre-feature tree missing keyboard to {octave:0}', () => {
+  it('coalesceKeyboardState coalesces a pre-feature tree missing keyboard to the full default', () => {
     // A whole studio tree built before the keyboard slice existed has no `keyboard` field.
     const preFeatureTree = defaultStudioState() as Partial<ReturnType<typeof defaultStudioState>>;
     delete preFeatureTree.keyboard;
-    expect(coalesceKeyboardState(preFeatureTree.keyboard)).toEqual({ octave: 0 });
+    expect(coalesceKeyboardState(preFeatureTree.keyboard)).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
+  });
+
+  it('coalesceKeyboardState heals a pre-G1 {octave} tree to {octave,midiChannel:-1,glideS:0}', () => {
+    // A tree from before midiChannel/glideS existed carries only `octave`.
+    expect(coalesceKeyboardState({ octave: 2 } as Partial<{ octave: number }>)).toEqual({
+      octave: 2,
+      midiChannel: -1,
+      glideS: 0,
+    });
   });
 
   it('coalesceKeyboardState clamps/defaults a corrupt octave', () => {
@@ -347,9 +358,37 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(bad(undefined)).toBe(0); // missing -> default 0
   });
 
-  it('coalesceKeyboardState passes the full -3..+3 range through unchanged', () => {
+  it('coalesceKeyboardState clamps/defaults a corrupt midiChannel (-1 OMNI / 0..15)', () => {
+    const ch = (midiChannel: unknown) =>
+      coalesceKeyboardState({ midiChannel } as Partial<{ midiChannel: number }>).midiChannel;
+    expect(ch(-1)).toBe(-1); // OMNI passes
+    expect(ch(0)).toBe(0); // ch 1
+    expect(ch(15)).toBe(15); // ch 16
+    expect(ch(16)).toBe(-1); // above range -> OMNI
+    expect(ch(-2)).toBe(-1); // below -1 -> OMNI
+    expect(ch(3.5)).toBe(-1); // non-integer -> OMNI
+    expect(ch('x')).toBe(-1); // wrong type -> OMNI
+    expect(ch(NaN)).toBe(-1); // NaN -> OMNI
+    expect(ch(undefined)).toBe(-1); // missing -> OMNI
+  });
+
+  it('coalesceKeyboardState clamps/defaults a corrupt glideS (finite 0..1)', () => {
+    const g = (glideS: unknown) =>
+      coalesceKeyboardState({ glideS } as Partial<{ glideS: number }>).glideS;
+    expect(g(0)).toBe(0);
+    expect(g(0.5)).toBe(0.5);
+    expect(g(1)).toBe(1);
+    expect(g(2)).toBe(1); // above range -> clamp 1
+    expect(g(-0.5)).toBe(0); // below range -> clamp 0
+    expect(g(NaN)).toBe(0); // non-finite -> 0
+    expect(g(Infinity)).toBe(0); // non-finite -> 0
+    expect(g('x')).toBe(0); // wrong type -> 0
+    expect(g(undefined)).toBe(0); // missing -> 0
+  });
+
+  it('coalesceKeyboardState passes the full -3..+3 octave range through unchanged', () => {
     for (const octave of [-3, -2, -1, 0, 1, 2, 3]) {
-      expect(coalesceKeyboardState({ octave })).toEqual({ octave });
+      expect(coalesceKeyboardState({ octave })).toEqual({ octave, midiChannel: -1, glideS: 0 });
     }
   });
 

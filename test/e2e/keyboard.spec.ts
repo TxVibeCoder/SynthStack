@@ -122,6 +122,40 @@ test('keyboard: renders 25 keys, a press plays the Monarch, octave shifts, MIDI 
     .poll(async () => ((await page.getByTestId('midi-status').textContent()) ?? '').trim().length)
     .toBeGreaterThan(0);
 
+  // ---- e. CHANNEL selector (G1): renders + round-trips OMNI <-> 1..16 through the bridge ----
+  const readChannel = () =>
+    page.evaluate(() => window.__synthstackStudio!.getMidiChannel() as number);
+  expect(await readChannel(), 'channel defaults to OMNI (-1)').toBe(-1);
+  await expect(page.getByTestId('channel-readout')).toHaveText('OMNI');
+  await page.getByTestId('channel-up').click(); // OMNI -> ch 1 (0)
+  await expect.poll(readChannel).toBe(0);
+  await expect(page.getByTestId('channel-readout')).toHaveText('1');
+  await page.getByTestId('channel-down').click(); // back to OMNI
+  await expect.poll(readChannel).toBe(-1);
+
+  // ---- f. KB GLIDE knob (G1): renders + round-trips a separate glide via the bridge ----
+  await expect(page.getByTestId('kb-glide')).toBeVisible();
+  const readGlide = () =>
+    page.evaluate(() => window.__synthstackStudio!.getKeyboardGlide() as number);
+  expect(await readGlide(), 'keyboard glide defaults to 0').toBe(0);
+  // drive the bridge directly (knob drag geometry is covered by the unit/knob suites); prove the
+  // separate keyboard-glide store field round-trips and is distinct from the seq's MON_GLIDE.
+  await page.evaluate(() => window.__synthstackStudio!.setKeyboardGlide(0.3));
+  await expect.poll(readGlide).toBeCloseTo(0.3, 5);
+  await page.evaluate(() => window.__synthstackStudio!.setKeyboardGlide(0));
+  await expect.poll(readGlide).toBe(0);
+
+  // ---- g. UtilityStrip MidiLed mirrors the SAME MidiStatus as the KeyboardPanel LED ----
+  // Both poll engineBridge.getMidiStatus(); the utility-strip lamp is a passive mirror with NO
+  // Web MIDI calls of its own. Its aria-label encodes the same state, so the two never disagree.
+  const utilityLed = page.getByTestId('utility-midi-led');
+  await expect(utilityLed).toBeVisible();
+  const ledState = await utilityLed.getAttribute('aria-label');
+  const bridgeState = await page.evaluate(
+    () => window.__synthstackStudio!.getMidiStatus().state as string,
+  );
+  expect(ledState, 'utility MIDI LED mirrors the bridge MidiStatus state').toBe(`MIDI input ${bridgeState}`);
+
   // ---- zero console errors across the whole session ---------------------------------
   expect(errors, `console/page errors during the keyboard run:\n${errors.join('\n')}`).toEqual([]);
 });

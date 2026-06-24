@@ -42,6 +42,7 @@ import {
   RecordButton,
   RecordFormatToggle,
   FullScreenButton,
+  MidiLed,
 } from './UtilityStrip';
 import { MasterKnob, ChannelFaders } from './MixerKnobs';
 import { displayNameOf, modulesForTab, type ModuleTabId } from '../engine/modules/moduleConfig';
@@ -516,6 +517,11 @@ export const MasterRibbon = memo(function MasterRibbon({
             GUIDE
           </text>
         </a>
+
+        {/* MIDI status LED (G1) — a PASSIVE mirror of the KeyboardPanel's MIDI status (polls
+         * engineBridge.getMidiStatus via the shared hook; makes NO Web MIDI calls). Sits in the gap
+         * between GUIDE and PANIC. Enable MIDI on the keyboard panel; this only reflects the state. */}
+        <MidiLed x={1224} y={28} />
 
         {/* PANIC — ALL SOUND OFF. Sits in the clear gap between GUIDE and the channel
          * faders, filled red so it reads as the emergency control. Single click. */}

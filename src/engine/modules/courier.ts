@@ -25,7 +25,7 @@ import { ModuleBase } from './moduleBase';
 import { constant, gain, shaper } from './helpers';
 import { createNoiseSource } from '../noise';
 import { DriftSource } from '../drift';
-import { PITCH_REF_HZ, clamp } from '../units';
+import { PITCH_REF_HZ, clamp, velocityToVv } from '../units';
 import { MOD_TARGETS, modGain, type ModBus } from '../modRouter';
 import type { CourierModSource, ModAssignEntry } from '../../state/studioState';
 import { COURIER_MOD_SOURCES } from '../../state/studioState';
@@ -36,6 +36,13 @@ import { COURIER_MOD_SOURCES } from '../../state/studioState';
  * Monarch/Anvil default. Do NOT lower it; this value is test-locked (ladderCore.test.ts).
  */
 const COURIER_RES_SCALE = 1.43;
+
+/**
+ * Reference note-on velocity in vv (G1): velocityAt re-centers each note-on velocity on this so the
+ * keyboard's constant velocity 100 contributes ZERO to vcaCtl = today's level (no regression). EARS:
+ * the "vel 100 = unity" anchor + the linear curve are flagged for Will (see units.velocityToVv).
+ */
+const COU_VELOCITY_REF_VV = velocityToVv(100);
 
 /** Linear-FM depth, Hz per vv (unsourced assumption — tunable, mirrors the other voices). */
 const COU_FM_DEPTH_HZ_PER_VV = 150;
@@ -89,6 +96,7 @@ export class CourierModule extends ModuleBase {
 
   // VCA
   private readonly vcaGainNode: GainNode;
+  private readonly velocityCv: ConstantSourceNode; // INTERNAL note-on velocity CV (vv), summed into vcaCtl
   private readonly ampVca: GainNode; // LFO 2 AMP-destination tremolo
   private readonly volume: GainNode;
 
@@ -364,6 +372,12 @@ export class CourierModule extends ModuleBase {
     this.ampEg.connect(vcaEgNorm).connect(vcaShape);
     const vcaCtl = gain(ctx, 0.5); // into the 0..1 shaper domain
     vcaShape.connect(vcaCtl);
+    // INTERNAL note-on velocity CV (G1): a ConstantSource carrying the RE-CENTERED velocity (vv) —
+    // see velocityAt: vel=100 writes 0 (today's level, no regression). Normalized 1/7.5 and summed
+    // into the SAME vcaCtl as the amp EG (parallel velocity CV, modest scale; flagged for Will).
+    this.velocityCv = constant(ctx, 0);
+    const velocityNorm = gain(ctx, 1 / 7.5);
+    this.velocityCv.connect(velocityNorm).connect(vcaCtl);
     const vcaClip = shaper(ctx, (x) => {
       const g = clamp(x, 0, 1) * 2;
       return g <= 1 ? g : 1 + 0.2 * Math.tanh((g - 1) / 0.2);
@@ -664,12 +678,18 @@ export class CourierModule extends ModuleBase {
 
   // ---- transport binding surface ----------------------------------------------
 
-  /** Set keyboard pitch CV at an exact time, with optional glide (mirrors the Monarch). */
-  setPitchAt(noteVv: number, time: number, glide: boolean): void {
+  /**
+   * Set keyboard pitch CV at an exact time, with optional glide (mirrors the Monarch).
+   *   `glideTimeSOverride` (G1): when provided, glide uses THIS time instead of `this.glideTimeS` —
+   *   DEFAULTS to `this.glideTimeS` so the sequencer/arp binder is untouched (only the keyboard/MIDI
+   *   live path passes the separate keyboard-glide value).
+   */
+  setPitchAt(noteVv: number, time: number, glide: boolean, glideTimeSOverride?: number): void {
+    const glideS = glideTimeSOverride ?? this.glideTimeS;
     const p = this.kbCv.offset;
     p.cancelAndHoldAtTime?.(time);
-    if (glide && this.glideTimeS > 0.001) {
-      p.setTargetAtTime(noteVv, time, this.glideTimeS / 3);
+    if (glide && glideS > 0.001) {
+      p.setTargetAtTime(noteVv, time, glideS / 3);
     } else {
       p.setValueAtTime(noteVv, time);
     }
@@ -678,6 +698,16 @@ export class CourierModule extends ModuleBase {
   /** Set the keyboard gate (0/5 vv) at an exact time. */
   gateAt(on: boolean, time: number): void {
     this.kbGate.offset.setValueAtTime(on ? 5 : 0, time);
+  }
+
+  /**
+   * Set the note-on VELOCITY at an exact time (mirrors gateAt / the Monarch). `velVv` is the velocity
+   * already mapped to vv by units.velocityToVv; it is RE-CENTERED on the reference velocity (100)
+   * before it enters vcaCtl, so vel=100 contributes 0 (today's level), louder = hotter, quieter =
+   * softer. Only the keyboard/MIDI live path drives this; the sequencer/arp leaves it at 0.
+   */
+  velocityAt(velVv: number, time: number): void {
+    this.velocityCv.offset.setValueAtTime(velVv - COU_VELOCITY_REF_VV, time);
   }
 
   /** PITCH WHEEL: live bend in SEMITONES (vv = semitones/12), summed onto the pitch bus so all

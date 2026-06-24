@@ -81,6 +81,8 @@ export interface CascadeSequencerState {
  *  octave as +octave on the vv AFTER (note-60)/12 — the one place octave is applied. */
 export interface KeyboardState {
   octave: number; // integer octave shift, -3..+3; 0 = unshifted (low C = MIDI 48 / C3, middle C 60 in range)
+  midiChannel: number; // MIDI input channel filter: -1 = OMNI (all channels); 0..15 = accept only that channel
+  glideS: number; // SEPARATE keyboard/MIDI live-play glide time in seconds, 0..1; 0 = off (the seq keeps MON_GLIDE)
 }
 
 export interface TransportState {
@@ -226,21 +228,27 @@ export function coalesceSamplerState(raw: Partial<SamplerState> | undefined): Sa
 }
 
 export function defaultKeyboardState(): KeyboardState {
-  return { octave: 0 };
+  return { octave: 0, midiChannel: -1, glideS: 0 };
 }
 
 /**
  * Normalize a possibly-partial / older-shape keyboard slice to a complete KeyboardState.
  * Mirrors coalesceSamplerState: PURE, never mutates `raw`. The bridge is the ONLY consumer
- * (powerOn seed + setKeyboardOctave read-modify-write + getKeyboardOctave snapshot), so this
- * is the sole older-tree safety net — a pre-feature tree lacking `keyboard` -> {octave:0}.
- * Integer-guards the octave and clamps to -3..+3 (matches the bridge clamp); any non-integer
- * (3.5 / 'x' / NaN) or missing value defaults to 0.
+ * (powerOn seed + setKeyboard* read-modify-write + getKeyboard* snapshots), so this is the sole
+ * older-tree safety net — a pre-feature tree lacking `keyboard` -> the full default; a pre-G1 tree
+ * with only `{octave}` heals to {octave, midiChannel:-1, glideS:0}.
+ *   octave:      integer-guarded, clamped -3..+3 (matches the bridge clamp); non-integer / missing -> 0.
+ *   midiChannel: integer-guarded, -1 (OMNI) or 0..15; any non-integer / out-of-range -> -1 (OMNI).
+ *   glideS:      finite, clamped 0..1; non-finite (NaN / 'x' / missing) -> 0.
  */
 export function coalesceKeyboardState(raw: Partial<KeyboardState> | undefined): KeyboardState {
   const o = raw?.octave;
   const octave = Number.isInteger(o) ? Math.max(-3, Math.min(3, o as number)) : 0;
-  return { octave };
+  const c = raw?.midiChannel;
+  const midiChannel = Number.isInteger(c) && (c as number) >= -1 && (c as number) <= 15 ? (c as number) : -1;
+  const g = raw?.glideS;
+  const glideS = typeof g === 'number' && Number.isFinite(g) ? Math.max(0, Math.min(1, g)) : 0;
+  return { octave, midiChannel, glideS };
 }
 
 /** A fresh all-off 3-effect chain — the shared default shape for the master AND each voice. */

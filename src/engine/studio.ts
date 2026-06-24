@@ -866,9 +866,14 @@ export class Studio {
    *   retrigger=false (legato / held-note fall-back): pitch moves but the gate is already
    *               high, so do NOT re-raise it — no EG re-attack, matching classic SynthStack mono.
    */
-  monarchNoteOn(noteVv: number, retrigger: boolean): void {
+  monarchNoteOn(noteVv: number, retrigger: boolean, velVv?: number, glideS?: number): void {
     const t = this.context.audioContext.currentTime + 0.03;
-    this.monarch.setPitchAt(noteVv, t, true);
+    // Keyboard glide (G1): pass the SEPARATE keyboard glideS as the setPitchAt override (undefined =>
+    // the module's own glideTimeS, the sequencer value — preserves current behavior).
+    this.monarch.setPitchAt(noteVv, t, true, glideS);
+    // Velocity (G1): write velocity BEFORE raising the gate so the VCA sees it at attack. velVv is
+    // already in vv (units.velocityToVv); undefined => leave the velocity CV unchanged (no map).
+    if (velVv !== undefined) this.monarch.velocityAt(velVv, t);
     if (retrigger) this.monarch.gateAt(true, t);
   }
 
@@ -884,9 +889,10 @@ export class Studio {
    *   glide=true: setPitchAt reads the module's glideTimeS and only glides when GLIDE is up.
    *   retrigger=false (legato / held-note fall-back): pitch moves, gate stays high (no re-attack).
    */
-  courierNoteOn(noteVv: number, retrigger: boolean): void {
+  courierNoteOn(noteVv: number, retrigger: boolean, velVv?: number, glideS?: number): void {
     const t = this.context.audioContext.currentTime + 0.03;
-    this.courier.setPitchAt(noteVv, t, true);
+    this.courier.setPitchAt(noteVv, t, true, glideS); // glideS => keyboard glide override (G1)
+    if (velVv !== undefined) this.courier.velocityAt(velVv, t); // velocity BEFORE the gate (G1)
     if (retrigger) {
       this.courier.gateAt(true, t);
     } else if (this.courier.multiTrig) {

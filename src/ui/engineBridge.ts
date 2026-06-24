@@ -72,6 +72,7 @@ import {
   type StudioStore,
 } from '../state/studioState';
 import { MonoVoice, noteToVv, type VoiceAction } from '../engine/voice/monoVoice';
+import { velocityToVv } from '../engine/units';
 import { reportError } from './errorLog';
 import { WebMidiInput, type MidiStatus } from './midi/webMidiInput';
 import type { EgMode } from '../engine/sequencers/cascadeClock';
@@ -222,6 +223,14 @@ class EngineBridge {
   private readonly voice = new MonoVoice();
   private readonly midi = new WebMidiInput();
   private keyboardOctave = 0;
+  /** Separate keyboard/MIDI live-play glide time (s), read in applyVoiceAction (G1). Seeded from
+   *  the persisted keyboard slice on power-on / load; the SEQUENCER keeps MON_GLIDE (untouched). */
+  private keyboardGlideS = 0;
+  /** Last note-ON velocity (raw 1..127) — the side-store for the legato fall-back: the pure
+   *  MonoVoice allocator stays velocity-AGNOSTIC (its documented contract), so when noteOff falls
+   *  back to a still-held note (gate stays 'on'), there is no fresh velocity to re-read. Reuse the
+   *  most-recent note-on velocity for that legato re-pitch (G1). */
+  private lastNoteVelocity = 100;
   /** Which voice the on-screen piano + Web MIDI play. Both feed the ONE shared mono stack
    *  (this.voice); only the engine WRITE in applyVoiceAction is re-targeted, so the octave,
    *  legato/last-note semantics and step-record arm are identical for either voice. RUNTIME
@@ -753,7 +762,10 @@ class EngineBridge {
    */
   noteOn(noteNumber: number, velocity: number): void {
     if (velocity === 0) return this.noteOff(noteNumber);
-    this.applyVoiceAction(this.voice.noteOn(noteNumber)); // sounds the note (also while recording)
+    // Capture velocity BEFORE the allocator (which is velocity-agnostic by contract) and thread it
+    // SEPARATELY into the engine write (G1). Remember it for the legato fall-back side-store.
+    this.lastNoteVelocity = velocity;
+    this.applyVoiceAction(this.voice.noteOn(noteNumber), velocity); // sounds the note (also while recording)
     // Monarch step-record: while armed, the pressed note ALSO writes the cursor step and
     // advances it (hardware-style step record). Uses the RAW pressed note (not the mono
     // allocator's result) + the same octave the live voice plays, so what you hear is what
@@ -792,6 +804,45 @@ class EngineBridge {
   /** Current keyboard octave (KeyboardPanel snapshot source). Coalesce-safe before power-on. */
   getKeyboardOctave(): number {
     return coalesceKeyboardState(this.store.getState().keyboard).octave;
+  }
+
+  /**
+   * MIDI input CHANNEL filter (G1): -1 = OMNI (every channel); 0..15 = accept only that channel.
+   * Persists the (coalesce-clamped) value to the keyboard slice AND pushes it to the live Web MIDI
+   * shell so it takes effect immediately (no re-enable needed). System real-time (clock/transport)
+   * always passes — the shell never gates it. Safe unpowered (store + shell only; the shell ignores
+   * it until a device is delivering). The persisted channel is re-applied inside enableMidi().
+   */
+  setMidiChannel(channel: number): void {
+    const midiChannel = coalesceKeyboardState({ midiChannel: channel }).midiChannel;
+    this.midi.setChannelFilter(midiChannel < 0 ? null : midiChannel);
+    const s = this.store.getState();
+    s.keyboard = coalesceKeyboardState({ ...s.keyboard, midiChannel });
+    this.store.setState(s);
+  }
+
+  /** Current MIDI channel filter (-1 OMNI / 0..15). Coalesce-safe before power-on. */
+  getMidiChannel(): number {
+    return coalesceKeyboardState(this.store.getState().keyboard).midiChannel;
+  }
+
+  /**
+   * SEPARATE keyboard/MIDI live-play GLIDE time in seconds (0..1; 0 = off), G1. Distinct from the
+   * Monarch MON_GLIDE knob (which the SEQUENCER keeps): persists to the keyboard slice + caches the
+   * live value read by applyVoiceAction, so a held note's NEXT keypress glides over this time. Does
+   * NOT re-pitch a currently-held note (hardware-like; mirrors setKeyboardOctave). Safe unpowered.
+   */
+  setKeyboardGlide(glideS: number): void {
+    const v = coalesceKeyboardState({ glideS }).glideS;
+    this.keyboardGlideS = v;
+    const s = this.store.getState();
+    s.keyboard = coalesceKeyboardState({ ...s.keyboard, glideS: v });
+    this.store.setState(s);
+  }
+
+  /** Current keyboard glide time (s). Coalesce-safe before power-on. */
+  getKeyboardGlide(): number {
+    return coalesceKeyboardState(this.store.getState().keyboard).glideS;
   }
 
   /**
@@ -885,6 +936,10 @@ class EngineBridge {
    * (Node / jsdom / non-secure context).
    */
   enableMidi(): Promise<MidiStatus> {
+    // Apply the persisted channel filter to the shell BEFORE wiring callbacks, so the first
+    // delivered message already honors the saved CHANNEL selection (G1).
+    const ch = coalesceKeyboardState(this.store.getState().keyboard).midiChannel;
+    this.midi.setChannelFilter(ch < 0 ? null : ch);
     return this.midi.enable(
       (note, velocity) => this.noteOn(note, velocity),
       (note) => this.noteOff(note),
@@ -947,12 +1002,17 @@ class EngineBridge {
    *   gate 'off'       -> {monarch,courier}NoteOff()
    *   gate 'unchanged' -> nothing (a held lower note released; the voice did not change)
    */
-  private applyVoiceAction(a: VoiceAction): void {
+  private applyVoiceAction(a: VoiceAction, velocity: number = this.lastNoteVelocity): void {
     if (!this._powered) return;
     if (a.gate === 'on' && a.note != null) {
       const vv = noteToVv(a.note) + this.keyboardOctave;
-      if (this.keyboardTarget === 'courier') this.studio.courierNoteOn(vv, a.retrigger);
-      else this.studio.monarchNoteOn(vv, a.retrigger);
+      // Velocity -> VCA-CV (G1): map the raw 1..127 to vv ONCE here, and pass the SEPARATE keyboard
+      // glide so the live path glides on KB GLIDE, not the seq's MON_GLIDE. A legato fall-back
+      // (noteOff -> next held note, gate 'on') reuses lastNoteVelocity via the default arg.
+      const velVv = velocityToVv(velocity);
+      const glideS = this.keyboardGlideS;
+      if (this.keyboardTarget === 'courier') this.studio.courierNoteOn(vv, a.retrigger, velVv, glideS);
+      else this.studio.monarchNoteOn(vv, a.retrigger, velVv, glideS);
     } else if (a.gate === 'off') {
       if (this.keyboardTarget === 'courier') this.studio.courierNoteOff();
       else this.studio.monarchNoteOff();
@@ -1596,7 +1656,12 @@ class EngineBridge {
     // values with the stale drag's. Cancel the pending mirror and drop its staged values.
     this.cancelStoreMirror();
     this.releaseAllNotes();
-    this.keyboardOctave = coalesceKeyboardState(state.keyboard).octave;
+    const kb = coalesceKeyboardState(state.keyboard);
+    this.keyboardOctave = kb.octave;
+    // Seed the SEPARATE keyboard glide + push the MIDI channel filter to the shell (G1), the same
+    // way octave is seeded here — applyState never restores these (the keyboard slice is store-only).
+    this.keyboardGlideS = kb.glideS;
+    this.midi.setChannelFilter(kb.midiChannel < 0 ? null : kb.midiChannel);
     this.store.setState(state);
     if (this._powered) {
       this.studio.applyState(state);
