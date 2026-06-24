@@ -1416,20 +1416,34 @@ class EngineBridge {
     try {
       if (typeof localStorage === 'undefined') return referenced;
       for (const name of this.readSlotIndex()) {
-        try {
-          const raw = localStorage.getItem(slotStorageKey(name));
-          if (raw == null) continue;
-          const wrapper = JSON.parse(raw) as Partial<SlotWrapper>;
-          const state = parseSlot(JSON.stringify(wrapper.state));
-          for (const id of this.currentUserSampleIds(state)) referenced.add(id);
-        } catch {
-          /* skip a single malformed slot; keep scanning the rest */
-        }
+        const state = this.readSlotState(name);
+        if (!state) continue; // skip a single missing/malformed slot; keep scanning the rest
+        for (const id of this.currentUserSampleIds(state)) referenced.add(id);
       }
     } catch {
       /* absent / blocked localStorage — treat as no slot references (never throw) */
     }
     return referenced;
+  }
+
+  /**
+   * Read a single SAVED slot's StudioState through the existing slot read path: the g3 wrapper
+   * (`{version, savedAt, state}`) at slotStorageKey(name), with wrapper.state routed through
+   * parseSlot's coalesce safety net (its arg is the JSON serializeSlot produced on save). Returns
+   * null on an absent slot, an absent/blocked localStorage, or ANY parse failure — never throws.
+   * This is the slot-state source shared by slotReferencedSampleIds (the free gate) and exportSlot
+   * (the per-slot bundle), so a slot read is defined in exactly one place.
+   */
+  private readSlotState(name: string): StudioState | null {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const raw = localStorage.getItem(slotStorageKey(name));
+      if (raw == null) return null;
+      const wrapper = JSON.parse(raw) as Partial<SlotWrapper>;
+      return parseSlot(JSON.stringify(wrapper.state));
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1666,6 +1680,29 @@ class EngineBridge {
       const bundle = buildBundle(state, entries); // g1: assemble the envelope
       const text = JSON.stringify(bundle);
       const filename = buildPresetFilename(name ?? 'setup', this.timestampNow());
+      this.triggerJsonDownload(text, filename);
+    } catch {
+      /* serialize / encode / DOM failure — silent no-op (export is best-effort) */
+    }
+  }
+
+  /**
+   * Export a SAVED localStorage slot (NOT the live setup) as a portable .json bundle. Reads the
+   * slot's StudioState via readSlotState, then runs the EXACT exportSetup pipeline against it:
+   * collectUserSampleIds -> exportSamples (base64 the referenced USER bytes from IndexedDB) ->
+   * buildBundle -> triggerJsonDownload. An absent/corrupt/unreadable slot is a silent no-op (no
+   * download, no throw); the whole body is try/catch like exportSetup. No new state — this just
+   * sources `state` from a slot instead of this.store.getState().
+   */
+  async exportSlot(name: string): Promise<void> {
+    try {
+      const state = this.readSlotState(name);
+      if (!state) return; // unknown / corrupt / blocked slot — silent no-op
+      const ids = collectUserSampleIds(state); // distinct non-factory pad ids
+      const entries = await exportSamples(sampleBackend, ids); // gather + base64 (never throws)
+      const bundle = buildBundle(state, entries); // assemble the envelope
+      const text = JSON.stringify(bundle);
+      const filename = buildPresetFilename(name, this.timestampNow());
       this.triggerJsonDownload(text, filename);
     } catch {
       /* serialize / encode / DOM failure — silent no-op (export is best-effort) */

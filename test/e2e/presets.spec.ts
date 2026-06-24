@@ -182,3 +182,86 @@ test('presets: save a slot, tweak + restore it, load a factory preset, delete th
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(errors, `console/page errors during the presets run:\n${errors.join('\n')}`).toEqual([]);
 });
+
+/**
+ * G7 — BUNDLE a SAVED slot to a portable .json (NOT the live setup). After saving a slot whose
+ * live state carries a distinctive MON_TEMPO, the per-slot BUNDLE button emits a download whose
+ * JSON parseBundle-restores the saved MON_TEMPO. Zero console errors throughout.
+ */
+test('presets: BUNDLE a saved slot emits a portable .json that restores its MON_TEMPO', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+
+  const errors: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error' && !msg.location().url.includes('favicon')) errors.push(msg.text());
+  });
+  page.on('pageerror', (err) => errors.push(err.message));
+
+  await page.goto('/');
+  await page.evaluate(() => {
+    try {
+      const keys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('synthstack-preset:')) keys.push(k);
+      }
+      for (const k of keys) localStorage.removeItem(k);
+    } catch {
+      /* localStorage absent — nothing to clear */
+    }
+  });
+
+  await page.getByTestId('power').click();
+  const strip = page.getByTestId('utility-strip');
+  await expect(strip).toBeVisible();
+
+  // seed a distinctive MON_TEMPO into the LIVE setup and SAVE it to a slot.
+  await page.evaluate(
+    (v) => window.__synthstackStudio!.applyControlCommit('monarch', 'MON_TEMPO', v),
+    SAVED_TEMPO,
+  );
+  await expect.poll(() => monarchControl(page, 'MON_TEMPO')).toBe(SAVED_TEMPO);
+
+  await strip.getByTestId('save').click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByTestId('preset-name-input').fill(SLOT_NAME);
+  await page.getByTestId('preset-save-confirm').click();
+  await expect(page.getByTestId(`slot-${SLOT_NAME}`)).toBeVisible();
+
+  // change the LIVE setup away from the saved snapshot — the bundle must carry the SLOT value.
+  await page.evaluate(
+    (v) => window.__synthstackStudio!.applyControlCommit('monarch', 'MON_TEMPO', v),
+    TWEAKED_TEMPO,
+  );
+
+  // click the per-slot BUNDLE button and capture the triggered download.
+  const bundleBtn = page.getByTestId(`slot-bundle-${SLOT_NAME}`);
+  await expect(bundleBtn).toBeVisible();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    bundleBtn.click(),
+  ]);
+  await expect(page.getByTestId('preset-status')).toContainText(/bundled/i);
+
+  // read the downloaded JSON and parse it back through the bundle codec.
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const c of stream) chunks.push(c as Buffer);
+  const text = Buffer.concat(chunks).toString('utf-8');
+  const restored = await page.evaluate((bundleText) => {
+    // parseBundle is not exposed globally; round-trip via the bridge's importSetup instead, then
+    // read the restored control off the store. We construct a File and import it.
+    const file = new File([bundleText], 'bundle.json', { type: 'application/json' });
+    return window.__synthstackStudio!.importSetup(file).then((r) => {
+      if (!r.ok) return null;
+      return window.__synthstackStudio!.store.getState().controls.monarch?.['MON_TEMPO'] ?? null;
+    });
+  }, text);
+  expect(restored).toBe(SAVED_TEMPO);
+
+  await page.getByTestId('preset-close').click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(errors, `console/page errors during the bundle run:\n${errors.join('\n')}`).toEqual([]);
+});
