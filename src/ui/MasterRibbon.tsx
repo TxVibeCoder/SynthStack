@@ -30,7 +30,7 @@
  * width — see styles.css `.master-ribbon`.
  */
 
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { COLORS, FONT_CONDENSED } from './theme';
 import { Button } from './controls/Button';
@@ -49,7 +49,10 @@ import { displayNameOf, modulesForTab, type ModuleTabId } from '../engine/module
  *  across the full console width; height is the ribbon's own logical height). The SVG is
  *  drawn at this aspect and CSS scales it to the screen-pixel RIBBON_H. */
 export const RIBBON_VB_W = 1805.19;
-export const RIBBON_VB_H = 80;
+// 90, matching the "90-tall" the rest of the layout was authored against (ROW2_Y/sublabel
+// y≈62, the y2=76 dividers, the MASTER label baseline at y≈83). At 80 the MASTER knob label
+// fell outside the viewBox and was clipped (B6); the SVG still scales to RIBBON_H via CSS.
+export const RIBBON_VB_H = 90;
 
 /** Vertical centers for the two visual rows of leaves inside the ribbon. Most caps are
  *  one row; the elements were authored with their own internal offsets, so we pick a
@@ -109,10 +112,32 @@ const TabTransport = memo(function TabTransport({
  *  stray click can't wipe a patch. */
 const InitCap = memo(function InitCap({ x, y }: { x: number; y: number }) {
   const onDoubleClick = useCallback(() => engineBridge.resetAll(), []);
+  // Arm-then-confirm so a stray single Enter can't wipe the studio (mirrors the mouse
+  // double-click). First Enter arms for 500ms; a second Enter within the window confirms.
+  // The timer self-disarms and is cleared on unmount (B7).
+  const armedRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    [],
+  );
   const onKeyDown = useCallback((e: ReactKeyboardEvent<SVGGElement>) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    engineBridge.resetAll();
+    if (armedRef.current) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = null;
+      armedRef.current = false;
+      engineBridge.resetAll();
+      return;
+    }
+    armedRef.current = true;
+    timerRef.current = setTimeout(() => {
+      armedRef.current = false;
+      timerRef.current = null;
+    }, 500);
   }, []);
   return (
     <g

@@ -56,7 +56,7 @@ const CHANNEL_SPECS: ReadonlyArray<{ channel: MixChannel; def: ControlDef; x: nu
   {
     channel: 3,
     x: 288,
-    def: { id: 'MIX_CH4_LEVEL', panelLabel: 'Sampler', type: 'knob', min: 0, max: 1, default: 0 },
+    def: { id: 'MIX_CH4_LEVEL', panelLabel: 'Sampler', type: 'knob', min: 0, max: 1, default: 0.8 },
   },
   {
     channel: 4,

@@ -36,7 +36,7 @@ import { StepLed } from '../controls/StepLed';
 import { useControl } from '../useStudio';
 import { COURIER_CLOCK_DIVS } from '../../engine/sequencers/courierSeq';
 import { COURIER_LOCKABLE } from '../../engine/modRouter';
-import { keyToCourierAction, nextNoteSemis, nextSelection } from './courierKeyNav';
+import { clampSemis, keyToCourierAction, nextNoteSemis, nextSelection } from './courierKeyNav';
 import {
   courierIsRunning,
   courierReset,
@@ -337,7 +337,10 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
     if (!armed) return;
     setCourierRecordHandler((noteVv) => {
       const cur = selectedRef.current;
-      updateCourierStep(cur, { noteVv, rest: false });
+      // Clamp to the NOTE knob's editable rail (±24 semis = ±2 vv) so an octave-shifted recorded
+      // note can't exceed it and make the first manual NOTE edit jump pitch (B9, Courier parallel).
+      const clampedVv = clampSemis(Math.round(noteVv * 12)) / 12;
+      updateCourierStep(cur, { noteVv: clampedVv, rest: false });
       const next = (cur + 1) % Math.max(1, endStepRef.current);
       setSelected(next);
       setPage(Math.floor(next / PAGE_CELLS)); // follow the cursor onto the next page
