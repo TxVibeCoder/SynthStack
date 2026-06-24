@@ -37,7 +37,7 @@ const LIN_FM_DEPTH_HZ_PER_VV = 150;
  * Reference note-on velocity in vv (G1): velocityAt re-centers every note-on velocity on this value
  * so the on-screen keyboard's constant velocity 100 contributes ZERO to vcaCtl = today's level (no
  * regression for presets / recipes / the audio battery). velocityToVv(100) ≈ 5.91 vv. EARS: this
- * "vel 100 = unity" anchor + the linear curve are flagged for Will (see units.velocityToVv).
+ * "vel 100 = unity" anchor + the linear curve are flagged for the operator (see units.velocityToVv).
  */
 const MON_VELOCITY_REF_VV = velocityToVv(100);
 
@@ -242,7 +242,7 @@ export class MonarchModule extends ModuleBase {
     // INTERNAL note-on velocity CV: a ConstantSource carrying the RE-CENTERED velocity (vv) — see
     // velocityAt: vel=100 writes 0 (today's level = no regression), vel=127 a touch positive, vel=1
     // negative (quieter). Normalized 1/7.5 and summed into the SAME vcaCtl as EG + VCA_CV (the
-    // documented default = a parallel velocity CV, modest scale; flagged for Will).
+    // documented default = a parallel velocity CV, modest scale; flagged for the operator).
     this.velocityCv = constant(ctx, 0);
     const velocityNorm = gain(ctx, 1 / 7.5);
     this.velocityCv.connect(velocityNorm);

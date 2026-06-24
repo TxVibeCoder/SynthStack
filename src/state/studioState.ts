@@ -234,7 +234,7 @@ export function coalesceSamplerState(raw: Partial<SamplerState> | undefined): Sa
       ? Math.max(1, Math.min(16, Math.round(raw.numSteps)))
       : 16;
   // swingPct: finite -> clamp 0..100; else default 50 (no swing). State allows the full 0..100;
-  // the UI caps the knob at the musical 75 (see DrumMachinePanel SWING — flagged for Will's ears).
+  // the UI caps the knob at the musical 75 (see DrumMachinePanel SWING — flagged for the operator's ears).
   const swingPct =
     typeof raw.swingPct === 'number' && Number.isFinite(raw.swingPct)
       ? Math.max(0, Math.min(100, raw.swingPct))

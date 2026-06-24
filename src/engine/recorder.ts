@@ -31,7 +31,7 @@ export const MAX_RECORD_MS = 10 * 60 * 1000;
 
 /** Lossless WAV bit depth. 16 is the shipped DEFAULT (a friendly, universally-playable file ~2/3
  *  the size of 24-bit); 24-bit lives in encodeWav for the operator to flip if "CAD-grade fidelity"
- *  wants it. EARS/DECISION: 16 vs 24 default is Will's by-ear/size call — flagged in the report. */
+ *  wants it. EARS/DECISION: 16 vs 24 default is the operator's by-ear/size call — flagged in the report. */
 const WAV_BIT_DEPTH: 16 | 24 = 16;
 
 export class MasterRecorder {

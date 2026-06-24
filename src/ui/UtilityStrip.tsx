@@ -433,7 +433,7 @@ export const RecordButton = memo(function RecordButton({
  * inside an <svg>. Carries data-testid="record-format".
  *
  * EARS/DECISION: the WAV bit depth (16 default vs 24) is fixed in the engine recorder — this
- * selector only chooses the container, not the depth; flagged for Will.
+ * selector only chooses the container, not the depth; flagged for the operator.
  */
 export const RecordFormatToggle = memo(function RecordFormatToggle({
   x = 300,

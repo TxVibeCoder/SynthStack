@@ -73,7 +73,7 @@ const LENGTH_DEF: ControlDef = {
   default: 16,
 };
 // SWING: commit-only Knob. State allows 0..100 but the knob is CAPPED at the musical 75 — the
-// by-ear range (flagged for Will). 50 = no swing. Commit-only avoids any liveDrumSwingPct guard
+// by-ear range (flagged for the operator). 50 = no swing. Commit-only avoids any liveDrumSwingPct guard
 // (syncTransportConfig only reads the committed store value).
 const SWING_DEF: ControlDef = {
   id: 'DRUM_SWING',

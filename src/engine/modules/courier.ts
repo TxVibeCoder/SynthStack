@@ -40,7 +40,7 @@ const COURIER_RES_SCALE = 1.43;
 /**
  * Reference note-on velocity in vv (G1): velocityAt re-centers each note-on velocity on this so the
  * keyboard's constant velocity 100 contributes ZERO to vcaCtl = today's level (no regression). EARS:
- * the "vel 100 = unity" anchor + the linear curve are flagged for Will (see units.velocityToVv).
+ * the "vel 100 = unity" anchor + the linear curve are flagged for the operator (see units.velocityToVv).
  */
 const COU_VELOCITY_REF_VV = velocityToVv(100);
 
@@ -374,7 +374,7 @@ export class CourierModule extends ModuleBase {
     vcaShape.connect(vcaCtl);
     // INTERNAL note-on velocity CV (G1): a ConstantSource carrying the RE-CENTERED velocity (vv) —
     // see velocityAt: vel=100 writes 0 (today's level, no regression). Normalized 1/7.5 and summed
-    // into the SAME vcaCtl as the amp EG (parallel velocity CV, modest scale; flagged for Will).
+    // into the SAME vcaCtl as the amp EG (parallel velocity CV, modest scale; flagged for the operator).
     this.velocityCv = constant(ctx, 0);
     const velocityNorm = gain(ctx, 1 / 7.5);
     this.velocityCv.connect(velocityNorm).connect(vcaCtl);
