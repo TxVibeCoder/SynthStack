@@ -135,11 +135,36 @@ export class Studio {
   /** Was a cable in MON_HOLD_IN last rebuild? Used to RELEASE hold when it is unplugged
    *  (the edge follower that would deliver the gate-low is torn down with the cable). */
   private monarchHoldPatched = false;
+  /** The `from` source feeding MON_HOLD_IN last rebuild (null = unpatched). A SWAP (one patch
+   *  update replaces the HOLD cable's source — e.g. a preset load — from a HIGH source to a LOW
+   *  one) re-adds the follower while findCable stays truthy, so the pure-remove release never runs
+   *  and holdActive strands true. Comparing the source id detects the swap and re-releases at
+   *  re-add time; an unrelated patch edit (same source) leaves a live hold untouched. */
+  private monarchHoldSource: string | null = null;
   /** Was a cable in MON_TEMPO_IN last rebuild? Used to RESUME the internal clock when it is
    *  unplugged while running (the external-clock branch left nextEventTime=Infinity). */
   private monarchTempoPatched = false;
+  /** The `from` source feeding MON_TEMPO_IN last rebuild (null = unpatched). The measured
+   *  external-clock interval (monarchTempoLastEdge) is reset to -1 ONLY when this changes (cable
+   *  added / removed / swapped), NOT on every rebuild — an unrelated patch edit must not glitch the
+   *  tick interval for one step. */
+  private monarchTempoSource: string | null = null;
+  /** Persisted measured-edge timestamp for the Monarch external clock (MON_TEMPO_IN). Survives
+   *  rebuilds so an unrelated patch edit while externally clocked keeps the measured interval;
+   *  reset to -1 only when the clock SOURCE changes (see monarchTempoSource). */
+  private monarchTempoLastEdge = -1;
   /** Was a cable in COU_CLOCK_IN last rebuild? Same unplug-resume role as monarchTempoPatched. */
   private courierClockPatched = false;
+  /** The `from` source feeding COU_CLOCK_IN last rebuild (null = unpatched). Gates the reset of
+   *  courierClockLastEdge, exactly as monarchTempoSource does for the Monarch clock. */
+  private courierClockSource: string | null = null;
+  /** Persisted measured-edge timestamp for the Courier external clock (COU_CLOCK_IN). Survives
+   *  rebuilds; reset to -1 only when the clock SOURCE changes (see courierClockSource). */
+  private courierClockLastEdge = -1;
+  /** Was a cable in CAS_RESET_IN last rebuild? Used to CLEAR a sustained-high reset hold when the
+   *  cable is unplugged (the falling-edge follower that would release resetHeld is torn down with
+   *  the cable, mirroring the MON_HOLD release-on-teardown). */
+  private cascadeResetPatched = false;
   private registry: StudioEndpointRegistry | null = null;
   private built = false;
 
@@ -546,11 +571,17 @@ export class Studio {
     const courierClock = findCable('COU_CLOCK_IN');
     const courierAnalog = !!courierClock;
     this.courierSeq.externalClock = courierAnalog;
+    // Persist the measured-edge timestamp across rebuilds; reset it ONLY when the clock SOURCE
+    // changes (cable added / removed / swapped). An unrelated patch edit while externally clocked
+    // must NOT reset the interval — that fell back to the internal stepDur for one step's gate
+    // spacing (a one-step timing glitch). null<->null is unchanged; a real swap clears it.
+    const courierClockSrc = courierClock?.from ?? null;
+    if (courierClockSrc !== this.courierClockSource) this.courierClockLastEdge = -1;
+    this.courierClockSource = courierClockSrc;
     if (courierClock) {
-      let lastEdge = -1;
       const onEdge = (t: number): void => {
-        const interval = lastEdge >= 0 ? t - lastEdge : undefined;
-        lastEdge = t;
+        const interval = this.courierClockLastEdge >= 0 ? t - this.courierClockLastEdge : undefined;
+        this.courierClockLastEdge = t;
         for (const fe of this.courierSeq.onExternalEdge(t, interval)) this.bindCourierEvent(fe);
       };
       const src = INTERNAL_CLOCK_EVENTS[courierClock.from];
@@ -583,11 +614,16 @@ export class Studio {
     // Monarch priority: analog TEMPO IN > MIDI clock > internal. The analog cable wins; otherwise
     // MIDI (when master) drives it via routeMidiEdge.
     this.monarchSeq.externalClock = monarchAnalog || this.midiClockMaster;
+    // Persist the measured-edge timestamp across rebuilds; reset it ONLY on a SOURCE change (see the
+    // Courier block above) so an unrelated patch edit while externally clocked keeps the measured
+    // interval instead of glitching one step's gate spacing back to the internal stepDur.
+    const monarchTempoSrc = monarchTempo?.from ?? null;
+    if (monarchTempoSrc !== this.monarchTempoSource) this.monarchTempoLastEdge = -1;
+    this.monarchTempoSource = monarchTempoSrc;
     if (monarchTempo) {
-      let lastEdge = -1;
       const onEdge = (t: number): void => {
-        const interval = lastEdge >= 0 ? t - lastEdge : undefined;
-        lastEdge = t;
+        const interval = this.monarchTempoLastEdge >= 0 ? t - this.monarchTempoLastEdge : undefined;
+        this.monarchTempoLastEdge = t;
         for (const fe of this.monarchSeq.onExternalEdge(t, interval)) this.bindMonarchEvent(fe);
       };
       const src = INTERNAL_CLOCK_EVENTS[monarchTempo.from];
@@ -627,6 +663,18 @@ export class Studio {
     const monarchHold = findCable('MON_HOLD_IN');
     if (monarchHold) {
       this.monarchHoldPatched = true;
+      // SWAP-vs-edit discrimination. A SWAP (the HOLD cable's source changes in one patch update —
+      // e.g. a preset load — from a HIGH source to a LOW one) re-adds the follower while findCable
+      // stays truthy, so the pure-remove release below never runs and holdActive strands true,
+      // freezing the sequence on one step. When the source CHANGES (or there was no prior HOLD
+      // cable), release holdActive=false at re-add time: the edge worklet emits a rising edge on
+      // connect-to-an-already-high signal (its wasHigh seeds false, so a >=2.5 vv first block fires
+      // a rising edge), so a swap to a HIGH source re-raises hold immediately and a swap to a LOW
+      // source stays released — released, never frozen. When the source is the SAME (an unrelated
+      // patch edit), do NOT touch holdActive — that would clobber a live hold.
+      if (monarchHold.from !== this.monarchHoldSource) {
+        this.monarchSeq.holdActive = false;
+      }
       this.addEdgeFollower(
         monarchHold.from,
         () => {
@@ -646,6 +694,62 @@ export class Studio {
       // edit never clobbers a live panel-HOLD press (that path leaves this flag false).
       this.monarchHoldPatched = false;
       this.monarchSeq.holdActive = false;
+    }
+    this.monarchHoldSource = monarchHold?.from ?? null; // remembered for the next rebuild's swap detection
+
+    // ---- TASK 3 transport-gate inputs: Anvil RUN/STOP, Cascade PLAY + RESET --------------------
+    // Wired exactly like the Monarch gate inputs above (gate semantics via the synthstack-edge
+    // worklet), each reusing the existing sequencer transport methods.
+
+    // ANV_RUN/STOP IN (gate, +5 run / 0 stop): rising starts, falling stops. Unlike the Monarch
+    // HOLD gate, an UNPLUG must NOT toggle the transport — pulling the run-control cable should
+    // leave the Anvil seq exactly as it was running/stopped. So there is no release-on-teardown
+    // and no prior-patched flag to track: clearEdgeFollowers simply drops the follower and nothing
+    // strands (the seq owns its own `running`).
+    const anvilRun = findCable('ANV_RUN_STOP_IN');
+    if (anvilRun) {
+      this.addEdgeFollower(
+        anvilRun.from,
+        (t) => this.anvilSeq.start(t),
+        () => this.anvilSeq.stop(),
+      );
+    }
+
+    // CAS_PLAY IN (gate, rising = play / falling = stop): the patchbay parallel of the panel PLAY
+    // button (cascadePlay / cascadeStop). Same edge-follower gate semantics as ANV_RUN/STOP.
+    const cascadePlay = findCable('CAS_PLAY_IN');
+    if (cascadePlay) {
+      this.addEdgeFollower(
+        cascadePlay.from,
+        (t) => this.cascadeClock.start(t),
+        () => this.cascadeClock.stop(),
+      );
+    }
+
+    // CAS_RESET IN (level + edge, data/cascade.json): a RISING edge resets the sequencers to step 1
+    // and the RG phases; a SUSTAINED HIGH pins step 1 via resetHeld (EGs keep triggering, NEXT still
+    // advances); the release clears resetHeld. The rising-edge handler both reset()s AND sets
+    // resetHeld=true so a held gate stays pinned; the falling edge clears resetHeld (mirrors the
+    // panel cascadeReset(held) bracket). An UNPLUG while held would strand resetHeld=true (the
+    // falling-edge follower is torn down with the cable), so clear it on teardown — exactly like the
+    // MON_HOLD release-on-teardown, guarded by the prior-patched flag so an unrelated edit never
+    // clobbers a live panel RESET-hold.
+    const cascadeResetIn = findCable('CAS_RESET_IN');
+    if (cascadeResetIn) {
+      this.cascadeResetPatched = true;
+      this.addEdgeFollower(
+        cascadeResetIn.from,
+        () => {
+          this.cascadeClock.resetHeld = true;
+          this.cascadeClock.reset();
+        },
+        () => {
+          this.cascadeClock.resetHeld = false;
+        },
+      );
+    } else if (this.cascadeResetPatched) {
+      this.cascadeResetPatched = false;
+      this.cascadeClock.resetHeld = false; // unplug = gate low = release the step-1 hold
     }
 
     // Sampler pad triggers: a rising edge on SAMP_PAD{n}_TRIG_IN fires that pad
