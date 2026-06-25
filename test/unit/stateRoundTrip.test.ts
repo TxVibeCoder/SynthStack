@@ -24,7 +24,7 @@ import {
   ARP_RHYTHMS as ENGINE_ARP_RHYTHMS,
 } from '../../src/engine/sequencers/courierSeq';
 import { QUANT_CYCLE } from '../../src/engine/quantGrid';
-import { FACTORY_KIT } from '../../src/engine/factorySamples';
+import { FACTORY_KIT, KIT_LIBRARY, DEFAULT_KIT_ID } from '../../src/engine/factorySamples';
 import monarch from '../../data/monarch.json';
 import anvil from '../../data/anvil.json';
 import cascade from '../../data/cascade.json';
@@ -291,6 +291,61 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(store.getState().sampler.numSteps).toBe(8);
     expect(store.getState().sampler.swingPct).toBe(66);
     expect(store.getState()).toEqual(s);
+  });
+
+  // ---- G6 selectable kit library (kitId) -------------------------------------------------
+
+  it('default sampler kitId is DEFAULT_KIT_ID', () => {
+    expect(defaultStudioState().sampler.kitId).toBe(DEFAULT_KIT_ID);
+    expect(KIT_LIBRARY.some((k) => k.id === DEFAULT_KIT_ID)).toBe(true);
+  });
+
+  it('coalesceSamplerState(undefined) yields kitId DEFAULT_KIT_ID', () => {
+    expect(coalesceSamplerState(undefined).kitId).toBe(DEFAULT_KIT_ID);
+  });
+
+  it('coalesceSamplerState fills kitId DEFAULT_KIT_ID for an older tree lacking it', () => {
+    const oldTree = {
+      pads: [{ sampleId: 'x', sampleName: 'y', level: 0.5, tuneSemis: 0 }],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    expect(coalesceSamplerState(oldTree).kitId).toBe(DEFAULT_KIT_ID);
+  });
+
+  it('coalesceSamplerState membership-clamps an unknown/garbage kitId to the default', () => {
+    const c = (raw: unknown) =>
+      coalesceSamplerState(raw as Parameters<typeof coalesceSamplerState>[0]).kitId;
+    expect(c({ kitId: 'kit-nope' })).toBe(DEFAULT_KIT_ID); // unknown id
+    expect(c({ kitId: 42 })).toBe(DEFAULT_KIT_ID); // non-string
+    expect(c({ kitId: '' })).toBe(DEFAULT_KIT_ID); // empty
+    expect(c({ kitId: null })).toBe(DEFAULT_KIT_ID);
+    // every real library id round-trips unchanged
+    for (const k of KIT_LIBRARY) expect(c({ kitId: k.id })).toBe(k.id);
+  });
+
+  it('round-trips a changed kitId across the store', () => {
+    const other = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    const store = new StudioStore();
+    const s = store.getState();
+    s.sampler.kitId = other.id;
+    store.setState(s);
+    expect(store.getState().sampler.kitId).toBe(other.id);
+    expect(store.getState()).toEqual(s);
+  });
+
+  it('every KIT_LIBRARY kit has globally-unique factory- ids and exactly 8 pads', () => {
+    const allIds: string[] = [];
+    const kitIds = new Set<string>();
+    for (const kit of KIT_LIBRARY) {
+      expect(kit.pads).toHaveLength(8);
+      expect(kitIds.has(kit.id), `duplicate kit id ${kit.id}`).toBe(false);
+      kitIds.add(kit.id);
+      for (const entry of kit.pads) {
+        expect(entry.id.startsWith('factory-'), `${entry.id} not factory- prefixed`).toBe(true);
+        allIds.push(entry.id);
+      }
+    }
+    // pad ids are globally unique across all kits (the flat factoryBuffers map depends on it)
+    expect(new Set(allIds).size).toBe(allIds.length);
   });
 
   it('coalesceSamplerState clamps/guards a garbage pad (level / tuneSemis / sampleId / sampleName)', () => {

@@ -128,3 +128,82 @@ test('factory kit: pads pre-load on power-on, the KIT picker re-points a pad, IN
   // ---- d. zero console errors across the session ----------------------------------
   expect(errors).toEqual([]);
 });
+
+/**
+ * G6 — the global KIT-SELECT dropdown re-points all 8 pads at once. The kit library
+ * (KIT_LIBRARY in src/engine/factorySamples.ts) ships the default 'Studio' kit plus
+ * extra synthesized kits ('Cellar', 'Glass'); selecting a kit flips every pad's meta to
+ * that kit's 8 sounds. The per-pad picker then lists the CURRENT kit's sounds, and a
+ * per-pad override after a kit-select still wins (last-action-wins). INIT restores the
+ * default kit + selection.
+ */
+test('G6 kit-select: choosing a kit re-points all 8 pads; INIT restores the default kit', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const errors: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error' && !msg.location().url.includes('favicon')) errors.push(msg.text());
+  });
+  page.on('pageerror', (err) => errors.push(err.message));
+
+  await page.goto('/');
+  await page.getByTestId('power').click();
+  await page.getByTestId('tab-sampler').click();
+  await expect(page.getByTestId('sampler-panel')).toBeVisible();
+  await expect(page.getByTestId('pad-0')).toBeVisible();
+
+  // ---- the default kit's selection + pad-0 meta on first power-on -------------------
+  const kitId = () => page.evaluate(() => window.__synthstackStudio!.getKitId());
+  const defaultKitId = await kitId();
+  await expect.poll(() => padMeta(page, 0)).toEqual({
+    sampleId: FACTORY_KIT[0]!.id,
+    sampleName: FACTORY_KIT[0]!.name,
+  });
+
+  // ---- open the global KIT-SELECT and pick a NON-default kit ------------------------
+  await expect(page.getByTestId('kit-select')).toBeVisible();
+  await page.getByTestId('kit-select').click();
+  const menu = page.getByTestId('kit-select-menu');
+  await expect(menu).toBeVisible();
+  // pick the first option whose kit id differs from the default
+  const otherOption = menu.locator('[data-testid^="kit-select-option-"]', {
+    hasNot: page.locator(`[data-testid="kit-select-option-${defaultKitId}"]`),
+  });
+  const chosenTestId = await otherOption.first().getAttribute('data-testid');
+  const chosenKitId = chosenTestId!.replace('kit-select-option-', '');
+  await otherOption.first().click();
+
+  // ---- all 8 pad metas flip to the chosen kit's sounds; kitId persists --------------
+  await expect.poll(() => kitId()).toBe(chosenKitId);
+  // every pad now carries a NON-default sound (its sampleId changed from the default kit's)
+  for (let i = 0; i < 8; i++) {
+    await expect
+      .poll(() => padMeta(page, i).then((m) => m.sampleId))
+      .not.toBe(FACTORY_KIT[i]!.id);
+  }
+
+  // ---- per-pad override after a kit-select still wins (last-action-wins) ------------
+  // open pad-0's per-pad KIT picker (now lists the CHOSEN kit's sounds) and pick a row.
+  await page.getByTestId('pad-0-kit').click();
+  const padMenu = page.getByTestId('pad-0-kit-menu');
+  await expect(padMenu).toBeVisible();
+  const padOption = padMenu.locator('[data-testid^="pad-kit-option-"]').first();
+  const padOptId = (await padOption.getAttribute('data-testid'))!.replace('pad-kit-option-', '');
+  await padOption.click();
+  await expect.poll(() => padMeta(page, 0).then((m) => m.sampleId)).toBe(padOptId);
+  // the kit selection itself is unchanged by a per-pad override
+  await expect.poll(() => kitId()).toBe(chosenKitId);
+
+  // ---- INIT restores the default kit + selection -----------------------------------
+  await page.getByTestId('init').dblclick();
+  await expect.poll(() => kitId()).toBe(defaultKitId);
+  for (let i = 0; i < FACTORY_KIT.length; i++) {
+    await expect.poll(() => padMeta(page, i)).toEqual({
+      sampleId: FACTORY_KIT[i]!.id,
+      sampleName: FACTORY_KIT[i]!.name,
+    });
+  }
+
+  expect(errors).toEqual([]);
+});

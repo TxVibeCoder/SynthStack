@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { classifyControl, engineBridge, parseControlRoute, type ControlRoute } from '../../src/ui/engineBridge';
 import { defaultFactoryPad } from '../../src/state/studioState';
-import { FACTORY_KIT } from '../../src/engine/factorySamples';
+import { FACTORY_KIT, KIT_LIBRARY, DEFAULT_KIT_ID } from '../../src/engine/factorySamples';
 import { noteToVv } from '../../src/engine/voice/monoVoice';
 import { velocityToVv } from '../../src/engine/units';
 import monarch from '../../data/monarch.json';
@@ -277,6 +277,77 @@ describe('engineBridge factory picker surface', () => {
     engineBridge.assignFactoryToPad(4, 'factory-nope'); // unknown id -> no-op
     engineBridge.assignFactoryToPad(4, 'user-1234'); // non-manifest id -> no-op
     expect(engineBridge.getPadState(4).sampleId).toBe(before); // pad 4 unchanged
+  });
+});
+
+/**
+ * Global KIT-SELECT bridge surface (G6, PURE / store-level — unpowered, so engine writes are
+ * no-ops; only the coalesced store commit is observable). Re-points all 8 pads at once and
+ * persists the selected kitId. Each test restores the default kit at the end so the singleton
+ * bridge stays order-independent for the cases above (which use pad 4 against the default kit).
+ */
+describe('engineBridge global kit selector (G6)', () => {
+  afterEach(() => {
+    engineBridge.selectKit(DEFAULT_KIT_ID);
+  });
+
+  it('default kitId is DEFAULT_KIT_ID and library has >= 2 kits', () => {
+    expect(engineBridge.getKitId()).toBe(DEFAULT_KIT_ID);
+    expect(KIT_LIBRARY.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('selectKit re-points all 8 pad metas to the chosen kit and persists kitId', () => {
+    const kit = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    engineBridge.selectKit(kit.id);
+    expect(engineBridge.getKitId()).toBe(kit.id);
+    for (let i = 0; i < 8; i++) {
+      const pad = engineBridge.getPadState(i);
+      expect(pad.sampleId).toBe(kit.pads[i]!.id);
+      expect(pad.sampleName).toBe(kit.pads[i]!.name);
+    }
+    // the selection persists in the store slice
+    expect(engineBridge.store.getState().sampler.kitId).toBe(kit.id);
+    // never leaks into the controls map
+    expect(engineBridge.store.getState().controls['sampler'] ?? {}).toEqual({});
+  });
+
+  it('selectKit ignores an unknown kit id (no-op, kitId + pads unchanged)', () => {
+    const kit = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    engineBridge.selectKit(kit.id);
+    const padsBefore = Array.from({ length: 8 }, (_, i) => engineBridge.getPadState(i).sampleId);
+    engineBridge.selectKit('kit-nope'); // unknown -> no-op
+    expect(engineBridge.getKitId()).toBe(kit.id);
+    const padsAfter = Array.from({ length: 8 }, (_, i) => engineBridge.getPadState(i).sampleId);
+    expect(padsAfter).toEqual(padsBefore);
+  });
+
+  it('per-pad KIT override after a kit-select still works (last-action-wins)', () => {
+    const kit = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    engineBridge.selectKit(kit.id);
+    // re-point pad 2 to a DIFFERENT sound from the SAME (current) kit
+    const other = kit.pads.find((e) => e.id !== kit.pads[2]!.id)!;
+    engineBridge.assignFactoryToPad(2, other.id);
+    expect(engineBridge.getPadState(2).sampleId).toBe(other.id);
+    // the other 7 pads keep the kit's assignment; kitId stays the selected kit
+    expect(engineBridge.getKitId()).toBe(kit.id);
+    expect(engineBridge.getPadState(0).sampleId).toBe(kit.pads[0]!.id);
+  });
+
+  it('a kit-select preserves per-pad LEVEL / TUNE / LOOP (only the sound ref changes)', () => {
+    engineBridge.commitPadControl(6, 'level', 0.55);
+    engineBridge.commitPadControl(6, 'tuneSemis', -4);
+    engineBridge.setPadLoop(6, true);
+    const kit = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    engineBridge.selectKit(kit.id);
+    const pad = engineBridge.getPadState(6);
+    expect(pad.sampleId).toBe(kit.pads[6]!.id);
+    expect(pad.level).toBe(0.55);
+    expect(pad.tuneSemis).toBe(-4);
+    expect(pad.loop).toBe(true);
+    // reset pad 6's level/tune/loop after the suite-level kit restore in afterEach
+    engineBridge.commitPadControl(6, 'level', defaultFactoryPad(6).level);
+    engineBridge.commitPadControl(6, 'tuneSemis', defaultFactoryPad(6).tuneSemis);
+    engineBridge.setPadLoop(6, defaultFactoryPad(6).loop);
   });
 });
 

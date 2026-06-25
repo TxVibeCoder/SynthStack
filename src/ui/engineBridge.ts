@@ -96,7 +96,7 @@ import {
   slotStorageKey,
 } from '../state/presets';
 import { getFactoryPreset } from '../state/factoryPresets';
-import { FACTORY_KIT } from '../engine/factorySamples';
+import { KIT_LIBRARY, kitById } from '../engine/factorySamples';
 import { MODULES, controlDefaultModules } from '../engine/modules/moduleConfig';
 
 /**
@@ -1369,24 +1369,72 @@ class EngineBridge {
    */
   assignFactoryToPad(padIndex: number, factoryId: string): void {
     if (padIndex < 0 || padIndex > 7) return; // guard the pad index
-    // Guard the id against the manifest; a non-manifest/unknown id (incl. any user id) is a no-op.
-    const entry = FACTORY_KIT.find((e) => e.id === factoryId);
+    // Guard the id against the CURRENT kit's 8 pads; a non-current/unknown id (incl. any
+    // user id) is a no-op. The per-pad picker only ever offers the current kit's sounds.
+    const kitId = coalesceSamplerState(this.store.getState().sampler).kitId;
+    const kit = kitById(kitId) ?? KIT_LIBRARY[0]!;
+    const entry = kit.pads.find((e) => e.id === factoryId);
     if (!entry) return;
-    // Immediate engine write when powered (no-op unpowered) — resolves factoryBuffers in-memory.
-    if (this._powered) this.studio.loadPadBufferFromFactory(padIndex, factoryId);
     const s = this.store.getState();
     s.sampler = coalesceSamplerState(s.sampler);
-    const prev = s.sampler.pads[padIndex] ?? defaultPad();
-    const prevId = prev.sampleId;
-    s.sampler.pads[padIndex] = { ...prev, sampleId: entry.id, sampleName: entry.name };
+    // Re-point ONE pad (extracted core, shared with selectKit) and free its replaced user
+    // sample after the single commit (last-action-wins; the per-pad pick wins over a kit-select).
+    const prevId = this._repointPadInState(s, padIndex, entry);
     this.store.setState(s);
-    // Free the REPLACED user sample's bytes — but only when truly unreferenced (FIX 1). A
-    // factory/empty prevId frees nothing (isUserSampleUnreferenced returns false for them), and a
-    // user id still on another pad in `s` or referenced by a saved slot is kept. `s` already
-    // carries the new (factory) id on padIndex, so the gate sees the post-commit live state.
     if (prevId && prevId !== entry.id && this.isUserSampleUnreferenced(prevId, [s])) {
       void sampleBackend.delete(prevId);
     }
+  }
+
+  /**
+   * Per-pad re-point CORE (G6) — shared by assignFactoryToPad (1×) and selectKit (8×). Writes
+   * the in-memory ±1.0 buffer into the engine (when powered) and mutates pad `padIndex` of the
+   * ALREADY-COALESCED working state `s` to the factory entry's {id,name} (LEVEL/TUNE/LOOP kept).
+   * Returns the REPLACED pad's prior sampleId so the caller can reference-gate freeing its bytes
+   * AFTER the single setState (so the gate sees post-commit live state). Does NOT setState — the
+   * caller batches one commit (avoids 8 separate setState churn on a kit select).
+   */
+  private _repointPadInState(
+    s: StudioState,
+    padIndex: number,
+    entry: { id: string; name: string },
+  ): string | null {
+    if (this._powered) this.studio.loadPadBufferFromFactory(padIndex, entry.id);
+    const prev = s.sampler.pads[padIndex] ?? defaultPad();
+    const prevId = prev.sampleId;
+    s.sampler.pads[padIndex] = { ...prev, sampleId: entry.id, sampleName: entry.name };
+    return prevId;
+  }
+
+  /**
+   * Global KIT-SELECT (G6) — re-point all 8 pads at the chosen kit's 8 sounds at once + persist
+   * the selection. Guards the id against KIT_LIBRARY (unknown -> no-op). 8× the extracted per-pad
+   * core then ONE setState (no per-pad churn). Any replaced UNREFERENCED user sample is freed
+   * after the commit. Per-pad KIT override + user-file LOAD still win afterward (last-action-wins).
+   */
+  selectKit(kitId: string): void {
+    const kit = kitById(kitId);
+    if (!kit) return; // unknown kit id -> no-op
+    const s = this.store.getState();
+    s.sampler = coalesceSamplerState(s.sampler);
+    const replaced: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      const entry = kit.pads[i];
+      if (!entry) continue;
+      const prevId = this._repointPadInState(s, i, entry);
+      if (prevId && prevId !== entry.id) replaced.push(prevId);
+    }
+    s.sampler.kitId = kit.id;
+    this.store.setState(s);
+    // Free each replaced user sample only when truly unreferenced (post-commit live state in `s`).
+    for (const prevId of replaced) {
+      if (this.isUserSampleUnreferenced(prevId, [s])) void sampleBackend.delete(prevId);
+    }
+  }
+
+  /** Current selected kit id (SamplerPanel KIT-SELECT snapshot source). Coalesces missing slice. */
+  getKitId(): string {
+    return coalesceSamplerState(this.store.getState().sampler).kitId;
   }
 
   /**

@@ -9,7 +9,12 @@
  */
 
 import { loadWorklets } from '../../src/engine/context';
-import { renderFactorySamples, FACTORY_KIT } from '../../src/engine/factorySamples';
+import {
+  renderFactorySamples,
+  renderAllKits,
+  FACTORY_KIT,
+  KIT_LIBRARY,
+} from '../../src/engine/factorySamples';
 import { MonarchModule } from '../../src/engine/modules/monarch';
 import { AnvilModule } from '../../src/engine/modules/anvil';
 import { CascadeModule } from '../../src/engine/modules/cascade';
@@ -697,6 +702,62 @@ async function factoryKit(): Promise<AudioTestResult> {
   };
 }
 
+async function allKits(): Promise<AudioTestResult> {
+  // G6 acceptance: EVERY kit in KIT_LIBRARY must render 8 voices in its manifest (pad)
+  // order, each a NON-SILENT mono buffer peak-normalized to ±1.0 (so the SamplerModule's
+  // ×5 lift is safe) and beginning at its transient (onset within ~20 ms of frame 0).
+  // Timbre/character per kit is a MANUAL LISTENING CHECKPOINT — only objective render
+  // properties are auto-asserted here. The flat renderAllKits() list (used by the engine's
+  // factoryBuffers registration) must carry globally-unique ids across all kits.
+  const peakOf = (buf: AudioBuffer): number => {
+    const d = buf.getChannelData(0);
+    let p = 0;
+    for (let i = 0; i < d.length; i++) {
+      const a = Math.abs(d[i]!);
+      if (a > p) p = a;
+    }
+    return p;
+  };
+  const onsetFrame = (d: Float32Array): number => {
+    for (let i = 0; i < d.length; i++) if (Math.abs(d[i]!) > 0.05) return i;
+    return d.length;
+  };
+  const onsetCap = Math.floor(0.02 * SR);
+
+  const details: string[] = [];
+  let allOk = true;
+  // Render the whole library ONCE (the engine does this at power-on) and group by kit.
+  const flat = await renderAllKits();
+  // Global uniqueness of ids across kits (the factory- predicate + flat map depend on it).
+  const flatIds = flat.map((f) => f.id);
+  const uniqueOk = new Set(flatIds).size === flatIds.length;
+  if (!uniqueOk) allOk = false;
+
+  for (const kit of KIT_LIBRARY) {
+    const voices = kit.pads.map((p) => flat.find((f) => f.id === p.id));
+    const countOk = voices.length === 8 && voices.every((v) => v != null);
+    const ids = voices.map((v) => v?.id);
+    const orderOk = ids.every((id, i) => id === kit.pads[i]!.id);
+    const peaks = voices.map((v) => (v ? peakOf(v.buffer) : 0));
+    const nonSilent = peaks.every((p) => p > 0.99);
+    const normalized = peaks.every((p) => p <= 1.0 + 1e-6);
+    const maxOnset = Math.max(...voices.map((v) => (v ? onsetFrame(v.buffer.getChannelData(0)) : 1e9)));
+    const onsetOk = maxOnset < onsetCap;
+    const kitOk = countOk && orderOk && nonSilent && normalized && onsetOk;
+    if (!kitOk) allOk = false;
+    details.push(
+      `${kit.id}[ok=${kitOk} n=${voices.length} minPk=${Math.min(...peaks).toFixed(2)} ` +
+        `maxPk=${Math.max(...peaks).toFixed(2)} maxOnset=${((maxOnset / SR) * 1000).toFixed(1)}ms]`,
+    );
+  }
+
+  return {
+    name: 'All kits (G6): every KIT_LIBRARY kit renders 8 voices, non-silent, ≤1.0, onset@0; ids globally unique',
+    pass: allOk,
+    detail: `kits=${KIT_LIBRARY.length} uniqueIds=${uniqueOk} ${details.join(' ')}`,
+  };
+}
+
 export const BATTERY: { name: string; run: () => Promise<AudioTestResult> }[] = [
   { name: 'monarch-voice', run: monarchVoiceBasics },
   { name: 'monarch-wobble', run: monarchWobble },
@@ -715,6 +776,7 @@ export const BATTERY: { name: string; run: () => Promise<AudioTestResult> }[] = 
   { name: 'edge-detector', run: edgeDetector },
   { name: 'samp-trigger', run: sampTrigger },
   { name: 'factory-kit', run: factoryKit },
+  { name: 'all-kits', run: allKits },
 ];
 
 export async function runBattery(

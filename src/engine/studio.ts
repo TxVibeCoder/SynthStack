@@ -31,7 +31,7 @@ import { MidiClock } from './sequencers/midiClock';
 import { SamplerLoopClock } from './sequencers/samplerLoops';
 import { SamplerStepSeq } from './sequencers/samplerSeq';
 import { nextBoundary, type QuantDivision, type PhaseRef } from './quantGrid';
-import { renderFactorySamples } from './factorySamples';
+import { renderAllKits } from './factorySamples';
 import type { SampleBackend } from './sampleStore';
 import {
   StudioStore,
@@ -1170,13 +1170,15 @@ export class Studio {
   }
 
   /**
-   * Render the factory one-shots and register their ±1.0 buffers in factoryBuffers.
-   * The audible bytes are NEVER persisted — playback resolves the buffer from the
-   * in-memory factoryBuffers map (a 'factory-' id; see reloadPadBuffers), and the pad's
-   * display name lives in state.sampler.pads. Awaited at power-on.
+   * Render EVERY kit's factory one-shots (G6) and register their ±1.0 buffers in the flat
+   * factoryBuffers map. The audible bytes are NEVER persisted — playback resolves the
+   * buffer from this in-memory map (a 'factory-' id; see reloadPadBuffers / selectKit), and
+   * the pad's display name lives in state.sampler.pads. Awaited at power-on. Registering
+   * every kit up front makes a kit-select / per-pad pick a zero-render lookup; ids are
+   * globally unique across kits, so the flat map never collides.
    */
   async loadFactorySamples(): Promise<void> {
-    const fs = await renderFactorySamples();
+    const fs = await renderAllKits();
     for (const f of fs) {
       this.factoryBuffers.set(f.id, f.buffer);
     }

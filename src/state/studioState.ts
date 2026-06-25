@@ -4,11 +4,12 @@
  * getState()/setState() must round-trip through JSON from Phase 1 onward.
  */
 
-// One-way import of the factory-kit MANIFEST (the single source of truth lives in
-// factorySamples.ts). FACTORY_KIT is a plain {id,name}[] literal with ZERO Web Audio
-// types, so importing it into this pure state core is Node-safe — it does NOT pull in
-// OfflineAudioContext (only renderFactorySamples does, and that tree-shakes away here).
-import { FACTORY_KIT } from '../engine/factorySamples';
+// One-way import of the factory-kit MANIFESTs (the single source of truth lives in
+// factorySamples.ts). FACTORY_KIT (the default kit's pads) + KIT_LIBRARY (all kits, G6) +
+// DEFAULT_KIT_ID. We only read the {id,name} pad manifests + ids here — the render code
+// (the only thing that touches OfflineAudioContext) lives in unreferenced function bodies
+// that tree-shake away, so importing these values into this pure state core stays Node-safe.
+import { FACTORY_KIT, KIT_LIBRARY, DEFAULT_KIT_ID } from '../engine/factorySamples';
 // The modulatable-target allow-list is defined ONCE in modRouter.ts (the pure routing core)
 // and re-exported here so coalesce + UI + engine share a single source of truth.
 import { COURIER_MOD_TARGETS } from '../engine/modRouter';
@@ -67,6 +68,7 @@ export const DRUM_STEPS = 16;
 
 export interface SamplerState {
   pads: PadState[]; // length 8
+  kitId: string; // G6 selected kit id (membership-clamped to KIT_LIBRARY; default DEFAULT_KIT_ID)
   quantize: QuantizeDivision; // global launch grid, default '1 BAR'
   pattern: boolean[][]; // [8][16]; pattern[track][step] === step ON for pad `track`
   seqRunning: boolean; // drum-seq RUN/STOP, persisted, independent of SynthStack RUN ALL
@@ -173,10 +175,11 @@ export function defaultPattern(): boolean[][] {
 
 export function defaultSamplerState(): SamplerState {
   return {
-    // Pre-load the 8 pads from the FACTORY_KIT manifest (pad t = kit[t]) so the kit
+    // Pre-load the 8 pads from the DEFAULT kit's manifest (pad t = kit[t]) so the kit
     // ships playable on first power-on + INIT. defaultPad() (empty) stays the coalesce
     // / bridge-replace default; an empty SAVED slot still coalesces to empty pads.
     pads: Array.from({ length: 8 }, (_, t) => defaultFactoryPad(t)),
+    kitId: DEFAULT_KIT_ID,
     quantize: '1 BAR',
     pattern: defaultPattern(),
     seqRunning: false,
@@ -239,7 +242,14 @@ export function coalesceSamplerState(raw: Partial<SamplerState> | undefined): Sa
     typeof raw.swingPct === 'number' && Number.isFinite(raw.swingPct)
       ? Math.max(0, Math.min(100, raw.swingPct))
       : 50;
-  return { pads, quantize, pattern, seqRunning, numSteps, swingPct };
+  // kitId (G6): membership-clamp to the kit library; any unknown/garbage/missing id -> default.
+  // The pad refs are independent (per-pad picker + user LOAD can diverge from kitId), so kitId
+  // tracks the LAST whole-kit select; it is not re-derived from the pads.
+  const kitId =
+    typeof raw.kitId === 'string' && KIT_LIBRARY.some((k) => k.id === raw.kitId)
+      ? raw.kitId
+      : DEFAULT_KIT_ID;
+  return { pads, kitId, quantize, pattern, seqRunning, numSteps, swingPct };
 }
 
 export function defaultKeyboardState(): KeyboardState {
