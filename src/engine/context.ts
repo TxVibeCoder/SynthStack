@@ -72,7 +72,7 @@ export class StudioContext {
       this.softClip.curve = makeSoftClipCurve() as Float32Array<ArrayBuffer>;
       this.softClip.oversample = '2x';
       // Master FX chain occupies the reserved insertSlot:
-      //   masterIn → insertSlot → [flanger→delay→reverb] → masterVolume → softClip → dest.
+      //   masterIn → insertSlot → [flanger→delay→reverb→fold] → masterVolume → softClip → dest.
       // Built once (effects are dry-only when off), captured by the softClip recorder tap.
       this.masterFx = new MasterFxChain(this.ctx);
       this._masterIn.connect(this.insertSlot);

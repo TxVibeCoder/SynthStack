@@ -15,6 +15,7 @@
  */
 
 import { clamp } from '../units';
+import { buildFoldCurve, FOLD_DRIVE_MIN, FOLD_DRIVE_MAX } from '../dsp/foldCore';
 
 /** One master effect: a fixed input→output sub-graph with an on-toggle + named params. */
 export interface FxUnit {
@@ -122,6 +123,67 @@ export function buildDelay(ctx: BaseAudioContext): FxUnit {
           break;
         case 'feedback':
           feedback.gain.value = clamp(value, 0, 0.95);
+          break;
+        case 'mix':
+          mix = clamp(value, 0, 1);
+          if (on) wet.gain.value = mix;
+          break;
+      }
+    },
+  };
+}
+
+/**
+ * FOLD — a wavefolder (pure foldCore curve → WaveShaperNode), mixed against dry.
+ *  params: drive (1..8), symmetry (-1..1) REBUILD the static fold curve (commit-only in the
+ *  panel to avoid per-frame Float32Array GC thrash); mix (0..1) is a live wet-gain write.
+ *
+ * The insert-FX signal is ±5 vv (FX sits BEFORE the mixer's ×0.2 vvScale — see studio.ts /
+ * mixer.ts), but a WaveShaperNode's curve domain is [-1, 1]. So the wet branch pre-gains
+ * ±5vv→±1 (×0.2) IN and post-gains ±1→±5vv (×5) OUT around the shaper, or the fold would
+ * collapse to a hard square. This is a within-shell graph detail mirroring mixer.ts's own
+ * vvScale (NOT a units.ts conversion — it does not violate the conversion-only rule).
+ */
+export function buildFold(ctx: BaseAudioContext): FxUnit {
+  const input = ctx.createGain();
+  const output = ctx.createGain();
+  const dry = ctx.createGain();
+  const wet = ctx.createGain();
+  wet.gain.value = 0;
+
+  // ±5vv → ±1 into the shaper, then ±1 → ±5vv back out.
+  const preGain = ctx.createGain();
+  preGain.gain.value = 0.2;
+  const postGain = ctx.createGain();
+  postGain.gain.value = 5;
+
+  let drive = 2;
+  let symmetry = 0;
+  const shaper = ctx.createWaveShaper();
+  shaper.curve = buildFoldCurve(drive, symmetry) as Float32Array<ArrayBuffer>;
+  shaper.oversample = '4x'; // tame fold aliasing
+
+  input.connect(dry).connect(output);
+  input.connect(preGain).connect(shaper).connect(postGain).connect(wet).connect(output);
+
+  let mix = 0.5;
+  let on = false;
+  return {
+    input,
+    output,
+    setOn(next) {
+      on = next;
+      wet.gain.value = on ? mix : 0;
+    },
+    setParam(name, value) {
+      switch (name) {
+        case 'drive':
+          drive = clamp(value, FOLD_DRIVE_MIN, FOLD_DRIVE_MAX);
+          shaper.curve = buildFoldCurve(drive, symmetry) as Float32Array<ArrayBuffer>;
+          break;
+        case 'symmetry':
+          symmetry = clamp(value, -1, 1);
+          shaper.curve = buildFoldCurve(drive, symmetry) as Float32Array<ArrayBuffer>;
           break;
         case 'mix':
           mix = clamp(value, 0, 1);

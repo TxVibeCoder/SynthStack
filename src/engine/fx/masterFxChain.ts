@@ -1,7 +1,7 @@
 /**
  * Master FX chain (Wave 2) — the three master effects wired in series and dropped into the
  * reserved insertSlot of the master bus (context.ts): insertSlot → flanger → delay → reverb
- * → masterVolume. Built ONCE on power-on; toggles/knobs only change param values (FxUnit
+ * → fold → masterVolume. Built ONCE on power-on; toggles/knobs only change param values (FxUnit
  * does true dry-only bypass when off), so there are no reconnect clicks and the recorder
  * (which taps softClip downstream) captures the wet master.
  *
@@ -15,11 +15,11 @@
  * their names but are the shared 3-effect shape used by both master and per-voice chains.
  */
 
-import { buildDelay, buildFlanger, buildReverb, type FxUnit } from './effects';
+import { buildDelay, buildFlanger, buildFold, buildReverb, type FxUnit } from './effects';
 import type { MasterEffectsState } from '../../state/studioState';
 
-/** The three master effects, in signal order. */
-export type MasterFxId = 'flanger' | 'delay' | 'reverb';
+/** The master effects, in signal order. */
+export type MasterFxId = 'flanger' | 'delay' | 'reverb' | 'fold';
 
 export class MasterFxChain {
   private readonly units: Record<MasterFxId, FxUnit>;
@@ -30,12 +30,14 @@ export class MasterFxChain {
     const flanger = buildFlanger(ctx);
     const delay = buildDelay(ctx);
     const reverb = buildReverb(ctx);
-    this.units = { flanger, delay, reverb };
-    // series: flanger → delay → reverb
+    const fold = buildFold(ctx);
+    this.units = { flanger, delay, reverb, fold };
+    // series: flanger → delay → reverb → fold
     flanger.output.connect(delay.input);
     delay.output.connect(reverb.input);
+    reverb.output.connect(fold.input);
     this.input = flanger.input;
-    this.output = reverb.output;
+    this.output = fold.output;
   }
 
   setOn(id: MasterFxId, on: boolean): void {
@@ -48,7 +50,7 @@ export class MasterFxChain {
 
   /** Push a whole `effects.master` slice into the graph (load / INIT / preset). */
   applyMasterEffects(state: MasterEffectsState): void {
-    for (const id of ['flanger', 'delay', 'reverb'] as const) {
+    for (const id of ['flanger', 'delay', 'reverb', 'fold'] as const) {
       const fx = state[id];
       const unit = this.units[id];
       for (const [k, v] of Object.entries(fx)) {

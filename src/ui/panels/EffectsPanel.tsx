@@ -1,7 +1,7 @@
 /**
  * EffectsPanel (Wave 2) — the UI-only FX tab. A TARGET selector (MASTER · CASCADE · ANVIL ·
- * MONARCH) picks what the rack edits; the same three effects (FLANGER · DELAY · REVERB), each
- * an ON/OFF latch + param knobs, then drive either the master bus or one voice's insert chain:
+ * MONARCH) picks what the rack edits; the same four effects (FLANGER · DELAY · REVERB · FOLD),
+ * each an ON/OFF latch + param knobs, then drive either the master bus or one voice's insert chain:
  *   ON           -> setMasterFxOn / setVoiceFxOn            (engine + store)
  *   knob drag    -> setMasterFxParam / setVoiceFxParam      (engine live, no store)
  *   knob release -> commitMasterFxParam / commitVoiceFxParam (engine + store)
@@ -13,8 +13,9 @@
  * Reads the store's `effects` slice via useSyncExternalStore (the single source of truth);
  * a drag re-renders nothing (no store write) — only an ON toggle / commit / target switch does.
  *
- * LAYOUT (UX pass): three EQUAL columns, each effect a 2×2 knob grid under its ON toggle; a
- * row of four target tabs sits in the header to the right of the (target-named) title.
+ * LAYOUT (UX pass): a 2×2 grid of effect sections (FLANGER · DELAY / REVERB · FOLD), each an
+ * ON toggle over a row of param knobs; a row of four target tabs sits in the header to the
+ * right of the (target-named) title. The 2×2 grid keeps FX_W fixed (App.tsx frames to it).
  */
 
 import { memo, useCallback, useState, useSyncExternalStore } from 'react';
@@ -61,20 +62,23 @@ interface ParamMeta {
 interface FxSection {
   id: MasterFxId;
   label: string;
-  /** Section frame + on-toggle/knob anchors, viewBox units. */
+  /** Section frame + on-toggle/knob anchors, viewBox units (assigned by the 2×2 grid below). */
   x: number;
+  y: number;
   w: number;
   params: ParamMeta[];
 }
 
-/** Three EQUAL columns: 25 margin · 300 · 25 gap · 300 · 25 gap · 300 · 25 margin = 1000. */
-const COL_W = 300;
-const SECTIONS: FxSection[] = [
+/** 2×2 grid: 25 margin · 460 · 30 gap · 460 · 25 margin = 1000; two 210-tall rows. */
+const COL_W = 460;
+const GRID_X = [25, 25 + COL_W + 30]; // [25, 515]
+const GRID_Y = [58, 282]; // row tops (row height 210, 14 gap; row2 bottom = 492)
+const SEC_H = 210;
+
+const SECTION_DEFS: { id: MasterFxId; label: string; params: ParamMeta[] }[] = [
   {
     id: 'flanger',
     label: 'FLANGER',
-    x: 25,
-    w: COL_W,
     params: [
       { param: 'rate', label: 'RATE', min: 0.05, max: 8, def: 0.4, unit: 'Hz' },
       { param: 'depth', label: 'DEPTH', min: 0, max: 1, def: 0.5 },
@@ -85,8 +89,6 @@ const SECTIONS: FxSection[] = [
   {
     id: 'delay',
     label: 'DELAY',
-    x: 350,
-    w: COL_W,
     params: [
       { param: 'time', label: 'TIME', min: 0.02, max: 2, def: 0.3, unit: 's' },
       { param: 'feedback', label: 'FEEDBK', min: 0, max: 0.95, def: 0.35 },
@@ -96,21 +98,36 @@ const SECTIONS: FxSection[] = [
   {
     id: 'reverb',
     label: 'REVERB',
-    x: 675,
-    w: COL_W,
     params: [
       { param: 'size', label: 'SIZE', min: 0, max: 1, def: 0.6, commitOnly: true },
       { param: 'mix', label: 'MIX', min: 0, max: 1, def: 0.3 },
     ],
   },
+  {
+    id: 'fold',
+    label: 'FOLD',
+    params: [
+      // DRIVE + SYMM rebuild the fold curve (commit-only — see foldCore.ts); MIX stays live.
+      // The drive=2 default + 1..8 range is the operator's-ears voicing default.
+      { param: 'drive', label: 'DRIVE', min: 1, max: 8, def: 2, commitOnly: true },
+      { param: 'symmetry', label: 'SYMM', min: -1, max: 1, def: 0, commitOnly: true },
+      { param: 'mix', label: 'MIX', min: 0, max: 1, def: 0.5 },
+    ],
+  },
 ];
 
-const SEC_Y = 56;
-const SEC_H = 440; // frame bottom = 496 (< FX_H 520)
-const TOGGLE_Y = 120;
-/** Two knob rows inside each section (2×2 grid). */
-const KNOB_Y1 = 268;
-const KNOB_Y2 = 398;
+/** Place the four sections row-major into the 2×2 grid (col = i%2, row = floor(i/2)). */
+const SECTIONS: FxSection[] = SECTION_DEFS.map((d, i) => ({
+  ...d,
+  x: GRID_X[i % 2]!,
+  y: GRID_Y[Math.floor(i / 2)]!,
+  w: COL_W,
+}));
+
+/** Anchors are RELATIVE to each section's y (added in the render). */
+const TOGGLE_DY = 60;
+/** Single knob row inside each section (wide column fits up to 4 knobs side by side). */
+const KNOB_DY = 150;
 
 // Target tabs in the header.
 const TAB_W = 150;
@@ -126,31 +143,30 @@ function useEffectsState(): EffectsState {
 }
 
 /**
- * Knob center for param `i` of `n`, laid out row-major two-per-row inside a 300-wide section.
- * Left/right columns at x+90 / x+210; a lone trailing knob (odd count) centers at x+150.
+ * Knob center for param `i` of `n`, laid out in a single evenly-spaced row inside the wide
+ * section (the 460-wide column fits up to 4 knobs). Slots are centered across the section width.
  */
 function knobSlot(s: FxSection, i: number, n: number): { x: number; y: number } {
-  const row = Math.floor(i / 2);
-  const y = row === 0 ? KNOB_Y1 : KNOB_Y2;
-  const lastOdd = i === n - 1 && n % 2 === 1 && i % 2 === 0;
-  const x = lastOdd ? s.x + s.w / 2 : i % 2 === 0 ? s.x + 90 : s.x + 210;
-  return { x, y };
+  const x = s.x + (s.w * (i + 1)) / (n + 1);
+  return { x, y: s.y + KNOB_DY };
 }
 
 const FxToggle = memo(function FxToggle({
   id,
   on,
   x,
+  y,
   target,
 }: {
   id: MasterFxId;
   on: boolean;
   x: number;
+  y: number;
   target: FxTarget;
 }) {
   const def: ControlDef = { id: `FX_${id}_ON`, panelLabel: '', type: 'button', positions: ['OFF', 'ON'] };
   const onChange = useCallback((pos: string) => fxOn(target, id, pos === 'ON'), [id, target]);
-  return <Button def={def} value={on ? 'ON' : 'OFF'} onChange={onChange} lit={on} x={x} y={TOGGLE_Y} />;
+  return <Button def={def} value={on ? 'ON' : 'OFF'} onChange={onChange} lit={on} x={x} y={y} />;
 });
 
 const ParamKnob = memo(function ParamKnob({
@@ -193,7 +209,7 @@ function SectionFrame({ s }: { s: FxSection }) {
     <g>
       <rect
         x={s.x}
-        y={SEC_Y}
+        y={s.y}
         width={s.w}
         height={SEC_H}
         rx={8}
@@ -201,10 +217,10 @@ function SectionFrame({ s }: { s: FxSection }) {
         stroke={COLORS.panelEdge}
         strokeWidth={1}
       />
-      <rect x={s.x + 12} y={SEC_Y - 1.5} width={gapW} height={3} fill={COLORS.panel} />
+      <rect x={s.x + 12} y={s.y - 1.5} width={gapW} height={3} fill={COLORS.panel} />
       <text
         x={s.x + 18}
-        y={SEC_Y + 5}
+        y={s.y + 5}
         fontFamily={FONT_CONDENSED}
         fontSize={15}
         letterSpacing={2}
@@ -288,10 +304,10 @@ export const EffectsPanel = memo(function EffectsPanel() {
         return (
           <g key={s.id}>
             <SectionFrame s={s} />
-            <FxToggle id={s.id} on={fx.on === true} x={s.x + s.w / 2} target={target} />
+            <FxToggle id={s.id} on={fx.on === true} x={s.x + s.w / 2} y={s.y + TOGGLE_DY} target={target} />
             <text
               x={s.x + s.w / 2}
-              y={TOGGLE_Y + 34}
+              y={s.y + TOGGLE_DY + 34}
               textAnchor="middle"
               fontFamily={FONT_CONDENSED}
               fontSize={10}

@@ -21,7 +21,7 @@
  *   - 'patchbay': the consolidated 88-jack field + the 16 sampler pad jacks + the group
  *                 borders + the CableLayer. This is the ONLY tab cables render on.
  *   - 'sampler' : the SAMPLER pad-control section + the DRUM MACHINE grid (no jacks).
- *   - 'fx'      : the master effects panel (flanger/delay/reverb).
+ *   - 'fx'      : the master effects panel (flanger/delay/reverb/fold).
  * The 3 voices each get their OWN control tab, but all 104 jacks (88 voice + 16 sampler)
  * still co-mount together on 'patchbay' (HARD CONSTRAINT: every jack a cable touches must
  * be in the DOM together or the cable vanishes — CableLayer renders null for an unmounted

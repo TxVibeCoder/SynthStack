@@ -115,10 +115,18 @@ export interface ReverbState {
   size: number; // 0..1 room/decay
   mix: number; // 0..1 wet
 }
+/** FOLD (G8) — wavefolder. drive/symmetry rebuild the static fold curve; mix is live wet. */
+export interface FoldState {
+  on: boolean;
+  drive: number; // 1..8 fold depth
+  symmetry: number; // -1..1 (even-harmonic bias; 0 = odd-symmetric)
+  mix: number; // 0..1 wet
+}
 export interface MasterEffectsState {
   flanger: FlangerState;
   delay: DelayState;
   reverb: ReverbState;
+  fold: FoldState;
 }
 /** The voices that carry their own insert-FX chain (same 3-effect shape as the master). */
 export type VoiceFxId = 'cascade' | 'anvil' | 'monarch' | 'courier';
@@ -282,6 +290,8 @@ export function defaultFxChainState(): MasterEffectsState {
     flanger: { on: false, rate: 0.4, depth: 0.5, feedback: 0.3, mix: 0.5 },
     delay: { on: false, time: 0.3, feedback: 0.35, mix: 0.4 },
     reverb: { on: false, size: 0.6, mix: 0.3 },
+    // FOLD voicing (drive=2, mix=0.5) is the operator's-ears default — see foldCore.ts header.
+    fold: { on: false, drive: 2, symmetry: 0, mix: 0.5 },
   };
 }
 
@@ -332,6 +342,12 @@ function coalesceFxChain(
       on: flag(raw?.reverb?.on, d.reverb.on),
       size: num(raw?.reverb?.size, d.reverb.size, 0, 1),
       mix: num(raw?.reverb?.mix, d.reverb.mix, 0, 1),
+    },
+    fold: {
+      on: flag(raw?.fold?.on, d.fold.on),
+      drive: num(raw?.fold?.drive, d.fold.drive, 1, 8),
+      symmetry: num(raw?.fold?.symmetry, d.fold.symmetry, -1, 1),
+      mix: num(raw?.fold?.mix, d.fold.mix, 0, 1),
     },
   };
 }
