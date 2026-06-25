@@ -255,6 +255,36 @@ describe('eg.worklet core — Courier ADSR mode', () => {
     expect(cycles).toBeGreaterThan(2); // looped several times in 300 ms (LFO behavior)
   });
 
+  it('useVelocity gate: false ignores velocity (full peak); true scales the peak (Courier F/A ENV VEL, U4)', () => {
+    const base: EgConfig = {
+      attackS: 0.001,
+      decayS: 0.2,
+      sustainMode: 'off',
+      retrigInAttack: true,
+      attackCompletes: false,
+      peakVv: 8,
+    };
+    const n = Math.floor(0.05 * FS);
+    const peakOf = (eg: EgCore): number => {
+      let p = 0;
+      for (let i = 0; i < n; i++) p = Math.max(p, eg.processSample(i < FS * 0.001 ? 5 : 0));
+      return p;
+    };
+    // useVelocity false: setVelocity(2.5) is ignored, so the EG still reaches full peak.
+    const disarmed = new EgCore(FS, { ...base, useVelocity: false });
+    disarmed.setVelocity(2.5);
+    expect(peakOf(disarmed)).toBeGreaterThan(8 * 0.95);
+    // useVelocity true: setVelocity(2.5) scales the peak to ~half.
+    const armed = new EgCore(FS, { ...base, useVelocity: true });
+    armed.setVelocity(2.5);
+    expect(peakOf(armed)).toBeCloseTo(4, 0);
+    // configure(useVelocity:false) on an armed EG drops the stale scale back to full peak.
+    const toggled = new EgCore(FS, { ...base, useVelocity: true });
+    toggled.setVelocity(2.5);
+    toggled.configure({ useVelocity: false });
+    expect(peakOf(toggled)).toBeGreaterThan(8 * 0.95);
+  });
+
   it('a new gate during RELEASE retriggers the attack from the current level (no zero-snap click)', () => {
     // gate on 0..0.1, off, then on again at 0.2 while the (slow) release is still falling
     const cfg: EgConfig = { ...courierAdsr, releaseS: 0.5 };

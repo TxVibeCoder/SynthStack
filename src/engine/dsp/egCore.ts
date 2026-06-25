@@ -37,6 +37,13 @@ export interface EgConfig {
   releaseS?: number;
   /** ADSR only: loop the attack-decay segment while gated (envelope-as-LFO). Default false. */
   loop?: boolean;
+  /**
+   * Velocity gate: when false, setVelocity is a no-op so the EG ignores its velocity input and
+   * always runs at full peak. Default true preserves the Anvil voice (whose EGs are velocity-scaled
+   * unconditionally). Courier's filter/amp EGs construct with this false and flip it ON only when
+   * the panel F/A ENV VEL switch is engaged.
+   */
+  useVelocity?: boolean;
 }
 
 // Single source of truth: the +2.5 vv rising-edge gate threshold lives in units.ts (D8). Kept over
@@ -68,6 +75,12 @@ export class EgCore {
 
   configure(partial: Partial<EgConfig>): void {
     this.cfg = { ...this.cfg, ...partial };
+    // Disarming velocity must immediately drop any stale per-note scaling back to full peak, else
+    // the EG would keep applying the last note's velocityScale until the next setVelocity call.
+    if (partial.useVelocity === false) {
+      this.velocityScale = 1;
+      this.decayTimeScale = 1;
+    }
   }
 
   /** Allocation-free time update — safe to call from worklet process(). releaseS is k-rate too
@@ -79,6 +92,10 @@ export class EgCore {
   }
 
   setVelocity(velocityVv: number): void {
+    // useVelocity gate: a value of exactly false means "ignore velocity, run at full peak". Omitted
+    // (undefined) keeps the legacy Anvil behavior where velocity always scales the EG. Courier flips
+    // this from the F/A ENV VEL switch (see courier.ts) so an EG only tracks velocity when armed.
+    if (this.cfg.useVelocity === false) return;
     const v = velocityVv < 0 ? 0 : velocityVv > 5 ? 5 : velocityVv;
     this.velocityScale = v / 5;
     this.decayTimeScale = 1 + 0.15 * (v / 5);

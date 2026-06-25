@@ -47,6 +47,10 @@ class SynthStackEgProcessor extends AudioWorkletProcessor {
       sustainLevel: cfg.sustainLevel,
       releaseS: cfg.releaseS,
       loop: cfg.loop,
+      // useVelocity gate (Courier F/A ENV VEL): seed it so an EG constructed velocity-disarmed stays
+      // at full peak until the panel switch posts a 'configure' message flipping it on. Omitted =>
+      // EgCore's default (velocity always scales), so the Anvil voice is untouched.
+      useVelocity: cfg.useVelocity,
     });
     this.port.onmessage = (e: MessageEvent) => {
       const msg = e.data as EgOptionsMessage | EgHeldMessage;

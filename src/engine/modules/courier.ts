@@ -15,8 +15,10 @@
  *
  * EG model: both EGs run the shared eg worklet in 'adsr' mode — full attack, decay-to-SUSTAIN
  * level, hold while gated, an independent RELEASE on gate-off, and an optional ENV LOOP that
- * re-attacks the gated envelope as an LFO. (Velocity scaling of the EGs — F/A ENV VEL — still
- * awaits a Courier velocity bus; those two toggles remain stored-only for now.)
+ * re-attacks the gated envelope as an LFO. Velocity scaling of the EGs — F/A ENV VEL (U4) — is live:
+ * a note-on velocity feeds a velBus into the FILTER EG (input 1; F ENV VEL gates the velBus VALUE —
+ * ON = note velocity scales the filter-EG peak, OFF = full peak) and gates G1's velocityGain on the
+ * AMP path (A ENV VEL); amp velocity is never double-applied (the worklet amp-velocity input is unwired).
  */
 
 import type { ModuleDef } from '../../../data/schema';
@@ -38,6 +40,10 @@ const COURIER_RES_SCALE = 1.43;
 
 /** Linear-FM depth, Hz per vv (unsourced assumption — tunable, mirrors the other voices). */
 const COU_FM_DEPTH_HZ_PER_VV = 150;
+
+/** Full-scale note velocity in vv (egCore reads 0..5; 5 = full EG peak). The filter velBus rests here
+ *  so a non-live note (sequencer/arp, which never calls velocityAt) sees full filter-EG peak. */
+const FULL_VEL_VV = 5;
 
 /** OSC 2 -> cutoff audio-rate FM: full knob (=1) maps the ±5 vv OSC 2 signal to ±N vv of cutoff. */
 const OSC2_CUTOFF_DEPTH = 1;
@@ -85,6 +91,12 @@ export class CourierModule extends ModuleBase {
   // FM / sync between oscillators
   private readonly fmAmount: GainNode;
   private readonly hardSyncGain: GainNode;
+
+  // velocity (U4): one ConstantSource carrying the note-on velocity in vv (0..5) into the FILTER EG
+  // input 1 (which always reads it — useVelocity seeded true). COU_F_ENV_VEL gates the velBus VALUE:
+  // ON => note velocity scales the filter-EG peak; OFF => pinned to FULL (5 vv = full peak). The amp
+  // EG never reads this bus — amp velocity stays G1's velocityGain node (no double-apply).
+  private readonly velBus: ConstantSourceNode;
 
   // VCA
   private readonly vcaGainNode: GainNode;
@@ -140,6 +152,17 @@ export class CourierModule extends ModuleBase {
   private modAmountValue = 0;
   private modDest: 'FM_1_2' | 'FENV_OSC2_FREQ' | 'FENV_OSC2_WAVE' | 'FENV_SUB_WAVE' = 'FM_1_2';
   glideTimeS = 0.001;
+  // U4 amp ENV VEL: gate over G1's velocityGain. Defaults ON to match courier.json's A ENV VEL
+  // default and today's amp-velocity behavior (so the audio battery, which drives velocityAt
+  // directly, is unchanged). When OFF, velocityGain is forced to unity (velocity ignored on the amp).
+  private ampEnvVel = true;
+  private lastVelGain = 1; // last velGain from velocityAt; re-applied when A ENV VEL is toggled back ON
+  // U4 filter ENV VEL: defaults OFF (courier.json default). The egCore useVelocity gate exists (seeded
+  // true on the filter EG so it always reads the velBus); this switch gates the velBus VALUE — OFF
+  // pins it to FULL (5 vv = full peak, velocity ignored), ON passes the note velocity. Gating the
+  // value (not an async configure message) keeps OFF/ON deterministic with no note-time race.
+  private filterEnvVel = false;
+  private lastVelVv = FULL_VEL_VV; // last note velocity in vv; re-applied when F ENV VEL is toggled ON
 
   constructor(ctx: BaseAudioContext, def: ModuleDef) {
     super(ctx, def);
@@ -268,6 +291,13 @@ export class CourierModule extends ModuleBase {
           peakVv: 8,
           sustainLevel: 0.8,
           releaseS: 0.2,
+          // U4: the FILTER EG reads velocity from the velBus; the AMP EG's velocity input is never
+          // wired (amp velocity = G1's velocityGain). egCore's useVelocity gate is seeded TRUE so the
+          // filter EG ALWAYS reads the velBus deterministically (an async configure to flip it on at
+          // note time races the attack in an offline render). F ENV VEL OFF/ON is enforced at the
+          // velBus VALUE instead: OFF pins it to FULL (5 vv = full peak), ON passes the note velocity.
+          // (The amp EG never has input 1 connected, so seeding it true is a harmless no-op there.)
+          useVelocity: true,
         },
       });
       // The worklet reads the k-rate AudioParams (attackS/releaseS) every block, which would
@@ -286,6 +316,15 @@ export class CourierModule extends ModuleBase {
     this.inputBus('COU_SUSTAIN_IN').connect(gateBus);
     gateBus.connect(this.filterEg, 0, 0);
     gateBus.connect(this.ampEg, 0, 0);
+
+    // U4 velocity bus -> FILTER EG input 1 (velocity in vv 0..5). The filter EG always reads it
+    // (useVelocity seeded true); COU_F_ENV_VEL gates the velBus VALUE (ON = note velocity, OFF = FULL).
+    // The amp EG's velocity input is intentionally left unwired so amp velocity stays the single G1
+    // velocityGain path (no double-apply). Seed FULL (5 vv): a non-live note (sequencer/arp never calls
+    // velocityAt) sees full filter-EG peak, and a non-zero seed keeps input 1 continuously driven (a
+    // 0-seeded ConstantSource reads as a silent/empty input in the worklet, so setVelocity wouldn't run).
+    this.velBus = constant(ctx, FULL_VEL_VV);
+    this.velBus.connect(this.filterEg, 0, 1);
 
     // filter EG -> cutoff (bipolar amount)
     this.filterEgAmt = gain(ctx, 0);
@@ -605,8 +644,14 @@ export class CourierModule extends ModuleBase {
         this.filterEg.port.postMessage({ type: 'configure', config: { sustainLevel: num } });
         break;
       case 'COU_F_ENV_VEL':
-        // velocity routing: when ON, the velocity input would scale the EG (Anvil-style). Courier
-        // has no velocity bus yet, so this toggle is stored-only — see the velocity workstream.
+        // U4: ON makes the note-on velocity scale the FILTER EG peak — a higher velocity opens the
+        // filter envelope further. The filter EG always reads the velBus (useVelocity seeded true);
+        // this switch gates the velBus VALUE so the behavior is deterministic (no async-configure
+        // race at note time): ON => the last note's velocity, OFF => FULL (5 vv = full peak, velocity
+        // ignored). EARS: this scales the EG PEAK, not a separate EG-AMOUNT depth; the depth and
+        // whether-peak-vs-amount is a by-ear call for the operator (see U4 spec EARS note).
+        this.filterEnvVel = value === 'ON';
+        this.velBus.offset.value = this.filterEnvVel ? this.lastVelVv : FULL_VEL_VV;
         break;
       case 'COU_F_ENV_LOOP':
         this.filterEg.port.postMessage({ type: 'configure', config: { loop: value === 'ON' } });
@@ -626,7 +671,13 @@ export class CourierModule extends ModuleBase {
         this.ampEg.port.postMessage({ type: 'configure', config: { sustainLevel: num } });
         break;
       case 'COU_A_ENV_VEL':
-        break; // see COU_F_ENV_VEL (Courier velocity bus deferred to the velocity workstream)
+        // U4: gate over G1's velocityGain. ON = re-apply the last note's velGain (velocity scales the
+        // amp EG level, today's behavior); OFF = force the velocityGain node to unity so amp level is
+        // independent of velocity. This GATES the one existing amp-velocity path — it never drives the
+        // amp EG's worklet velocity input, so there is no double-apply.
+        this.ampEnvVel = value === 'ON';
+        this.velocityGain.gain.value = this.ampEnvVel ? this.lastVelGain : 1;
+        break;
       case 'COU_A_ENV_LOOP':
         this.ampEg.port.postMessage({ type: 'configure', config: { loop: value === 'ON' } });
         break;
@@ -709,7 +760,19 @@ export class CourierModule extends ModuleBase {
    * keyboard/MIDI live path drives this; the sequencer/arp leaves the gain at unity (unchanged).
    */
   velocityAt(velGain: number, time: number): void {
-    this.velocityGain.gain.setValueAtTime(velGain, time);
+    // Amp velocity (G1): SCALE the EG->vcaCtl path, but only when A ENV VEL is armed (U4). When OFF
+    // force unity so the amp level is velocity-independent. lastVelGain is cached so toggling A ENV
+    // VEL back ON re-applies this note's velocity.
+    this.lastVelGain = velGain;
+    this.velocityGain.gain.setValueAtTime(this.ampEnvVel ? velGain : 1, time);
+    // Filter velocity (U4): drive the velBus that feeds the filter EG input 1 (vv 0..5). Map the G1
+    // velGain (≈0.25..1.3, unity at vel100) to vv so the reference velocity = full peak (vv 5): vv =
+    // clamp(velGain*FULL, 0, FULL). Louder velocities pin to full peak; softer ones scale the filter
+    // envelope down. Only applied when F ENV VEL is ON; OFF keeps the velBus at FULL (full peak). The
+    // value is cached so toggling F ENV VEL ON later re-applies this note's velocity.
+    const velVv = velGain * FULL_VEL_VV;
+    this.lastVelVv = velVv < 0 ? 0 : velVv > FULL_VEL_VV ? FULL_VEL_VV : velVv;
+    this.velBus.offset.setValueAtTime(this.filterEnvVel ? this.lastVelVv : FULL_VEL_VV, time);
   }
 
   /** PITCH WHEEL: live bend in SEMITONES (vv = semitones/12), summed onto the pitch bus so all
