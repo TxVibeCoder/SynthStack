@@ -101,6 +101,16 @@ test('recording: RECORD lights, elapsed advances, a second click returns to idle
   // idle => the elapsed readout is absent from the DOM (rendered only while recording).
   await expect(page.getByTestId('record-elapsed')).toHaveCount(0);
 
+  // ---- a2. select the lossless WAV format (G3) -> the WAV segment is pressed -----------
+  // The capture toggle (WEBM | WAV) picks the next take's container. WAV is the lossless
+  // in-browser PCM-tap path; the captured BYTES are NOT validated headlessly (manual
+  // checkpoint), but the selection + the subsequent lamp/elapsed/idle round-trip ARE.
+  const wavSeg = page.getByTestId('record-format-wav');
+  await expect(wavSeg).toBeVisible();
+  await wavSeg.click();
+  await expect(wavSeg).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('record-format-webm')).toHaveAttribute('aria-pressed', 'false');
+
   // ---- b. click RECORD -> recording true, lamp lit (aria-pressed), readout appears --
   await record.click();
   await expect.poll(isRecording, { message: 'RECORD click should start the recorder' }).toBe(true);

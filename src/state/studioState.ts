@@ -4,11 +4,12 @@
  * getState()/setState() must round-trip through JSON from Phase 1 onward.
  */
 
-// One-way import of the factory-kit MANIFEST (the single source of truth lives in
-// factorySamples.ts). FACTORY_KIT is a plain {id,name}[] literal with ZERO Web Audio
-// types, so importing it into this pure state core is Node-safe — it does NOT pull in
-// OfflineAudioContext (only renderFactorySamples does, and that tree-shakes away here).
-import { FACTORY_KIT } from '../engine/factorySamples';
+// One-way import of the factory-kit MANIFESTs (the single source of truth lives in
+// factorySamples.ts). FACTORY_KIT (the default kit's pads) + KIT_LIBRARY (all kits, G6) +
+// DEFAULT_KIT_ID. We only read the {id,name} pad manifests + ids here — the render code
+// (the only thing that touches OfflineAudioContext) lives in unreferenced function bodies
+// that tree-shake away, so importing these values into this pure state core stays Node-safe.
+import { FACTORY_KIT, KIT_LIBRARY, DEFAULT_KIT_ID } from '../engine/factorySamples';
 // The modulatable-target allow-list is defined ONCE in modRouter.ts (the pure routing core)
 // and re-exported here so coalesce + UI + engine share a single source of truth.
 import { COURIER_MOD_TARGETS } from '../engine/modRouter';
@@ -67,9 +68,12 @@ export const DRUM_STEPS = 16;
 
 export interface SamplerState {
   pads: PadState[]; // length 8
+  kitId: string; // G6 selected kit id (membership-clamped to KIT_LIBRARY; default DEFAULT_KIT_ID)
   quantize: QuantizeDivision; // global launch grid, default '1 BAR'
   pattern: boolean[][]; // [8][16]; pattern[track][step] === step ON for pad `track`
   seqRunning: boolean; // drum-seq RUN/STOP, persisted, independent of SynthStack RUN ALL
+  numSteps: number; // wrap length 1..16, default 16; columns >= numSteps are RETAINED but unplayed
+  swingPct: number; // 0..100, default 50 (=no swing); offsets odd grid columns (state allows 0..100, UI caps at 75)
 }
 
 export interface CascadeSequencerState {
@@ -81,6 +85,8 @@ export interface CascadeSequencerState {
  *  octave as +octave on the vv AFTER (note-60)/12 — the one place octave is applied. */
 export interface KeyboardState {
   octave: number; // integer octave shift, -3..+3; 0 = unshifted (low C = MIDI 48 / C3, middle C 60 in range)
+  midiChannel: number; // MIDI input channel filter: -1 = OMNI (all channels); 0..15 = accept only that channel
+  glideS: number; // SEPARATE keyboard/MIDI live-play glide time in seconds, 0..1; 0 = off (the seq keeps MON_GLIDE)
 }
 
 export interface TransportState {
@@ -109,10 +115,18 @@ export interface ReverbState {
   size: number; // 0..1 room/decay
   mix: number; // 0..1 wet
 }
+/** FOLD (G8) — wavefolder. drive/symmetry rebuild the static fold curve; mix is live wet. */
+export interface FoldState {
+  on: boolean;
+  drive: number; // 1..8 fold depth
+  symmetry: number; // -1..1 (even-harmonic bias; 0 = odd-symmetric)
+  mix: number; // 0..1 wet
+}
 export interface MasterEffectsState {
   flanger: FlangerState;
   delay: DelayState;
   reverb: ReverbState;
+  fold: FoldState;
 }
 /** The voices that carry their own insert-FX chain (same 3-effect shape as the master). */
 export type VoiceFxId = 'cascade' | 'anvil' | 'monarch' | 'courier';
@@ -169,13 +183,16 @@ export function defaultPattern(): boolean[][] {
 
 export function defaultSamplerState(): SamplerState {
   return {
-    // Pre-load the 8 pads from the FACTORY_KIT manifest (pad t = kit[t]) so the kit
+    // Pre-load the 8 pads from the DEFAULT kit's manifest (pad t = kit[t]) so the kit
     // ships playable on first power-on + INIT. defaultPad() (empty) stays the coalesce
     // / bridge-replace default; an empty SAVED slot still coalesces to empty pads.
     pads: Array.from({ length: 8 }, (_, t) => defaultFactoryPad(t)),
+    kitId: DEFAULT_KIT_ID,
     quantize: '1 BAR',
     pattern: defaultPattern(),
     seqRunning: false,
+    numSteps: 16,
+    swingPct: 50,
   };
 }
 
@@ -222,25 +239,49 @@ export function coalesceSamplerState(raw: Partial<SamplerState> | undefined): Sa
     Array.from({ length: DRUM_STEPS }, (_, s) => raw.pattern?.[t]?.[s] === true),
   );
   const seqRunning = raw.seqRunning === true;
-  return { pads, quantize, pattern, seqRunning };
+  // numSteps wrap length: finite -> round + clamp 1..16; else default 16.
+  const numSteps =
+    typeof raw.numSteps === 'number' && Number.isFinite(raw.numSteps)
+      ? Math.max(1, Math.min(16, Math.round(raw.numSteps)))
+      : 16;
+  // swingPct: finite -> clamp 0..100; else default 50 (no swing). State allows the full 0..100;
+  // the UI caps the knob at the musical 75 (see DrumMachinePanel SWING — flagged for the operator's ears).
+  const swingPct =
+    typeof raw.swingPct === 'number' && Number.isFinite(raw.swingPct)
+      ? Math.max(0, Math.min(100, raw.swingPct))
+      : 50;
+  // kitId (G6): membership-clamp to the kit library; any unknown/garbage/missing id -> default.
+  // The pad refs are independent (per-pad picker + user LOAD can diverge from kitId), so kitId
+  // tracks the LAST whole-kit select; it is not re-derived from the pads.
+  const kitId =
+    typeof raw.kitId === 'string' && KIT_LIBRARY.some((k) => k.id === raw.kitId)
+      ? raw.kitId
+      : DEFAULT_KIT_ID;
+  return { pads, kitId, quantize, pattern, seqRunning, numSteps, swingPct };
 }
 
 export function defaultKeyboardState(): KeyboardState {
-  return { octave: 0 };
+  return { octave: 0, midiChannel: -1, glideS: 0 };
 }
 
 /**
  * Normalize a possibly-partial / older-shape keyboard slice to a complete KeyboardState.
  * Mirrors coalesceSamplerState: PURE, never mutates `raw`. The bridge is the ONLY consumer
- * (powerOn seed + setKeyboardOctave read-modify-write + getKeyboardOctave snapshot), so this
- * is the sole older-tree safety net — a pre-feature tree lacking `keyboard` -> {octave:0}.
- * Integer-guards the octave and clamps to -3..+3 (matches the bridge clamp); any non-integer
- * (3.5 / 'x' / NaN) or missing value defaults to 0.
+ * (powerOn seed + setKeyboard* read-modify-write + getKeyboard* snapshots), so this is the sole
+ * older-tree safety net — a pre-feature tree lacking `keyboard` -> the full default; a pre-G1 tree
+ * with only `{octave}` heals to {octave, midiChannel:-1, glideS:0}.
+ *   octave:      integer-guarded, clamped -3..+3 (matches the bridge clamp); non-integer / missing -> 0.
+ *   midiChannel: integer-guarded, -1 (OMNI) or 0..15; any non-integer / out-of-range -> -1 (OMNI).
+ *   glideS:      finite, clamped 0..1; non-finite (NaN / 'x' / missing) -> 0.
  */
 export function coalesceKeyboardState(raw: Partial<KeyboardState> | undefined): KeyboardState {
   const o = raw?.octave;
   const octave = Number.isInteger(o) ? Math.max(-3, Math.min(3, o as number)) : 0;
-  return { octave };
+  const c = raw?.midiChannel;
+  const midiChannel = Number.isInteger(c) && (c as number) >= -1 && (c as number) <= 15 ? (c as number) : -1;
+  const g = raw?.glideS;
+  const glideS = typeof g === 'number' && Number.isFinite(g) ? Math.max(0, Math.min(1, g)) : 0;
+  return { octave, midiChannel, glideS };
 }
 
 /** A fresh all-off 3-effect chain — the shared default shape for the master AND each voice. */
@@ -249,6 +290,8 @@ export function defaultFxChainState(): MasterEffectsState {
     flanger: { on: false, rate: 0.4, depth: 0.5, feedback: 0.3, mix: 0.5 },
     delay: { on: false, time: 0.3, feedback: 0.35, mix: 0.4 },
     reverb: { on: false, size: 0.6, mix: 0.3 },
+    // FOLD voicing (drive=2, mix=0.5) is the operator's-ears default — see foldCore.ts header.
+    fold: { on: false, drive: 2, symmetry: 0, mix: 0.5 },
   };
 }
 
@@ -299,6 +342,12 @@ function coalesceFxChain(
       on: flag(raw?.reverb?.on, d.reverb.on),
       size: num(raw?.reverb?.size, d.reverb.size, 0, 1),
       mix: num(raw?.reverb?.mix, d.reverb.mix, 0, 1),
+    },
+    fold: {
+      on: flag(raw?.fold?.on, d.fold.on),
+      drive: num(raw?.fold?.drive, d.fold.drive, 1, 8),
+      symmetry: num(raw?.fold?.symmetry, d.fold.symmetry, -1, 1),
+      mix: num(raw?.fold?.mix, d.fold.mix, 0, 1),
     },
   };
 }

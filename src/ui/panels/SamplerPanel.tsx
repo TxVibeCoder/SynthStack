@@ -26,17 +26,26 @@
  * read; everything else flows imperatively through the bridge.
  */
 
-import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { COLORS, FONT_CONDENSED } from '../theme';
 import { Knob } from '../controls/Knob';
 import { Switch } from '../controls/Switch';
-import { engineBridge } from '../engineBridge';
-import { SampleProcessor } from '../SampleProcessor';
+import type { SamplerBridge } from '../sampler/samplerBridge';
+import { registerSamplerChildWindow } from '../sampler/samplerChannel';
 import { SampleTooLargeError } from '../../engine/sampleStore';
-import { FACTORY_KIT } from '../../engine/factorySamples';
+import { KIT_LIBRARY, kitById } from '../../engine/factorySamples';
 import type { PadState, QuantizeDivision } from '../../state/studioState';
 import { PADS, QUANT, padDefs, quantizeDef, samplerLayout, type PadCell } from './samplerLayout';
+
+// SampleProcessor is LAZY-loaded (G5): it statically imports the engineBridge singleton (the
+// eager `new EngineBridge()` that also sets window.__synthstackStudio), so a static import here
+// would drag the whole engine into the SAMPLER-PANEL module graph — which the POP-OUT window
+// renders. A dynamic import keeps engineBridge out of the pop-out's module graph entirely; the
+// processor only mounts in the MAIN window (showProcessor), so the chunk loads only on demand.
+const SampleProcessor = lazy(() =>
+  import('../SampleProcessor').then((m) => ({ default: m.SampleProcessor })),
+);
 
 // ---- pad-meta subscription -------------------------------------------------------------
 // useSyncExternalStore needs a STABLE snapshot when nothing changed (the store
@@ -45,8 +54,8 @@ import { PADS, QUANT, padDefs, quantizeDef, samplerLayout, type PadCell } from '
 
 const padSnapshotCache: (PadState | null)[] = Array.from({ length: PADS.length }, () => null);
 
-function padSnapshot(padIndex: number): PadState {
-  const next = engineBridge.getPadState(padIndex);
+function padSnapshot(bridge: SamplerBridge, padIndex: number): PadState {
+  const next = bridge.getPadState(padIndex);
   const prev = padSnapshotCache[padIndex];
   if (
     prev &&
@@ -62,26 +71,34 @@ function padSnapshot(padIndex: number): PadState {
   return next;
 }
 
-const subscribeStore = (onChange: () => void) => engineBridge.store.subscribe(onChange);
-
-/** Subscribe ONE pad's meta; re-renders that pad only when its slice changes. */
-function usePad(padIndex: number): PadState {
-  const getSnapshot = useCallback(() => padSnapshot(padIndex), [padIndex]);
-  return useSyncExternalStore(subscribeStore, getSnapshot);
+/** Subscribe ONE pad's meta; re-renders that pad only when its slice changes. The store
+ *  subscription source + snapshot are read through the INJECTED bridge (G5 DI). */
+function usePad(bridge: SamplerBridge, padIndex: number): PadState {
+  const subscribe = useCallback((onChange: () => void) => bridge.subscribe(onChange), [bridge]);
+  const getSnapshot = useCallback(() => padSnapshot(bridge, padIndex), [bridge, padIndex]);
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
-// getQuantize returns a stable string primitive (reference-stable across getState
-// clones, unlike the pad object) so it needs no snapshot caching for the loop guard.
-const getQuantizeSnapshot = () => engineBridge.getQuantize();
+/** Subscribe the single global QUANTIZE selector. getQuantize returns a stable string
+ *  primitive (reference-stable), so it needs no snapshot caching for the loop guard. */
+function useQuantize(bridge: SamplerBridge): QuantizeDivision {
+  const subscribe = useCallback((onChange: () => void) => bridge.subscribe(onChange), [bridge]);
+  const getSnapshot = useCallback(() => bridge.getQuantize(), [bridge]);
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
 
-/** Subscribe the single global QUANTIZE selector. */
-function useQuantize(): QuantizeDivision {
-  return useSyncExternalStore(subscribeStore, getQuantizeSnapshot);
+/** Subscribe the single global KIT-SELECT (G6). getKitId is a stable string primitive too. */
+function useKitId(bridge: SamplerBridge): string {
+  const subscribe = useCallback((onChange: () => void) => bridge.subscribe(onChange), [bridge]);
+  const getSnapshot = useCallback(() => bridge.getKitId(), [bridge]);
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
 // ---- single pad cell -------------------------------------------------------------------
 
 interface PadProps {
+  /** Injected action/snapshot surface (real engineBridge in-console, proxy in the pop-out). */
+  bridge: SamplerBridge;
   cell: PadCell;
   /** Open the shared file picker targeted at this pad. */
   onLoadClick: (padIndex: number) => void;
@@ -99,16 +116,16 @@ function loadErrorMessage(err: unknown): string {
 /** Clamp the sample-name label to the pad-face width so long names don't overflow. */
 const NAME_MAX_W = 92;
 
-const Pad = memo(function Pad({ cell, onLoadClick, onKitClick, onError }: PadProps) {
+const Pad = memo(function Pad({ bridge, cell, onLoadClick, onKitClick, onError }: PadProps) {
   const { index } = cell;
-  const pad = usePad(index);
+  const pad = usePad(bridge, index);
   const { level, tune, loop } = padDefs(index);
 
   const onDrop = (e: React.DragEvent<SVGRectElement>) => {
     const file = e.dataTransfer?.files?.[0];
     if (!file) return;
     e.preventDefault();
-    engineBridge.loadPadSample(index, file).catch((err) => onError(loadErrorMessage(err)));
+    bridge.loadPadSample(index, file).catch((err) => onError(loadErrorMessage(err)));
   };
 
   const name = pad.sampleName ?? 'EMPTY';
@@ -130,7 +147,7 @@ const Pad = memo(function Pad({ cell, onLoadClick, onKitClick, onError }: PadPro
         fill={COLORS.panelRaised}
         stroke={empty ? COLORS.panelEdge : COLORS.knob}
         strokeWidth={empty ? 1 : 1.5}
-        onPointerDown={() => engineBridge.auditionPad(index)}
+        onPointerDown={() => bridge.auditionPad(index)}
         onDragOver={(e) => e.preventDefault()}
         onDrop={onDrop}
       />
@@ -255,16 +272,16 @@ const Pad = memo(function Pad({ cell, onLoadClick, onKitClick, onError }: PadPro
       <Knob
         def={level}
         value={pad.level}
-        onInput={(v) => engineBridge.setPadControl(index, 'level', v)}
-        onCommit={(v) => engineBridge.commitPadControl(index, 'level', v)}
+        onInput={(v) => bridge.setPadControl(index, 'level', v)}
+        onCommit={(v) => bridge.commitPadControl(index, 'level', v)}
         x={cell.levelX}
         y={cell.levelY}
       />
       <Knob
         def={tune}
         value={pad.tuneSemis}
-        onInput={(v) => engineBridge.setPadControl(index, 'tuneSemis', v)}
-        onCommit={(v) => engineBridge.commitPadControl(index, 'tuneSemis', v)}
+        onInput={(v) => bridge.setPadControl(index, 'tuneSemis', v)}
+        onCommit={(v) => bridge.commitPadControl(index, 'tuneSemis', v)}
         x={cell.tuneX}
         y={cell.tuneY}
       />
@@ -279,7 +296,7 @@ const Pad = memo(function Pad({ cell, onLoadClick, onKitClick, onError }: PadPro
         <Switch
           def={loop}
           value={pad.loop ? 'ON' : 'OFF'}
-          onChange={(pos) => engineBridge.setPadLoop(index, pos === 'ON')}
+          onChange={(pos) => bridge.setPadLoop(index, pos === 'ON')}
           x={cell.loopX}
           y={cell.loopY}
         />
@@ -302,6 +319,8 @@ const Pad = memo(function Pad({ cell, onLoadClick, onKitClick, onError }: PadPro
 const KIT_MENU_Z = 45; // below the PresetPicker .preset-overlay (z-index 50)
 
 interface KitMenuProps {
+  /** Injected action/snapshot surface. */
+  bridge: SamplerBridge;
   /** The pad the menu assigns to (0..7). */
   padIndex: number;
   /** The KIT trigger's screen rect, for fixed positioning. */
@@ -312,8 +331,12 @@ interface KitMenuProps {
   onClose: () => void;
 }
 
-function KitMenu({ padIndex, anchorRect, onAssign, onClose }: KitMenuProps) {
-  const pad = usePad(padIndex);
+function KitMenu({ bridge, padIndex, anchorRect, onAssign, onClose }: KitMenuProps) {
+  const pad = usePad(bridge, padIndex);
+  const kitId = useKitId(bridge);
+  // The per-pad picker lists the CURRENT kit's 8 sounds (G6); fall back to the default kit
+  // for a stale id so the menu is never empty.
+  const kitPads = (kitById(kitId) ?? KIT_LIBRARY[0]!).pads;
   const listRef = useRef<HTMLUListElement | null>(null);
 
   // Focus the list on open so Escape (and arrow scrolling) has a keyboard target.
@@ -364,7 +387,7 @@ function KitMenu({ padIndex, anchorRect, onAssign, onClose }: KitMenuProps) {
           }
         }}
       >
-        {FACTORY_KIT.map((entry) => {
+        {kitPads.map((entry) => {
           const selected = pad.sampleId === entry.id;
           return (
             <li
@@ -408,16 +431,217 @@ function KitMenu({ padIndex, anchorRect, onAssign, onClose }: KitMenuProps) {
   );
 }
 
+// ---- global KIT-SELECT menu (G6) -------------------------------------------------------
+// A header dropdown of the kit library (KIT_LIBRARY). Picking a kit re-points all 8 pads at
+// once via engineBridge.selectKit. Same portal / backdrop / Escape idiom as KitMenu — it
+// lives OUTSIDE the transform:scale stage so it is screen-pixel sized, positioned from the
+// header trigger's screen rect captured at open.
+
+interface KitSelectMenuProps {
+  anchorRect: DOMRect;
+  currentKitId: string;
+  onSelect: (kitId: string) => void;
+  onClose: () => void;
+}
+
+function KitSelectMenu({ anchorRect, currentKitId, onSelect, onClose }: KitSelectMenuProps) {
+  const listRef = useRef<HTMLUListElement | null>(null);
+  useEffect(() => {
+    listRef.current?.focus();
+  }, []);
+  const MENU_W = 168;
+  const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - MENU_W - 8));
+  const top = anchorRect.bottom + 4;
+  return createPortal(
+    <div
+      className="kit-select-backdrop"
+      style={{ position: 'fixed', inset: 0, zIndex: KIT_MENU_Z }}
+      onClick={onClose}
+    >
+      <ul
+        ref={listRef}
+        className="kit-select-menu"
+        role="listbox"
+        tabIndex={-1}
+        aria-label="Drum kit"
+        data-testid="kit-select-menu"
+        style={{
+          position: 'fixed',
+          left,
+          top,
+          width: MENU_W,
+          margin: 0,
+          padding: 4,
+          listStyle: 'none',
+          background: 'var(--color-panel-raised)',
+          border: '1px solid var(--color-panel-edge)',
+          borderRadius: 6,
+          boxShadow: '0 8px 28px rgba(0, 0, 0, 0.55)',
+          fontFamily: 'var(--font-condensed)',
+          maxHeight: '60dvh',
+          overflowY: 'auto',
+        }}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+      >
+        {KIT_LIBRARY.map((kit) => {
+          const selected = kit.id === currentKitId;
+          return (
+            <li
+              key={kit.id}
+              role="option"
+              aria-selected={selected}
+              data-testid={`kit-select-option-${kit.id}`}
+              tabIndex={0}
+              onClick={() => onSelect(kit.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect(kit.id);
+                }
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 10px',
+                fontSize: 13,
+                letterSpacing: 0.5,
+                color: selected ? 'var(--color-legend)' : 'var(--color-legend-dim)',
+                borderRadius: 4,
+                cursor: 'pointer',
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{ width: 12, flex: '0 0 auto', color: 'var(--color-focus)' }}
+              >
+                {selected ? '✓' : ''}
+              </span>
+              <span>{kit.name}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>,
+    document.body,
+  );
+}
+
 // ---- panel -----------------------------------------------------------------------------
 
-export function SamplerPanel() {
+/**
+ * SamplerPanel props. `bridge` is the DI seam (G5) and is REQUIRED so this module statically
+ * imports NEITHER `realSamplerBridge` NOR engineBridge (which would drag the engine into the
+ * pop-out's module graph): the MAIN window (App.tsx) passes `realSamplerBridge`, the POP-OUT
+ * passes the proxy. `mainWindow` (default true) gates the engine-backed extras — the PROCESS
+ * modal + the POP OUT button — so the pop-out renders pads + drum-grid controls only.
+ */
+export interface SamplerPanelProps {
+  bridge: SamplerBridge;
+  /** True in the main console window; false in the pop-out (hides PROCESS + POP OUT). */
+  mainWindow?: boolean;
+}
+
+export function SamplerPanel({ bridge, mainWindow = true }: SamplerPanelProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   /** Pad the hidden picker currently targets (set just before input.click()). */
   const activePadRef = useRef<number>(0);
   const [error, setError] = useState<string | null>(null);
   /** Sample-processor modal (load → trim → click-free loop → pad). */
   const [processorOpen, setProcessorOpen] = useState(false);
-  const quantize = useQuantize();
+  const quantize = useQuantize(bridge);
+  const kitId = useKitId(bridge);
+  const currentKit = kitById(kitId) ?? KIT_LIBRARY[0]!;
+  // The sample PROCESSOR needs the engine AudioContext (decode/preview via engineBridge directly),
+  // so it is MAIN-window only — the pop-out's scope is pads + the drum grid (G5).
+  const showProcessor = mainWindow;
+  // POP OUT is likewise MAIN-window only — the pop-out has no pop-out button of its own.
+  const showPopOut = mainWindow;
+
+  // ---- POP OUT (G5): open the pads + drum grid in a SECOND window beside the console -----
+  // The opened window handle (runtime-only; never serialized — the open/closed state is window
+  // state, not studio state). When open the button flips to POP IN / focus-existing. A null
+  // window.open return = popup blocked -> a transient hint.
+  const popoutRef = useRef<Window | null>(null);
+  const [popoutOpen, setPopoutOpen] = useState(false);
+  const [popoutBlocked, setPopoutBlocked] = useState(false);
+
+  // Give the MAIN-window host a live handle to the pop-out so its channel can reach the child in
+  // a BroadcastChannel-ABSENT fallback context (the host opens its channel with no `other` and a
+  // null window.opener). The getter resolves the CURRENT non-closed handle at post time; cleared
+  // on unmount. (With BroadcastChannel present this is unused — both windows share the channel.)
+  useEffect(() => {
+    registerSamplerChildWindow(() => {
+      const w = popoutRef.current;
+      return w && !w.closed ? w : null;
+    });
+    return () => registerSamplerChildWindow(null);
+  }, []);
+
+  // Poll the handle so the button reflects a pop-out the user closed via its own window chrome
+  // (there is no cross-window 'closed' event we can rely on without coupling to the channel).
+  useEffect(() => {
+    if (!popoutOpen) return;
+    const id = window.setInterval(() => {
+      if (popoutRef.current?.closed) {
+        popoutRef.current = null;
+        setPopoutOpen(false);
+      }
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [popoutOpen]);
+
+  const onPopOut = useCallback(() => {
+    // Already open -> focus + raise the existing window (POP IN behavior is "bring it forward").
+    if (popoutRef.current && !popoutRef.current.closed) {
+      popoutRef.current.focus();
+      return;
+    }
+    const win = window.open(
+      `${import.meta.env.BASE_URL}#/sampler-popout`,
+      'synthstack-sampler',
+      'width=920,height=520',
+    );
+    if (!win) {
+      // Popup blocked — surface a transient hint; the in-console panel stays fully functional.
+      setPopoutBlocked(true);
+      window.setTimeout(() => setPopoutBlocked(false), 4000);
+      return;
+    }
+    popoutRef.current = win;
+    setPopoutOpen(true);
+    setPopoutBlocked(false);
+  }, []);
+
+  /** Global KIT-SELECT dropdown: its trigger's screen rect (null = closed). */
+  const [kitSelectRect, setKitSelectRect] = useState<DOMRect | null>(null);
+  /** The KIT-SELECT trigger element — focus returns to it on close. */
+  const kitSelectTriggerRef = useRef<SVGGElement | null>(null);
+
+  const onKitSelectClick = useCallback((trigger: SVGGElement) => {
+    kitSelectTriggerRef.current = trigger;
+    setKitSelectRect(trigger.getBoundingClientRect());
+  }, []);
+
+  const closeKitSelect = useCallback(() => {
+    setKitSelectRect(null);
+    kitSelectTriggerRef.current?.focus();
+    kitSelectTriggerRef.current = null;
+  }, []);
+
+  const onKitSelect = useCallback(
+    (id: string) => {
+      bridge.selectKit(id);
+      closeKitSelect();
+    },
+    [bridge, closeKitSelect],
+  );
 
   /** Factory-picker menu: the pad it targets (null = closed) + its trigger's screen rect. */
   const [kitMenu, setKitMenu] = useState<{ padIndex: number; anchorRect: DOMRect } | null>(null);
@@ -448,19 +672,24 @@ export function SamplerPanel() {
 
   const onKitAssign = useCallback(
     (padIndex: number, factoryId: string) => {
-      engineBridge.assignFactoryToPad(padIndex, factoryId);
+      bridge.assignFactoryToPad(padIndex, factoryId);
       closeKitMenu();
     },
-    [closeKitMenu],
+    [bridge, closeKitMenu],
   );
 
-  const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    engineBridge
-      .loadPadSample(activePadRef.current, file)
-      .catch((err) => setError(err instanceof SampleTooLargeError ? 'Sample too large (max 4 MB)' : 'Load failed'));
-  }, []);
+  const onFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      bridge
+        .loadPadSample(activePadRef.current, file)
+        .catch((err) =>
+          setError(err instanceof SampleTooLargeError ? 'Sample too large (max 4 MB)' : 'Load failed'),
+        );
+    },
+    [bridge],
+  );
 
   return (
     <>
@@ -505,25 +734,72 @@ export function SamplerPanel() {
           {samplerLayout.title.toUpperCase()}
         </text>
 
-        {/* PROCESS button — opens the sample processor (load → trim → click-free loop → pad) */}
+        {/* PROCESS button — opens the sample processor (load → trim → click-free loop → pad).
+            MAIN-window only: the processor decodes/previews through the engine AudioContext, so
+            it is hidden when a proxy (pop-out) bridge is in play (G5 scope = pads + drum grid). */}
+        {showProcessor && (
+          <g
+            data-testid="sampler-process"
+            role="button"
+            tabIndex={0}
+            aria-label="Open the sample processor"
+            style={{ cursor: 'pointer' }}
+            onClick={() => setProcessorOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setProcessorOpen(true);
+              }
+            }}
+          >
+            <rect
+              x={118}
+              y={12}
+              width={104}
+              height={22}
+              rx={5}
+              fill={COLORS.panelRaised}
+              stroke={COLORS.panelEdge}
+              strokeWidth={1}
+            />
+            <text
+              x={170}
+              y={27}
+              textAnchor="middle"
+              fontFamily={FONT_CONDENSED}
+              fontSize={11}
+              letterSpacing={1}
+              fill={COLORS.legend}
+              pointerEvents="none"
+            >
+              PROCESS…
+            </text>
+          </g>
+        )}
+
+        {/* global KIT-SELECT dropdown (G6) — re-points all 8 pads at the chosen kit. SVG
+            trigger (testid kit-select) shows the current kit name; click opens a portaled
+            listbox of KIT_LIBRARY. Mirrors the per-pad KIT trigger markup (hit area = the
+            drawn rect). */}
         <g
-          data-testid="sampler-process"
+          data-testid="kit-select"
           role="button"
           tabIndex={0}
-          aria-label="Open the sample processor"
+          aria-haspopup="listbox"
+          aria-label={`Drum kit: ${currentKit.name}`}
           style={{ cursor: 'pointer' }}
-          onClick={() => setProcessorOpen(true)}
+          onClick={(e) => onKitSelectClick(e.currentTarget)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
-              setProcessorOpen(true);
+              onKitSelectClick(e.currentTarget);
             }
           }}
         >
           <rect
-            x={118}
+            x={232}
             y={12}
-            width={104}
+            width={150}
             height={22}
             rx={5}
             fill={COLORS.panelRaised}
@@ -531,7 +807,7 @@ export function SamplerPanel() {
             strokeWidth={1}
           />
           <text
-            x={170}
+            x={307}
             y={27}
             textAnchor="middle"
             fontFamily={FONT_CONDENSED}
@@ -540,9 +816,67 @@ export function SamplerPanel() {
             fill={COLORS.legend}
             pointerEvents="none"
           >
-            PROCESS…
+            {`KIT: ${currentKit.name.toUpperCase()} ▾`}
           </text>
         </g>
+
+        {/* POP OUT (G5) — open the pads + drum grid in a second window beside the console. Flips
+            to POP IN (focus the existing window) while open. MAIN-window only (the pop-out has no
+            pop-out of its own). A blocked popup shows a transient hint just below. */}
+        {showPopOut && (
+          <g
+            data-testid="sampler-popout"
+            role="button"
+            tabIndex={0}
+            aria-label={popoutOpen ? 'Focus the sampler pop-out window' : 'Open the sampler in a second window'}
+            style={{ cursor: 'pointer' }}
+            onClick={onPopOut}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onPopOut();
+              }
+            }}
+          >
+            <rect
+              x={392}
+              y={12}
+              width={96}
+              height={22}
+              rx={5}
+              fill={COLORS.panelRaised}
+              stroke={popoutOpen ? COLORS.knob : COLORS.panelEdge}
+              strokeWidth={1}
+            />
+            <text
+              x={440}
+              y={27}
+              textAnchor="middle"
+              fontFamily={FONT_CONDENSED}
+              fontSize={11}
+              letterSpacing={1}
+              fill={COLORS.legend}
+              pointerEvents="none"
+            >
+              {popoutOpen ? 'POP IN' : 'POP OUT'}
+            </text>
+          </g>
+        )}
+
+        {/* popup-blocked hint (transient) — the in-console panel stays fully functional. */}
+        {popoutBlocked && (
+          <text
+            data-testid="sampler-popout-blocked"
+            x={392}
+            y={48}
+            fontFamily={FONT_CONDENSED}
+            fontSize={10}
+            letterSpacing={0.5}
+            fill={COLORS.ledAmber}
+          >
+            POPUP BLOCKED — ALLOW POPUPS
+          </text>
+        )}
 
         {/* transient load-error message, top-right */}
         {error != null && (
@@ -565,7 +899,7 @@ export function SamplerPanel() {
           <Switch
             def={quantizeDef}
             value={quantize}
-            onChange={(pos) => engineBridge.setQuantize(pos as QuantizeDivision)}
+            onChange={(pos) => bridge.setQuantize(pos as QuantizeDivision)}
             x={QUANT.x}
             y={QUANT.y}
           />
@@ -574,6 +908,7 @@ export function SamplerPanel() {
         {PADS.map((cell) => (
           <Pad
             key={cell.index}
+            bridge={bridge}
             cell={cell}
             onLoadClick={onLoadClick}
             onKitClick={onKitClick}
@@ -587,6 +922,7 @@ export function SamplerPanel() {
           so the 16:9 console stays pixel-identical. */}
       {kitMenu && (
         <KitMenu
+          bridge={bridge}
           padIndex={kitMenu.padIndex}
           anchorRect={kitMenu.anchorRect}
           onAssign={onKitAssign}
@@ -594,8 +930,24 @@ export function SamplerPanel() {
         />
       )}
 
-      {/* sample processor — portals itself to document.body (outside the scaled stage) */}
-      {processorOpen && <SampleProcessor onClose={() => setProcessorOpen(false)} />}
+      {/* global KIT-SELECT dropdown — portaled like KitMenu, unmounted at rest. */}
+      {kitSelectRect && (
+        <KitSelectMenu
+          anchorRect={kitSelectRect}
+          currentKitId={kitId}
+          onSelect={onKitSelect}
+          onClose={closeKitSelect}
+        />
+      )}
+
+      {/* sample processor — portals itself to document.body (outside the scaled stage). MAIN-
+          window only (engine-backed); lazy-loaded so engineBridge stays out of the pop-out graph.
+          Suspense fallback is null — the modal simply appears once its chunk resolves. */}
+      {showProcessor && processorOpen && (
+        <Suspense fallback={null}>
+          <SampleProcessor onClose={() => setProcessorOpen(false)} />
+        </Suspense>
+      )}
     </>
   );
 }

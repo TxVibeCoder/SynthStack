@@ -372,4 +372,21 @@ describe('drumLayout', () => {
     expect(DRUM_TRANSPORT.y).toBeGreaterThanOrEqual(0);
     expect(DRUM_TRANSPORT.y).toBeLessThanOrEqual(DRUM_SECTION_H);
   });
+
+  it('places the LENGTH + SWING knobs inside the viewBox and clear of the grid right edge', () => {
+    const gridRight = columnX(15) + DRUM_GRID.cell / 2;
+    // Knob footprint half-width: radius (~18) + readout-pill slack. Pins both knobs clear of the
+    // grid and inside STAGE.w (added with G4 drum var-length + swing).
+    const KNOB_HALF = 40;
+    for (const [name, x, y] of [
+      ['length', DRUM_TRANSPORT.lengthX, DRUM_TRANSPORT.lengthY],
+      ['swing', DRUM_TRANSPORT.swingX, DRUM_TRANSPORT.swingY],
+    ] as const) {
+      expect(x - KNOB_HALF, `${name} knob left`).toBeGreaterThanOrEqual(0);
+      expect(x + KNOB_HALF, `${name} knob right`).toBeLessThanOrEqual(STAGE.w);
+      expect(x - KNOB_HALF, `${name} knob overlaps the grid`).toBeGreaterThan(gridRight);
+      expect(y, `${name} knob top`).toBeGreaterThanOrEqual(0);
+      expect(y, `${name} knob bottom`).toBeLessThanOrEqual(DRUM_SECTION_H);
+    }
+  });
 });

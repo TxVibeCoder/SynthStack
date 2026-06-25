@@ -21,11 +21,18 @@ import {
   pickRecorderMimeType,
   buildRecordingFilename,
   recordingExtForMime,
+  type RecordFormat,
 } from './recordHelpers';
+import { encodeWav } from './sampleEdit';
 
 /** Auto-stop a take after 10 minutes to bound the in-RAM Blob — a marathon record otherwise
  *  accumulates chunks until the tab is discarded. The user still gets the capped file's download. */
 export const MAX_RECORD_MS = 10 * 60 * 1000;
+
+/** Lossless WAV bit depth. 16 is the shipped DEFAULT (a friendly, universally-playable file ~2/3
+ *  the size of 24-bit); 24-bit lives in encodeWav for the operator to flip if "CAD-grade fidelity"
+ *  wants it. EARS/DECISION: 16 vs 24 default is the operator's by-ear/size call — flagged in the report. */
+const WAV_BIT_DEPTH: 16 | 24 = 16;
 
 export class MasterRecorder {
   private streamDest: MediaStreamAudioDestinationNode | null = null;
@@ -36,29 +43,63 @@ export class MasterRecorder {
   /** Auto-stop timer (UI timer, not an audio event); cleared on any stop. */
   private capTimer: ReturnType<typeof setTimeout> | null = null;
   /** Computed once: the runtime actually has MediaRecorder + createMediaStreamDestination. */
-  private readonly supported: boolean;
+  private readonly webmSupported: boolean;
+  /** Computed once: the runtime has AudioWorkletNode + createMediaStreamDestination (the WAV
+   *  PCM-tap path). The pcm-tap module must also have loaded (it is registered in loadWorklets);
+   *  if addModule failed, constructing the node throws and start() degrades to false. */
+  private readonly wavSupported: boolean;
+
+  /** Selected capture format. 'webm' (lossy MediaRecorder) is the DEFAULT; 'wav' is the lossless
+   *  PCM-tap path. Runtime-only — never serialized. */
+  private format: RecordFormat = 'webm';
+
+  // ---- WAV (PCM-tap) path state ----
+  /** The lazily-built PCM tap worklet node (additive edge off `tap`, parallel to streamDest). */
+  private pcmNode: AudioWorkletNode | null = null;
+  /** Accumulated per-channel blocks for the in-flight WAV take (concat only at stop()). */
+  private wavChunks: Float32Array[][] = [];
+  private wavChannelCount = 1;
+  /** True between a successful wav start() and its stop(); the single in-flight guard for WAV. */
+  private wavRecording = false;
+  private wavStartEpochMs = 0;
 
   constructor(
     private readonly ctx: AudioContext,
     private readonly tap: AudioNode,
   ) {
-    this.supported =
-      typeof MediaRecorder !== 'undefined' && typeof ctx.createMediaStreamDestination === 'function';
+    const hasStreamDest = typeof ctx.createMediaStreamDestination === 'function';
+    this.webmSupported = typeof MediaRecorder !== 'undefined' && hasStreamDest;
+    // The WAV path needs an AudioWorkletNode constructor + a real context with an audioWorklet.
+    this.wavSupported =
+      typeof AudioWorkletNode !== 'undefined' &&
+      typeof (ctx as { audioWorklet?: unknown }).audioWorklet !== 'undefined';
   }
 
+  /** Select the capture format for the NEXT take. Ignored mid-record (the in-flight take keeps
+   *  its format); the new format applies to the next start(). */
+  setFormat(format: RecordFormat): void {
+    if (this.isRecording) return;
+    this.format = format;
+  }
+
+  getFormat(): RecordFormat {
+    return this.format;
+  }
+
+  /** Whether the SELECTED format can actually record in this runtime. */
   get isSupported(): boolean {
-    return this.supported;
+    return this.format === 'wav' ? this.wavSupported : this.webmSupported;
   }
 
   get isRecording(): boolean {
+    if (this.format === 'wav') return this.wavRecording;
     return this.recorder !== null && this.recorder.state === 'recording';
   }
 
   getState(): { recording: boolean; elapsedMs: number } {
-    return {
-      recording: this.isRecording,
-      elapsedMs: this.isRecording ? Math.round(this.nowMs() - this.startEpochMs) : 0,
-    };
+    if (!this.isRecording) return { recording: false, elapsedMs: 0 };
+    const epoch = this.format === 'wav' ? this.wavStartEpochMs : this.startEpochMs;
+    return { recording: true, elapsedMs: Math.round(this.nowMs() - epoch) };
   }
 
   /** The one runtime clock read for the elapsed timer (performance.now with a Date.now
@@ -70,14 +111,22 @@ export class MasterRecorder {
   }
 
   /**
-   * Start recording the master mix. Lazily creates the streamDest fan-out off softClip
-   * exactly once (the ADDITIVE edge — softClip->destination is untouched, monitoring
-   * continues), mints a FRESH MediaRecorder per record (MediaRecorder is single-use),
-   * and starts it. Returns false (never throws) when unsupported, already recording, or
-   * any wiring step throws.
+   * Start recording the master mix in the SELECTED format. Single in-flight guard regardless of
+   * format (isRecording covers both paths). Returns false (never throws) when unsupported,
+   * already recording, or any wiring step throws.
    */
   start(): boolean {
-    if (!this.supported || this.isRecording) return false;
+    if (this.isRecording) return false;
+    return this.format === 'wav' ? this.startWav() : this.startWebm();
+  }
+
+  /**
+   * webm path: lazily creates the streamDest fan-out off softClip exactly once (the ADDITIVE
+   * edge — softClip->destination is untouched, monitoring continues), mints a FRESH MediaRecorder
+   * per record (MediaRecorder is single-use), and starts it.
+   */
+  private startWebm(): boolean {
+    if (!this.webmSupported) return false;
     try {
       if (this.streamDest === null) {
         this.streamDest = this.ctx.createMediaStreamDestination();
@@ -110,13 +159,52 @@ export class MasterRecorder {
   }
 
   /**
-   * Stop recording, assemble the Blob in onstop (so the final dataavailable has fired),
-   * trigger the browser download, and resolve the Blob. Resolves null when not recording
-   * or if stop() throws. The promise is what StudioContext.powerOff awaits — the onstop
-   * blob assembly + download must complete BEFORE the context is suspended.
+   * wav (lossless) path: lazily builds the PCM-tap AudioWorkletNode off `tap` (an ADDITIVE edge
+   * parallel to streamDest — softClip->destination still untouched, monitoring continues), then
+   * accumulates each posted per-channel block. The node stays connected across takes; chunks are
+   * cleared at start and concatenated only at stop(). Returns false (never throws) when the
+   * worklet isn't available (e.g. addModule failed) or any wiring step throws.
+   */
+  private startWav(): boolean {
+    if (!this.wavSupported) return false;
+    try {
+      if (this.pcmNode === null) {
+        this.pcmNode = new AudioWorkletNode(this.ctx, 'synthstack-pcm-tap', {
+          numberOfInputs: 1,
+          numberOfOutputs: 0,
+        });
+        this.pcmNode.port.onmessage = (e: MessageEvent) => {
+          // Drop late blocks once a take has ended (stop() set wavRecording false) so a final
+          // in-flight message never re-grows the freed buffer.
+          if (!this.wavRecording) return;
+          const data = e.data as { channels?: Float32Array[]; channelCount?: number };
+          const chans = data.channels;
+          if (!chans || chans.length === 0) return;
+          this.wavChannelCount = data.channelCount ?? chans.length;
+          this.wavChunks.push(chans);
+        };
+        this.tap.connect(this.pcmNode);
+      }
+      this.wavChunks = [];
+      this.wavChannelCount = 1;
+      this.wavRecording = true;
+      this.wavStartEpochMs = this.nowMs();
+      this.capTimer = setTimeout(() => void this.stop(), MAX_RECORD_MS);
+      return true;
+    } catch {
+      this.wavRecording = false;
+      return false;
+    }
+  }
+
+  /**
+   * Stop recording in whichever format is in flight, trigger the browser download, and resolve
+   * the Blob (null when not recording / on error). The promise is what StudioContext.powerOff
+   * awaits — blob assembly + download must complete BEFORE the context is suspended.
    */
   stop(): Promise<Blob | null> {
     this.clearCapTimer(); // a manual stop (or the auto-stop firing) cancels the cap timer
+    if (this.format === 'wav') return this.stopWav();
     if (!this.isRecording || this.recorder === null) return Promise.resolve(null);
     return new Promise<Blob | null>((resolve) => {
       const rec = this.recorder!;
@@ -146,6 +234,61 @@ export class MasterRecorder {
         resolve(null);
       }
     });
+  }
+
+  /**
+   * Stop the WAV take: stop accepting blocks, concat the accumulated per-channel chunks into one
+   * Float32Array per channel, encodeWav() them, download, and resolve the Blob. Disconnects + nulls
+   * the PCM node so a later format switch / power-off leaves no live edge. Resolves null when not
+   * recording or on any error (never throws — powerOff awaits this).
+   *
+   * The final in-flight partial block is already flushed: the worklet posts EVERY processed block
+   * (including the last one before disconnect), and onmessage appended each up to the moment
+   * wavRecording flips false here.
+   */
+  private stopWav(): Promise<Blob | null> {
+    if (!this.wavRecording) return Promise.resolve(null);
+    this.wavRecording = false; // gate onmessage: any late block is dropped from here on
+    try {
+      const nCh = Math.max(1, this.wavChannelCount);
+      const total = this.wavChunks.reduce((sum, blk) => sum + (blk[0]?.length ?? 0), 0);
+      const channels: Float32Array[] = [];
+      for (let c = 0; c < nCh; c++) {
+        const out = new Float32Array(total);
+        let off = 0;
+        for (const blk of this.wavChunks) {
+          // A block may carry fewer channels than nCh (a mono moment); fall back to channel 0 so
+          // the interleave stays aligned rather than leaving a silent gap.
+          const src = blk[c] ?? blk[0];
+          if (src) out.set(src, off);
+          off += blk[0]?.length ?? 0;
+        }
+        channels.push(out);
+      }
+      this.wavChunks = [];
+      const buf = encodeWav(channels, this.ctx.sampleRate, WAV_BIT_DEPTH);
+      const blob = new Blob([buf], { type: 'audio/wav' });
+      const filename = buildRecordingFilename(this.timestampNow(), 'wav');
+      this.triggerDownload(blob, filename);
+      this.disconnectPcmNode();
+      return Promise.resolve(blob);
+    } catch {
+      this.wavChunks = [];
+      this.disconnectPcmNode();
+      return Promise.resolve(null);
+    }
+  }
+
+  private disconnectPcmNode(): void {
+    if (this.pcmNode !== null) {
+      try {
+        this.pcmNode.port.onmessage = null;
+        this.pcmNode.disconnect();
+      } catch {
+        /* non-fatal */
+      }
+      this.pcmNode = null;
+    }
   }
 
   private clearCapTimer(): void {

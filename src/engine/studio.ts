@@ -10,6 +10,7 @@
  */
 
 import { StudioContext } from './context';
+import type { RecordFormat } from './recordHelpers';
 import { MasterFxChain, type MasterFxId } from './fx/masterFxChain';
 import { MonarchModule } from './modules/monarch';
 import { AnvilModule } from './modules/anvil';
@@ -30,7 +31,7 @@ import { MidiClock } from './sequencers/midiClock';
 import { SamplerLoopClock } from './sequencers/samplerLoops';
 import { SamplerStepSeq } from './sequencers/samplerSeq';
 import { nextBoundary, type QuantDivision, type PhaseRef } from './quantGrid';
-import { renderFactorySamples } from './factorySamples';
+import { renderAllKits } from './factorySamples';
 import type { SampleBackend } from './sampleStore';
 import {
   StudioStore,
@@ -185,7 +186,9 @@ export class Studio {
       if ((VOICE_FX_IDS as string[]).includes(m.id)) {
         // Per-voice insert FX: voice out → [flanger→delay→reverb] → mixer channel. The
         // patchbay VCA-OUT jack is a SEPARATE fan-out off `tap`, so cables stay dry (pre-FX).
-        const fx = new MasterFxChain(ctx);
+        // 'voice' target: `tap` is the raw ±5 vv voice out (pre-mixer), so the FOLD shaper
+        // uses ioScale 0.2 (±5vv→±1). The master chain instead uses ~1.0 (post-mixer signal).
+        const fx = new MasterFxChain(ctx, 'voice');
         tap.connect(fx.input);
         this.mixer.connectInput(fx.output, m.mixerChannel!);
         this.voiceFx.set(m.id as VoiceFxId, fx);
@@ -222,6 +225,9 @@ export class Studio {
     // so unlike the sampler clocks it idles at nextEventTime=Infinity until start() and
     // needs no phase provider. The binder drives the Courier voice's pitch/gate surface.
     this.scheduler.add(this.courierSeq, (e) => this.bindCourierEvent(e));
+    // External-MIDI-clock watchdog rides the one lookahead pump (no setInterval/setTimeout): if a
+    // stalled/unplugged upstream clock leaves us master with no fresh ticks, auto-release master.
+    this.scheduler.beforePump = (now) => this.checkMidiClockWatchdog(now);
     this.scheduler.start();
 
     this.store.subscribe(() => this.syncTransportConfig());
@@ -760,6 +766,40 @@ export class Studio {
   onMidiClockStop(): void {
     if (!this.built) return;
     this.midiClock.stop();
+    this.releaseMidiMaster();
+  }
+
+  /** True while external MIDI clock is the studio master (read-only status for the UI poll). */
+  isMidiClockMaster(): boolean {
+    return this.midiClockMaster;
+  }
+
+  /**
+   * Watchdog gap (s). While master, if no 0xF8 has arrived for this long WITHOUT a 0xFC Stop, the
+   * watchdog auto-releases master (a stalled / unplugged upstream clock). GENEROUS by design: at
+   * 120 BPM a tick is ~20.8 ms, so 0.5 s ≈ 24 missed ticks — well past normal main-thread MIDI
+   * jitter or a momentary tab throttle, so it never spuriously drops master mid-song.
+   * EARS: the exact feel of this gap is a by-ear checkpoint for the operator (see report).
+   */
+  static readonly MIDI_CLOCK_WATCHDOG_GAP_S = 0.5;
+
+  /**
+   * Run once per scheduler pump (wired as scheduler.beforePump). When master, if the upstream clock
+   * has gone silent past the watchdog gap (no Stop received), release master exactly like a Stop.
+   * PURE-ish: only reads `now` + the clock's lastTickTime; no AudioContext reads beyond what the
+   * release path already does. NO setInterval/setTimeout — this rides the existing lookahead pump.
+   */
+  checkMidiClockWatchdog(now: number): void {
+    if (!this.built || !this.midiClockMaster) return;
+    if (this.midiClock.staleSince(now, Studio.MIDI_CLOCK_WATCHDOG_GAP_S)) {
+      this.midiClock.stop();
+      this.releaseMidiMaster();
+    }
+  }
+
+  /** Shared MIDI-master release (Stop + watchdog): clear master, recompute follower priority, and
+   *  re-anchor the Monarch if it is now internal and running. */
+  private releaseMidiMaster(): void {
     this.midiClockMaster = false;
     this.rebuildFollowers({ cables: this.store.getState().cables });
     // The Monarch's external-clock advance left nextEventTime=Infinity; if it is now internal and
@@ -828,9 +868,15 @@ export class Studio {
    *   retrigger=false (legato / held-note fall-back): pitch moves but the gate is already
    *               high, so do NOT re-raise it — no EG re-attack, matching classic SynthStack mono.
    */
-  monarchNoteOn(noteVv: number, retrigger: boolean): void {
+  monarchNoteOn(noteVv: number, retrigger: boolean, velGain?: number, glideS?: number): void {
     const t = this.context.audioContext.currentTime + 0.03;
-    this.monarch.setPitchAt(noteVv, t, true);
+    // Keyboard glide (G1): pass the SEPARATE keyboard glideS as the setPitchAt override (undefined =>
+    // the module's own glideTimeS, the sequencer value — preserves current behavior).
+    this.monarch.setPitchAt(noteVv, t, true, glideS);
+    // Velocity (G1): write velocity BEFORE raising the gate so the VCA sees it at attack. velGain is
+    // a GAIN that SCALES the EG->VCA path (units.velocityToGain, unity at 100); undefined => leave
+    // the velocity gain unchanged. No note-off reset needed — the EG returns the VCA to silence.
+    if (velGain !== undefined) this.monarch.velocityAt(velGain, t);
     if (retrigger) this.monarch.gateAt(true, t);
   }
 
@@ -846,9 +892,10 @@ export class Studio {
    *   glide=true: setPitchAt reads the module's glideTimeS and only glides when GLIDE is up.
    *   retrigger=false (legato / held-note fall-back): pitch moves, gate stays high (no re-attack).
    */
-  courierNoteOn(noteVv: number, retrigger: boolean): void {
+  courierNoteOn(noteVv: number, retrigger: boolean, velGain?: number, glideS?: number): void {
     const t = this.context.audioContext.currentTime + 0.03;
-    this.courier.setPitchAt(noteVv, t, true);
+    this.courier.setPitchAt(noteVv, t, true, glideS); // glideS => keyboard glide override (G1)
+    if (velGain !== undefined) this.courier.velocityAt(velGain, t); // velocity BEFORE the gate (G1)
     if (retrigger) {
       this.courier.gateAt(true, t);
     } else if (this.courier.multiTrig) {
@@ -972,6 +1019,10 @@ export class Studio {
   // The recorder is owned by StudioContext (it taps the private softClip); these only
   // delegate. powerOff (above) already routes through context.powerOff, which auto-stops
   // and flushes a recording in progress before suspend — no extra stop is needed here.
+
+  setRecordFormat(format: RecordFormat): void {
+    this.context.setRecordFormat(format);
+  }
 
   startRecording(): boolean {
     return this.context.startRecording();
@@ -1101,6 +1152,16 @@ export class Studio {
     this.samplerSeq.setPattern(pattern);
   }
 
+  /** Wrap length 1..16 (engine clamps). Columns >= numSteps stay in the pattern but unplayed. */
+  setDrumNumSteps(n: number): void {
+    this.samplerSeq.setNumSteps(n);
+  }
+
+  /** Drum swing 0..100 (50 = none). Offsets odd columns; conversion via units.swingOffsetS. */
+  setDrumSwing(pct: number): void {
+    this.samplerSeq.setSwing(pct);
+  }
+
   /** Live read for the RUN/STOP latch lamp (user playing flag, mirrored into the store). */
   drumSeqPlaying(): boolean {
     return this.samplerSeq.isPlaying();
@@ -1112,13 +1173,15 @@ export class Studio {
   }
 
   /**
-   * Render the factory one-shots and register their ±1.0 buffers in factoryBuffers.
-   * The audible bytes are NEVER persisted — playback resolves the buffer from the
-   * in-memory factoryBuffers map (a 'factory-' id; see reloadPadBuffers), and the pad's
-   * display name lives in state.sampler.pads. Awaited at power-on.
+   * Render EVERY kit's factory one-shots (G6) and register their ±1.0 buffers in the flat
+   * factoryBuffers map. The audible bytes are NEVER persisted — playback resolves the
+   * buffer from this in-memory map (a 'factory-' id; see reloadPadBuffers / selectKit), and
+   * the pad's display name lives in state.sampler.pads. Awaited at power-on. Registering
+   * every kit up front makes a kit-select / per-pad pick a zero-render lookup; ids are
+   * globally unique across kits, so the flat map never collides.
    */
   async loadFactorySamples(): Promise<void> {
-    const fs = await renderFactorySamples();
+    const fs = await renderAllKits();
     for (const f of fs) {
       this.factoryBuffers.set(f.id, f.buffer);
     }
@@ -1187,6 +1250,12 @@ export class Studio {
     // mode SEQ/ARP gates whether the arp runs: pass the whole widened arpMode through, but force
     // OFF unless mode is ARP (the engine CourierArpMode is the same widened union).
     this.courierSeq.arpMode = c.mode === 'ARP' ? c.arpMode : 'OFF';
+    // Drum grid var-length + swing — pushed on every store notification (mirrors the monarch
+    // endStep/swing mirror above). Coalesce guarantees the slice + both fields exist on every
+    // load path; both are commit-only controls so there is no live-drag clobber to guard.
+    const samp = coalesceSamplerState(s.sampler);
+    this.samplerSeq.setNumSteps(samp.numSteps);
+    this.samplerSeq.setSwing(samp.swingPct);
   }
 
   /** Resolve a control-bearing module instance by id (the named voice fields). Called only
@@ -1257,6 +1326,9 @@ export class Studio {
     // was already restored to the store by this.store.setState(state) at the top; the live
     // samplerSeq boots STOPPED. INIT halts a running grid via the bridge's resetAll (drumStop).
     this.samplerSeq.setPattern(samp.pattern);
+    // Drum var-length + swing from the coalesced slice (declarative restore; never auto-runs).
+    this.samplerSeq.setNumSteps(samp.numSteps);
+    this.samplerSeq.setSwing(samp.swingPct);
     this.tempoLink = state.mixer.tempoLink;
     this.applyTempoLink();
     // FX: push the whole effects slice into the graph (coalesce fills an older tree's missing

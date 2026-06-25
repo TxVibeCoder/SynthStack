@@ -287,7 +287,7 @@ describe('coalesceStudioState — load-safety net totality', () => {
     const s = coalesceStudioState(older);
     expect(s.controls.monarch!.MON_VOLUME).toBe(0.5);
     expect(s.transport.anvil.steps).toHaveLength(8);
-    expect(s.keyboard).toEqual({ octave: 0 });
+    expect(s.keyboard).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
     expect(JSON.parse(JSON.stringify(s))).toEqual(s);
   });
 

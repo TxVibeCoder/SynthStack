@@ -57,3 +57,47 @@ describe('MidiClock — 24-PPQN ÷6 → 16th notes', () => {
     expect(c.tempoBpm).toBeLessThan(148);
   });
 });
+
+describe('MidiClock — watchdog stale predicate (lastTickTime + staleSince)', () => {
+  it('lastTickTime tracks the most recent tick and resets to -1 on start/reset', () => {
+    const c = new MidiClock();
+    expect(c.lastTickTime).toBe(-1);
+    c.start();
+    expect(c.lastTickTime).toBe(-1); // start re-arms — no tick seen yet
+    c.onTick(0.5);
+    expect(c.lastTickTime).toBe(0.5);
+    c.onTick(0.6);
+    expect(c.lastTickTime).toBeCloseTo(0.6);
+    c.reset();
+    expect(c.lastTickTime).toBe(-1);
+  });
+
+  it('a stopped clock is never stale (no Start, or after Stop)', () => {
+    const c = new MidiClock();
+    // never started
+    expect(c.staleSince(100, 0.5)).toBe(false);
+    c.start();
+    c.onTick(0);
+    c.stop();
+    expect(c.staleSince(100, 0.5)).toBe(false); // huge gap but not running
+  });
+
+  it('a running clock with no tick yet is never stale', () => {
+    const c = new MidiClock();
+    c.start(); // running, but lastTickTime still -1
+    expect(c.staleSince(100, 0.5)).toBe(false);
+  });
+
+  it('after ticks then a long gap reports stale; a fresh tick clears it', () => {
+    const c = new MidiClock();
+    c.start();
+    run(c, 24, 120); // settle, last tick lands within the first beat
+    const last = c.lastTickTime;
+    expect(c.staleSince(last + 0.1, 0.5)).toBe(false); // small jitter, not stale
+    expect(c.staleSince(last + 0.49, 0.5)).toBe(false); // just under the gap
+    expect(c.staleSince(last + 0.5, 0.5)).toBe(true); // at the gap -> stale
+    expect(c.staleSince(last + 2.0, 0.5)).toBe(true); // well past -> stale
+    c.onTick(last + 2.0); // a fresh tick arrives
+    expect(c.staleSince(last + 2.1, 0.5)).toBe(false); // cleared
+  });
+});

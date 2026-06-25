@@ -48,6 +48,7 @@
 
 import { Studio } from '../engine/studio';
 import type { MasterFxId } from '../engine/fx/masterFxChain';
+import type { RecordFormat } from '../engine/recordHelpers';
 import {
   coalesceCourierModAssignState,
   coalesceCourierSequencerState,
@@ -71,6 +72,7 @@ import {
   type StudioStore,
 } from '../state/studioState';
 import { MonoVoice, noteToVv, type VoiceAction } from '../engine/voice/monoVoice';
+import { velocityToGain } from '../engine/units';
 import { reportError } from './errorLog';
 import { WebMidiInput, type MidiStatus } from './midi/webMidiInput';
 import type { EgMode } from '../engine/sequencers/cascadeClock';
@@ -94,7 +96,7 @@ import {
   slotStorageKey,
 } from '../state/presets';
 import { getFactoryPreset } from '../state/factoryPresets';
-import { FACTORY_KIT } from '../engine/factorySamples';
+import { KIT_LIBRARY, kitById } from '../engine/factorySamples';
 import { MODULES, controlDefaultModules } from '../engine/modules/moduleConfig';
 
 /**
@@ -221,6 +223,14 @@ class EngineBridge {
   private readonly voice = new MonoVoice();
   private readonly midi = new WebMidiInput();
   private keyboardOctave = 0;
+  /** Separate keyboard/MIDI live-play glide time (s), read in applyVoiceAction (G1). Seeded from
+   *  the persisted keyboard slice on power-on / load; the SEQUENCER keeps MON_GLIDE (untouched). */
+  private keyboardGlideS = 0;
+  /** Last note-ON velocity (raw 1..127) — the side-store for the legato fall-back: the pure
+   *  MonoVoice allocator stays velocity-AGNOSTIC (its documented contract), so when noteOff falls
+   *  back to a still-held note (gate stays 'on'), there is no fresh velocity to re-read. Reuse the
+   *  most-recent note-on velocity for that legato re-pitch (G1). */
+  private lastNoteVelocity = 100;
   /** Which voice the on-screen piano + Web MIDI play. Both feed the ONE shared mono stack
    *  (this.voice); only the engine WRITE in applyVoiceAction is re-targeted, so the octave,
    *  legato/last-note semantics and step-record arm are identical for either voice. RUNTIME
@@ -663,13 +673,41 @@ class EngineBridge {
   // (recording is runtime-only, orthogonal to INIT, which leaves the context running).
 
   /**
+   * The selected capture format ('webm' lossy default | 'wav' lossless). RUNTIME-ONLY (never
+   * serialized; recording is orthogonal to the saved tree). Held here as the UI's source of
+   * truth so the selector reflects the choice before power-on, and forwarded to the engine
+   * recorder on selection (re-asserted at start so a pre-power pick still lands).
+   */
+  private recordFormat: RecordFormat = 'webm';
+
+  /**
+   * Select the capture format for the next take. Stores the choice (UI snapshot source) and
+   * forwards to the engine (no-op unpowered — re-asserted at the next start). The engine recorder
+   * ignores a mid-record change (the in-flight take keeps its format); the new pick applies to the
+   * next start().
+   */
+  setRecordFormat(format: RecordFormat): void {
+    this.recordFormat = format;
+    if (this._powered) this.studio.setRecordFormat(format);
+  }
+
+  /** Current capture-format selection (UtilityStrip selector snapshot source). */
+  getRecordFormat(): RecordFormat {
+    return this.recordFormat;
+  }
+
+  /**
    * Start capturing the master output. No-op while unpowered (the engine recorder only
    * exists post-power-on inside StudioContext). The boolean studio.startRecording() returns
    * is discarded at the seam — the UI reads truth from getRecordingState(). Never throws
-   * (the engine recorder degrades to false when MediaRecorder is unavailable).
+   * (the engine recorder degrades to false when MediaRecorder is unavailable). Re-asserts the
+   * selected format first so a format picked before power-on still applies to this take.
    */
   startRecording(): void {
-    if (this._powered) this.studio.startRecording();
+    if (this._powered) {
+      this.studio.setRecordFormat(this.recordFormat);
+      this.studio.startRecording();
+    }
   }
 
   /**
@@ -693,6 +731,22 @@ class EngineBridge {
       : { recording: false, elapsedMs: 0 };
   }
 
+  /**
+   * Is external MIDI clock currently driving the studio (the CLOCK MASTER indicator polls this on
+   * MIDI_POLL_MS)? Guarded false when unpowered / before first power-on — reads this.studioInstance
+   * DIRECTLY (never the lazy getter), parity with getRecordingState, so a poll never constructs a
+   * Studio and never throws. MIDI master is implicit: sending 0xFA makes the studio master, there is
+   * no opt-in toggle.
+   */
+  isMidiClockMaster(): boolean {
+    return this._powered && this.studioInstance ? this.studioInstance.isMidiClockMaster() : false;
+  }
+
+  /** Smoothed external-MIDI tempo estimate (BPM); 120 default when unpowered / no Studio yet. */
+  getMidiClockTempo(): number {
+    return this._powered && this.studioInstance ? this.studioInstance.midiClock.tempoBpm : 120;
+  }
+
   // ---- keyboard / Web MIDI note surface (feature: keyboard; consumed by KeyboardPanel) --
   // The on-screen piano AND Web MIDI both call noteOn/noteOff so they share ONE mono
   // last-note stack (this.voice). The allocator runs UNCONDITIONALLY (so the held-note
@@ -708,7 +762,10 @@ class EngineBridge {
    */
   noteOn(noteNumber: number, velocity: number): void {
     if (velocity === 0) return this.noteOff(noteNumber);
-    this.applyVoiceAction(this.voice.noteOn(noteNumber)); // sounds the note (also while recording)
+    // Capture velocity BEFORE the allocator (which is velocity-agnostic by contract) and thread it
+    // SEPARATELY into the engine write (G1). Remember it for the legato fall-back side-store.
+    this.lastNoteVelocity = velocity;
+    this.applyVoiceAction(this.voice.noteOn(noteNumber), velocity); // sounds the note (also while recording)
     // Monarch step-record: while armed, the pressed note ALSO writes the cursor step and
     // advances it (hardware-style step record). Uses the RAW pressed note (not the mono
     // allocator's result) + the same octave the live voice plays, so what you hear is what
@@ -747,6 +804,45 @@ class EngineBridge {
   /** Current keyboard octave (KeyboardPanel snapshot source). Coalesce-safe before power-on. */
   getKeyboardOctave(): number {
     return coalesceKeyboardState(this.store.getState().keyboard).octave;
+  }
+
+  /**
+   * MIDI input CHANNEL filter (G1): -1 = OMNI (every channel); 0..15 = accept only that channel.
+   * Persists the (coalesce-clamped) value to the keyboard slice AND pushes it to the live Web MIDI
+   * shell so it takes effect immediately (no re-enable needed). System real-time (clock/transport)
+   * always passes — the shell never gates it. Safe unpowered (store + shell only; the shell ignores
+   * it until a device is delivering). The persisted channel is re-applied inside enableMidi().
+   */
+  setMidiChannel(channel: number): void {
+    const midiChannel = coalesceKeyboardState({ midiChannel: channel }).midiChannel;
+    this.midi.setChannelFilter(midiChannel < 0 ? null : midiChannel);
+    const s = this.store.getState();
+    s.keyboard = coalesceKeyboardState({ ...s.keyboard, midiChannel });
+    this.store.setState(s);
+  }
+
+  /** Current MIDI channel filter (-1 OMNI / 0..15). Coalesce-safe before power-on. */
+  getMidiChannel(): number {
+    return coalesceKeyboardState(this.store.getState().keyboard).midiChannel;
+  }
+
+  /**
+   * SEPARATE keyboard/MIDI live-play GLIDE time in seconds (0..1; 0 = off), G1. Distinct from the
+   * Monarch MON_GLIDE knob (which the SEQUENCER keeps): persists to the keyboard slice + caches the
+   * live value read by applyVoiceAction, so a held note's NEXT keypress glides over this time. Does
+   * NOT re-pitch a currently-held note (hardware-like; mirrors setKeyboardOctave). Safe unpowered.
+   */
+  setKeyboardGlide(glideS: number): void {
+    const v = coalesceKeyboardState({ glideS }).glideS;
+    this.keyboardGlideS = v;
+    const s = this.store.getState();
+    s.keyboard = coalesceKeyboardState({ ...s.keyboard, glideS: v });
+    this.store.setState(s);
+  }
+
+  /** Current keyboard glide time (s). Coalesce-safe before power-on. */
+  getKeyboardGlide(): number {
+    return coalesceKeyboardState(this.store.getState().keyboard).glideS;
   }
 
   /**
@@ -840,6 +936,10 @@ class EngineBridge {
    * (Node / jsdom / non-secure context).
    */
   enableMidi(): Promise<MidiStatus> {
+    // Apply the persisted channel filter to the shell BEFORE wiring callbacks, so the first
+    // delivered message already honors the saved CHANNEL selection (G1).
+    const ch = coalesceKeyboardState(this.store.getState().keyboard).midiChannel;
+    this.midi.setChannelFilter(ch < 0 ? null : ch);
     return this.midi.enable(
       (note, velocity) => this.noteOn(note, velocity),
       (note) => this.noteOff(note),
@@ -902,12 +1002,18 @@ class EngineBridge {
    *   gate 'off'       -> {monarch,courier}NoteOff()
    *   gate 'unchanged' -> nothing (a held lower note released; the voice did not change)
    */
-  private applyVoiceAction(a: VoiceAction): void {
+  private applyVoiceAction(a: VoiceAction, velocity: number = this.lastNoteVelocity): void {
     if (!this._powered) return;
     if (a.gate === 'on' && a.note != null) {
       const vv = noteToVv(a.note) + this.keyboardOctave;
-      if (this.keyboardTarget === 'courier') this.studio.courierNoteOn(vv, a.retrigger);
-      else this.studio.monarchNoteOn(vv, a.retrigger);
+      // Velocity -> VCA gain (G1): map the raw 1..127 to a velocity GAIN ONCE here (unity at 100),
+      // and pass the SEPARATE keyboard glide so the live path glides on KB GLIDE, not the seq's
+      // MON_GLIDE. A legato fall-back (noteOff -> next held note, gate 'on') reuses lastNoteVelocity
+      // via the default arg.
+      const velGain = velocityToGain(velocity);
+      const glideS = this.keyboardGlideS;
+      if (this.keyboardTarget === 'courier') this.studio.courierNoteOn(vv, a.retrigger, velGain, glideS);
+      else this.studio.monarchNoteOn(vv, a.retrigger, velGain, glideS);
     } else if (a.gate === 'off') {
       if (this.keyboardTarget === 'courier') this.studio.courierNoteOff();
       else this.studio.monarchNoteOff();
@@ -1264,24 +1370,72 @@ class EngineBridge {
    */
   assignFactoryToPad(padIndex: number, factoryId: string): void {
     if (padIndex < 0 || padIndex > 7) return; // guard the pad index
-    // Guard the id against the manifest; a non-manifest/unknown id (incl. any user id) is a no-op.
-    const entry = FACTORY_KIT.find((e) => e.id === factoryId);
+    // Guard the id against the CURRENT kit's 8 pads; a non-current/unknown id (incl. any
+    // user id) is a no-op. The per-pad picker only ever offers the current kit's sounds.
+    const kitId = coalesceSamplerState(this.store.getState().sampler).kitId;
+    const kit = kitById(kitId) ?? KIT_LIBRARY[0]!;
+    const entry = kit.pads.find((e) => e.id === factoryId);
     if (!entry) return;
-    // Immediate engine write when powered (no-op unpowered) — resolves factoryBuffers in-memory.
-    if (this._powered) this.studio.loadPadBufferFromFactory(padIndex, factoryId);
     const s = this.store.getState();
     s.sampler = coalesceSamplerState(s.sampler);
-    const prev = s.sampler.pads[padIndex] ?? defaultPad();
-    const prevId = prev.sampleId;
-    s.sampler.pads[padIndex] = { ...prev, sampleId: entry.id, sampleName: entry.name };
+    // Re-point ONE pad (extracted core, shared with selectKit) and free its replaced user
+    // sample after the single commit (last-action-wins; the per-pad pick wins over a kit-select).
+    const prevId = this._repointPadInState(s, padIndex, entry);
     this.store.setState(s);
-    // Free the REPLACED user sample's bytes — but only when truly unreferenced (FIX 1). A
-    // factory/empty prevId frees nothing (isUserSampleUnreferenced returns false for them), and a
-    // user id still on another pad in `s` or referenced by a saved slot is kept. `s` already
-    // carries the new (factory) id on padIndex, so the gate sees the post-commit live state.
     if (prevId && prevId !== entry.id && this.isUserSampleUnreferenced(prevId, [s])) {
       void sampleBackend.delete(prevId);
     }
+  }
+
+  /**
+   * Per-pad re-point CORE (G6) — shared by assignFactoryToPad (1×) and selectKit (8×). Writes
+   * the in-memory ±1.0 buffer into the engine (when powered) and mutates pad `padIndex` of the
+   * ALREADY-COALESCED working state `s` to the factory entry's {id,name} (LEVEL/TUNE/LOOP kept).
+   * Returns the REPLACED pad's prior sampleId so the caller can reference-gate freeing its bytes
+   * AFTER the single setState (so the gate sees post-commit live state). Does NOT setState — the
+   * caller batches one commit (avoids 8 separate setState churn on a kit select).
+   */
+  private _repointPadInState(
+    s: StudioState,
+    padIndex: number,
+    entry: { id: string; name: string },
+  ): string | null {
+    if (this._powered) this.studio.loadPadBufferFromFactory(padIndex, entry.id);
+    const prev = s.sampler.pads[padIndex] ?? defaultPad();
+    const prevId = prev.sampleId;
+    s.sampler.pads[padIndex] = { ...prev, sampleId: entry.id, sampleName: entry.name };
+    return prevId;
+  }
+
+  /**
+   * Global KIT-SELECT (G6) — re-point all 8 pads at the chosen kit's 8 sounds at once + persist
+   * the selection. Guards the id against KIT_LIBRARY (unknown -> no-op). 8× the extracted per-pad
+   * core then ONE setState (no per-pad churn). Any replaced UNREFERENCED user sample is freed
+   * after the commit. Per-pad KIT override + user-file LOAD still win afterward (last-action-wins).
+   */
+  selectKit(kitId: string): void {
+    const kit = kitById(kitId);
+    if (!kit) return; // unknown kit id -> no-op
+    const s = this.store.getState();
+    s.sampler = coalesceSamplerState(s.sampler);
+    const replaced: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      const entry = kit.pads[i];
+      if (!entry) continue;
+      const prevId = this._repointPadInState(s, i, entry);
+      if (prevId && prevId !== entry.id) replaced.push(prevId);
+    }
+    s.sampler.kitId = kit.id;
+    this.store.setState(s);
+    // Free each replaced user sample only when truly unreferenced (post-commit live state in `s`).
+    for (const prevId of replaced) {
+      if (this.isUserSampleUnreferenced(prevId, [s])) void sampleBackend.delete(prevId);
+    }
+  }
+
+  /** Current selected kit id (SamplerPanel KIT-SELECT snapshot source). Coalesces missing slice. */
+  getKitId(): string {
+    return coalesceSamplerState(this.store.getState().sampler).kitId;
   }
 
   /**
@@ -1383,6 +1537,42 @@ class EngineBridge {
     return coalesceSamplerState(this.store.getState().sampler).seqRunning;
   }
 
+  /**
+   * Wrap length 1..16 (default 16). Commit-only LENGTH control. Immediate engine write when
+   * powered + ONE coalesced store commit (mirrors the drum-step bridge idiom). Columns >=
+   * numSteps are RETAINED in the pattern but greyed + unplayed (mirror monarch endStep).
+   */
+  setDrumNumSteps(n: number): void {
+    if (this._powered) this.studio.setDrumNumSteps(n);
+    const s = this.store.getState();
+    s.sampler = coalesceSamplerState(s.sampler);
+    s.sampler.numSteps = Math.max(1, Math.min(16, Math.round(n)));
+    this.store.setState(s);
+  }
+
+  /**
+   * Drum swing 0..100 (50 = none). Commit-only (no live-drag guard needed — syncTransportConfig
+   * only reads the committed store value). Immediate engine write when powered + ONE coalesced
+   * store commit.
+   */
+  setDrumSwing(pct: number): void {
+    if (this._powered) this.studio.setDrumSwing(pct);
+    const s = this.store.getState();
+    s.sampler = coalesceSamplerState(s.sampler);
+    s.sampler.swingPct = Math.max(0, Math.min(100, pct));
+    this.store.setState(s);
+  }
+
+  /** Persisted wrap length (DrumMachinePanel snapshot source). */
+  getDrumNumSteps(): number {
+    return coalesceSamplerState(this.store.getState().sampler).numSteps;
+  }
+
+  /** Persisted swing amount (DrumMachinePanel snapshot source). */
+  getDrumSwing(): number {
+    return coalesceSamplerState(this.store.getState().sampler).swingPct;
+  }
+
   // ---- reference-aware user-sample-byte freeing (FIX 1: never delete bytes still in use) ----
   // EVERY user-sample-byte delete (loadPadSample replace, resetAll/INIT, applyPreset load) is
   // gated through isUserSampleUnreferenced so we never free bytes a LIVE state or ANY saved slot
@@ -1416,20 +1606,34 @@ class EngineBridge {
     try {
       if (typeof localStorage === 'undefined') return referenced;
       for (const name of this.readSlotIndex()) {
-        try {
-          const raw = localStorage.getItem(slotStorageKey(name));
-          if (raw == null) continue;
-          const wrapper = JSON.parse(raw) as Partial<SlotWrapper>;
-          const state = parseSlot(JSON.stringify(wrapper.state));
-          for (const id of this.currentUserSampleIds(state)) referenced.add(id);
-        } catch {
-          /* skip a single malformed slot; keep scanning the rest */
-        }
+        const state = this.readSlotState(name);
+        if (!state) continue; // skip a single missing/malformed slot; keep scanning the rest
+        for (const id of this.currentUserSampleIds(state)) referenced.add(id);
       }
     } catch {
       /* absent / blocked localStorage — treat as no slot references (never throw) */
     }
     return referenced;
+  }
+
+  /**
+   * Read a single SAVED slot's StudioState through the existing slot read path: the g3 wrapper
+   * (`{version, savedAt, state}`) at slotStorageKey(name), with wrapper.state routed through
+   * parseSlot's coalesce safety net (its arg is the JSON serializeSlot produced on save). Returns
+   * null on an absent slot, an absent/blocked localStorage, or ANY parse failure — never throws.
+   * This is the slot-state source shared by slotReferencedSampleIds (the free gate) and exportSlot
+   * (the per-slot bundle), so a slot read is defined in exactly one place.
+   */
+  private readSlotState(name: string): StudioState | null {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const raw = localStorage.getItem(slotStorageKey(name));
+      if (raw == null) return null;
+      const wrapper = JSON.parse(raw) as Partial<SlotWrapper>;
+      return parseSlot(JSON.stringify(wrapper.state));
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1537,7 +1741,12 @@ class EngineBridge {
     // values with the stale drag's. Cancel the pending mirror and drop its staged values.
     this.cancelStoreMirror();
     this.releaseAllNotes();
-    this.keyboardOctave = coalesceKeyboardState(state.keyboard).octave;
+    const kb = coalesceKeyboardState(state.keyboard);
+    this.keyboardOctave = kb.octave;
+    // Seed the SEPARATE keyboard glide + push the MIDI channel filter to the shell (G1), the same
+    // way octave is seeded here — applyState never restores these (the keyboard slice is store-only).
+    this.keyboardGlideS = kb.glideS;
+    this.midi.setChannelFilter(kb.midiChannel < 0 ? null : kb.midiChannel);
     this.store.setState(state);
     if (this._powered) {
       this.studio.applyState(state);
@@ -1666,6 +1875,29 @@ class EngineBridge {
       const bundle = buildBundle(state, entries); // g1: assemble the envelope
       const text = JSON.stringify(bundle);
       const filename = buildPresetFilename(name ?? 'setup', this.timestampNow());
+      this.triggerJsonDownload(text, filename);
+    } catch {
+      /* serialize / encode / DOM failure — silent no-op (export is best-effort) */
+    }
+  }
+
+  /**
+   * Export a SAVED localStorage slot (NOT the live setup) as a portable .json bundle. Reads the
+   * slot's StudioState via readSlotState, then runs the EXACT exportSetup pipeline against it:
+   * collectUserSampleIds -> exportSamples (base64 the referenced USER bytes from IndexedDB) ->
+   * buildBundle -> triggerJsonDownload. An absent/corrupt/unreadable slot is a silent no-op (no
+   * download, no throw); the whole body is try/catch like exportSetup. No new state — this just
+   * sources `state` from a slot instead of this.store.getState().
+   */
+  async exportSlot(name: string): Promise<void> {
+    try {
+      const state = this.readSlotState(name);
+      if (!state) return; // unknown / corrupt / blocked slot — silent no-op
+      const ids = collectUserSampleIds(state); // distinct non-factory pad ids
+      const entries = await exportSamples(sampleBackend, ids); // gather + base64 (never throws)
+      const bundle = buildBundle(state, entries); // assemble the envelope
+      const text = JSON.stringify(bundle);
+      const filename = buildPresetFilename(name, this.timestampNow());
       this.triggerJsonDownload(text, filename);
     } catch {
       /* serialize / encode / DOM failure — silent no-op (export is best-effort) */

@@ -9,10 +9,16 @@
  */
 
 import { loadWorklets } from '../../src/engine/context';
-import { renderFactorySamples, FACTORY_KIT } from '../../src/engine/factorySamples';
+import {
+  renderFactorySamples,
+  renderAllKits,
+  FACTORY_KIT,
+  KIT_LIBRARY,
+} from '../../src/engine/factorySamples';
 import { MonarchModule } from '../../src/engine/modules/monarch';
 import { AnvilModule } from '../../src/engine/modules/anvil';
 import { CascadeModule } from '../../src/engine/modules/cascade';
+import { CourierModule } from '../../src/engine/modules/courier';
 import { SamplerModule } from '../../src/engine/modules/sampler';
 import { StudioEndpointRegistry } from '../../src/engine/modules/registry';
 import { buildJackIndex, RouterBinding } from '../../src/engine/router';
@@ -26,6 +32,7 @@ import type { ModuleDef } from '../../data/schema';
 import monarchDef from '../../data/monarch.json';
 import anvilDef from '../../data/anvil.json';
 import cascadeDef from '../../data/cascade.json';
+import courierDef from '../../data/courier.json';
 import samplerDef from '../../data/sampler.json';
 import {
   detectOnsets,
@@ -36,6 +43,7 @@ import {
   zeroCrossFreq,
 } from '../helpers/spectral';
 import { SR, buildModule, envelope, risingEdges, type AudioTestResult } from './harness';
+import { velocityToGain } from '../../src/engine/units';
 
 // AudioTests.tsx imports AudioTestResult from here — keep it on this module's public surface.
 export type { AudioTestResult } from './harness';
@@ -132,6 +140,94 @@ async function monarchGateNoClick(): Promise<AudioTestResult> {
     name: 'Monarch EG gate: one onset, envelope tracks the one-pole profile (no clicks)',
     pass,
     detail: `onsets=${onsets.length} maxProfileDev=${(maxDev * 100).toFixed(0)}% at t=${devAt.toFixed(3)}s`,
+  };
+}
+
+async function monarchVelocity(): Promise<AudioTestResult> {
+  // G1: a higher note-on velocity yields a MEASURABLY louder VCA output DURING the note, AND the
+  // on-screen constant velocity (100) reproduces today's level (no regression vs the pre-G1
+  // gate-only path). velocityToGain(100)=unity, so a vel=100 note == a plain gate (no velocity write).
+  // THE BUG-LOCK: at vel=127, after the gate releases and the EG decays, the VCA returns to
+  // ~silence. The old parallel-DC-offset code left vcaCtl partially open (continuous oscillator
+  // bleed) — this tail measurement FAILS on that code and passes on the velocity-SCALE fix.
+  const GATE_ON = 0.1;
+  const GATE_OFF = 1.3;
+  const render = async (setVel: ((mod: MonarchModule) => void) | null): Promise<Float32Array> => {
+    const { mod, render } = await buildModule(2.0, MonarchModule, monarchDef);
+    mod.setControl('MON_VCA_MODE', 'EG');
+    mod.setControl('MON_ATTACK', 0.02);
+    mod.setControl('MON_DECAY', 0.2); // post-release fall to ~0 well before the 2.0 s tail window
+    mod.setControl('MON_SUSTAIN', 'ON'); // gateHold sustains at peak while the gate is high
+    mod.setControl('MON_VCF_CUTOFF', 8000);
+    mod.setControl('MON_VOLUME', 0.8);
+    mod.gateAt(true, GATE_ON);
+    if (setVel) setVel(mod);
+    mod.gateAt(false, GATE_OFF); // release so the EG decays to 0 (bug-lock tail)
+    mod.outputTap('MON_VCA_OUT').connect((mod.ctx as OfflineAudioContext).destination);
+    return render();
+  };
+  const sustainRms = (buf: Float32Array) => rms(buf, Math.floor(0.4 * SR), Math.floor(1.2 * SR));
+  const tailRms = (buf: Float32Array) => rms(buf, Math.floor(1.8 * SR), Math.floor(2.0 * SR));
+  const hiBuf = await render((mod) => mod.velocityAt(velocityToGain(127), GATE_ON));
+  const loBuf = await render((mod) => mod.velocityAt(velocityToGain(32), GATE_ON));
+  const ref100Buf = await render((mod) => mod.velocityAt(velocityToGain(100), GATE_ON));
+  const gateOnlyBuf = await render(null); // today's path: gate, no velocity write
+  const hi = sustainRms(hiBuf);
+  const lo = sustainRms(loBuf);
+  const ref100 = sustainRms(ref100Buf);
+  const gateOnly = sustainRms(gateOnlyBuf);
+  const hiTail = tailRms(hiBuf); // THE LOCK: post-release tail at vel 127
+  const louder = hi > lo * 1.1; // a clearly audible step up DURING the note
+  const noRegression = Math.abs(ref100 - gateOnly) / Math.max(gateOnly, 1e-6) < 0.02; // vel100 == today
+  const tailSilent = hiTail < hi * 0.02; // returns to ~silence (no residual DC-offset bleed)
+  return {
+    name: 'Monarch velocity: vel127 louder than vel32, vel100 == today, vel127 tail silent (G1 lock)',
+    pass: louder && noRegression && tailSilent,
+    detail: `rms hi=${hi.toFixed(3)} lo=${lo.toFixed(3)} vel100=${ref100.toFixed(3)} gateOnly=${gateOnly.toFixed(3)} hiTail=${hiTail.toFixed(4)}`,
+  };
+}
+
+async function courierVelocity(): Promise<AudioTestResult> {
+  // G1 (Courier): the exact parallel — a higher note-on velocity is measurably louder DURING the
+  // note, vel=100 reproduces the plain-gate level (no regression), AND the bug-lock: at vel=127 the
+  // post-release tail returns to ~silence (FAILS on the old parallel-DC-offset code). The amp EG
+  // defaults to gateHold (sustains at peak while the gate is high), giving a steady window to measure.
+  const GATE_ON = 0.1;
+  const GATE_OFF = 1.3;
+  const render = async (setVel: ((mod: CourierModule) => void) | null): Promise<Float32Array> => {
+    const { mod, render } = await buildModule(2.0, CourierModule, courierDef);
+    mod.setControl('COU_A_ATTACK', 0.02);
+    mod.setControl('COU_A_DECAY', 0.2);
+    mod.setControl('COU_MIX_OSC1', 0.9);
+    mod.setControl('COU_MIX_OSC2', 0); // single deterministic source — exclude OSC2 / SUB / NOISE so
+    mod.setControl('COU_MIX_SUB', 0); // the RMS window reflects ONLY the velocity-scaled VCA, not
+    mod.setControl('COU_MIX_NOISE', 0); // a random noise floor (which would jitter the no-regression cmp)
+    mod.setControl('COU_CUTOFF', 8000);
+    mod.setControl('COU_VOLUME', 0.8);
+    mod.gateAt(true, GATE_ON);
+    if (setVel) setVel(mod);
+    mod.gateAt(false, GATE_OFF); // release so the amp EG decays to 0 (bug-lock tail)
+    mod.outputTap('COU_AUDIO_OUT').connect((mod.ctx as OfflineAudioContext).destination);
+    return render();
+  };
+  const sustainRms = (buf: Float32Array) => rms(buf, Math.floor(0.4 * SR), Math.floor(1.2 * SR));
+  const tailRms = (buf: Float32Array) => rms(buf, Math.floor(1.8 * SR), Math.floor(2.0 * SR));
+  const hiBuf = await render((mod) => mod.velocityAt(velocityToGain(127), GATE_ON));
+  const loBuf = await render((mod) => mod.velocityAt(velocityToGain(32), GATE_ON));
+  const ref100Buf = await render((mod) => mod.velocityAt(velocityToGain(100), GATE_ON));
+  const gateOnlyBuf = await render(null);
+  const hi = sustainRms(hiBuf);
+  const lo = sustainRms(loBuf);
+  const ref100 = sustainRms(ref100Buf);
+  const gateOnly = sustainRms(gateOnlyBuf);
+  const hiTail = tailRms(hiBuf);
+  const louder = hi > lo * 1.1;
+  const noRegression = Math.abs(ref100 - gateOnly) / Math.max(gateOnly, 1e-6) < 0.02;
+  const tailSilent = hiTail < hi * 0.02;
+  return {
+    name: 'Courier velocity: vel127 louder than vel32, vel100 == today, vel127 tail silent (G1 lock)',
+    pass: louder && noRegression && tailSilent,
+    detail: `rms hi=${hi.toFixed(3)} lo=${lo.toFixed(3)} vel100=${ref100.toFixed(3)} gateOnly=${gateOnly.toFixed(3)} hiTail=${hiTail.toFixed(4)}`,
   };
 }
 
@@ -628,10 +724,68 @@ async function factoryKit(): Promise<AudioTestResult> {
   };
 }
 
+async function allKits(): Promise<AudioTestResult> {
+  // G6 acceptance: EVERY kit in KIT_LIBRARY must render 8 voices in its manifest (pad)
+  // order, each a NON-SILENT mono buffer peak-normalized to ±1.0 (so the SamplerModule's
+  // ×5 lift is safe) and beginning at its transient (onset within ~20 ms of frame 0).
+  // Timbre/character per kit is a MANUAL LISTENING CHECKPOINT — only objective render
+  // properties are auto-asserted here. The flat renderAllKits() list (used by the engine's
+  // factoryBuffers registration) must carry globally-unique ids across all kits.
+  const peakOf = (buf: AudioBuffer): number => {
+    const d = buf.getChannelData(0);
+    let p = 0;
+    for (let i = 0; i < d.length; i++) {
+      const a = Math.abs(d[i]!);
+      if (a > p) p = a;
+    }
+    return p;
+  };
+  const onsetFrame = (d: Float32Array): number => {
+    for (let i = 0; i < d.length; i++) if (Math.abs(d[i]!) > 0.05) return i;
+    return d.length;
+  };
+  const onsetCap = Math.floor(0.02 * SR);
+
+  const details: string[] = [];
+  let allOk = true;
+  // Render the whole library ONCE (the engine does this at power-on) and group by kit.
+  const flat = await renderAllKits();
+  // Global uniqueness of ids across kits (the factory- predicate + flat map depend on it).
+  const flatIds = flat.map((f) => f.id);
+  const uniqueOk = new Set(flatIds).size === flatIds.length;
+  if (!uniqueOk) allOk = false;
+
+  for (const kit of KIT_LIBRARY) {
+    const voices = kit.pads.map((p) => flat.find((f) => f.id === p.id));
+    const countOk = voices.length === 8 && voices.every((v) => v != null);
+    const ids = voices.map((v) => v?.id);
+    const orderOk = ids.every((id, i) => id === kit.pads[i]!.id);
+    const peaks = voices.map((v) => (v ? peakOf(v.buffer) : 0));
+    const nonSilent = peaks.every((p) => p > 0.99);
+    const normalized = peaks.every((p) => p <= 1.0 + 1e-6);
+    const maxOnset = Math.max(...voices.map((v) => (v ? onsetFrame(v.buffer.getChannelData(0)) : 1e9)));
+    const onsetOk = maxOnset < onsetCap;
+    const kitOk = countOk && orderOk && nonSilent && normalized && onsetOk;
+    if (!kitOk) allOk = false;
+    details.push(
+      `${kit.id}[ok=${kitOk} n=${voices.length} minPk=${Math.min(...peaks).toFixed(2)} ` +
+        `maxPk=${Math.max(...peaks).toFixed(2)} maxOnset=${((maxOnset / SR) * 1000).toFixed(1)}ms]`,
+    );
+  }
+
+  return {
+    name: 'All kits (G6): every KIT_LIBRARY kit renders 8 voices, non-silent, ≤1.0, onset@0; ids globally unique',
+    pass: allOk,
+    detail: `kits=${KIT_LIBRARY.length} uniqueIds=${uniqueOk} ${details.join(' ')}`,
+  };
+}
+
 export const BATTERY: { name: string; run: () => Promise<AudioTestResult> }[] = [
   { name: 'monarch-voice', run: monarchVoiceBasics },
   { name: 'monarch-wobble', run: monarchWobble },
   { name: 'monarch-gate', run: monarchGateNoClick },
+  { name: 'monarch-velocity', run: monarchVelocity },
+  { name: 'courier-velocity', run: courierVelocity },
   { name: 'anvil-kick', run: anvilKick },
   { name: 'anvil-hat', run: anvilHat },
   { name: 'cascade-2v3', run: cascade2v3 },
@@ -644,6 +798,7 @@ export const BATTERY: { name: string; run: () => Promise<AudioTestResult> }[] = 
   { name: 'edge-detector', run: edgeDetector },
   { name: 'samp-trigger', run: sampTrigger },
   { name: 'factory-kit', run: factoryKit },
+  { name: 'all-kits', run: allKits },
 ];
 
 export async function runBattery(

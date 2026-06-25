@@ -172,3 +172,32 @@ export function swingOffsetS(swingPct: number, stepDurS: number): number {
 export function monarchStepDurS(bpm: number): number {
   return 60 / clamp(bpm, 20, 300) / 4;
 }
+
+/**
+ * MIDI / keyboard note-on velocity (1..127) -> a GAIN that SCALES the amp-EG contribution into the
+ * VCA (NOT a parallel DC offset). PURE + monotonic; UNITY at the on-screen reference velocity 100 so
+ * today's level is byte-unchanged, ~VELOCITY_GAIN_MAX at vel 127 (a touch louder) and ~VELOCITY_GAIN_MIN
+ * near vel 1 (quieter). vel 0 -> 0 (a vel-0 note-on is a running-status note-off, never sounded).
+ *
+ * G1 FIX: velocity now SCALES the (already-decaying) EG term rather than summing a held offset, so once
+ * the EG decays to 0 the velocity-scaled term is 0 too — no residual VCA bleed after note-off, and the
+ * gain only multiplies the envelope so there is no note-off click. A linear ramp anchored at 100=unity:
+ * 1..100 -> MIN..1, 100..127 -> 1..MAX.
+ *
+ * EARS / DECISION (G1 — flagged for the operator): the curve is a straightforward piecewise-LINEAR map
+ * anchored so vel 100 = unity (no preset/recipe/battery regression). The curve SHAPE (linear vs ^1.5
+ * perceptual) and the MIN/MAX range are the by-ear knobs the operator may want to turn.
+ */
+export const VELOCITY_GAIN_MAX = 1.3; // vel 127
+export const VELOCITY_GAIN_MIN = 0.25; // vel 1
+const VELOCITY_REF = 100; // on-screen / default velocity -> unity gain
+export function velocityToGain(velocity127: number): number {
+  const v = clamp(velocity127, 0, 127);
+  if (v <= 0) return 0;
+  if (v <= VELOCITY_REF) {
+    // 1..100 -> MIN..1 linearly (note: v=1 lands just above MIN, v=100 = 1)
+    return VELOCITY_GAIN_MIN + ((v - 1) / (VELOCITY_REF - 1)) * (1 - VELOCITY_GAIN_MIN);
+  }
+  // 100..127 -> 1..MAX linearly
+  return 1 + ((v - VELOCITY_REF) / (127 - VELOCITY_REF)) * (VELOCITY_GAIN_MAX - 1);
+}

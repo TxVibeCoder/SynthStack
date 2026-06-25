@@ -90,6 +90,14 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
     [onClose],
   );
 
+  // Export a SAVED slot (not the live setup) as a portable .json bundle — embeds the slot's
+  // referenced user-sample bytes via the same export codec EXPORT uses. Fire-and-forget like the
+  // other bridge actions; the bridge is no-throw on an absent/corrupt slot.
+  const onBundleSlot = useCallback((slotName: string) => {
+    void engineBridge.exportSlot(slotName);
+    setStatus(`Bundled "${slotName}"`);
+  }, []);
+
   const onDeleteSlot = useCallback(
     (slotName: string) => {
       if (confirmDelete === slotName) {
@@ -223,6 +231,15 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
                     onClick={() => onLoadSlot(slotName)}
                   >
                     <span className="preset-row-name">{slotName}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="preset-del"
+                    aria-label={`Export ${slotName} as bundle`}
+                    data-testid={`slot-bundle-${slotName}`}
+                    onClick={() => onBundleSlot(slotName)}
+                  >
+                    BUNDLE
                   </button>
                   <button
                     type="button"

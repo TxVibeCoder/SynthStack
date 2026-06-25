@@ -31,6 +31,7 @@ import { Button } from './controls/Button';
 import { engineBridge } from './engineBridge';
 import { useRecordingState } from './useStudio';
 import { formatElapsed } from '../engine/recordHelpers';
+import { useMidiStatus, midiCaption } from './keyboard/KeyboardPanel';
 
 const W = REGIONS.utilityStrip.w;
 const H = REGIONS.utilityStrip.h;
@@ -257,13 +258,20 @@ const InitButton = memo(function InitButton({ x, y }: { x: number; y: number }) 
   );
 });
 
-/** MIDI connection LED: unlit indicator only — the feature (and
- *  any Web MIDI permission prompt) lands with MIDI input itself. */
-const MidiLed = memo(function MidiLed({ x, y }: { x: number; y: number }) {
+/**
+ * MIDI connection LED: a PASSIVE mirror of the KeyboardPanel's MIDI status (G1). Polls
+ * engineBridge.getMidiStatus() via the SHARED useMidiStatus hook + colors the lamp by state
+ * (green = enabled, red = denied/unsupported, off = disabled) using the same midiCaption() the
+ * KeyboardPanel LED uses, so the two indicators can never disagree. It makes NO Web MIDI calls of
+ * its own — ENABLE MIDI on the keyboard panel is the only place the permission prompt fires.
+ */
+export const MidiLed = memo(function MidiLed({ x, y }: { x: number; y: number }) {
+  const status = useMidiStatus();
+  const { color } = midiCaption(status);
   return (
-    <g>
-      <title>MIDI input — coming soon (BACKLOG #6); lights when a device is connected</title>
-      <circle cx={x} cy={y} r={5} fill={COLORS.ledOff} stroke={COLORS.panelShadow} strokeWidth={1} />
+    <g data-testid="utility-midi-led" aria-label={`MIDI input ${status.state}`}>
+      <title>MIDI input status (mirrors the keyboard panel); enable it on the keyboard's ENABLE MIDI</title>
+      <circle cx={x} cy={y} r={5} fill={color} stroke={COLORS.panelShadow} strokeWidth={1} />
       <text
         x={x}
         y={y + 22}
@@ -411,6 +419,81 @@ export const RecordButton = memo(function RecordButton({
           {formatElapsed(elapsedMs)}
         </text>
       )}
+    </g>
+  );
+});
+
+/**
+ * RECORD FORMAT selector (WEBM | WAV): a two-segment toggle that picks the capture container for
+ * the NEXT take. WEBM = the lossy MediaRecorder/opus default (small, universally playable); WAV =
+ * the lossless in-browser PCM-tap capture (CAD-grade fidelity). Runtime-only — the bridge holds
+ * the selection (never serialized), so local state seeded from getRecordFormat() is the source of
+ * truth; a take in flight keeps its own format (the engine ignores a mid-record change). Sits to
+ * the right of the RECORD cap; x/y locate the WEBM segment's left edge. Renders an SVG <g> — mount
+ * inside an <svg>. Carries data-testid="record-format".
+ *
+ * EARS/DECISION: the WAV bit depth (16 default vs 24) is fixed in the engine recorder — this
+ * selector only chooses the container, not the depth; flagged for the operator.
+ */
+export const RecordFormatToggle = memo(function RecordFormatToggle({
+  x = 300,
+  y = ROW2_Y,
+}: {
+  x?: number;
+  y?: number;
+} = {}) {
+  const [format, setFormat] = useState<'webm' | 'wav'>(() => engineBridge.getRecordFormat());
+  const pick = useCallback((f: 'webm' | 'wav') => {
+    engineBridge.setRecordFormat(f);
+    setFormat(f);
+  }, []);
+  const seg = (label: 'webm' | 'wav', sx: number) => {
+    const on = format === label;
+    return (
+      <g
+        className="control"
+        role="button"
+        tabIndex={0}
+        aria-pressed={on}
+        aria-label={`Record format ${label.toUpperCase()}`}
+        data-testid={`record-format-${label}`}
+        onClick={() => pick(label)}
+        onKeyDown={(e: ReactKeyboardEvent<SVGGElement>) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          pick(label);
+        }}
+      >
+        <rect
+          x={sx}
+          y={y - 8}
+          width={30}
+          height={16}
+          rx={3}
+          fill={on ? COLORS.ledRed : COLORS.panelShadow}
+          stroke={COLORS.panelEdge}
+          strokeWidth={1}
+        />
+        <text
+          x={sx + 15}
+          y={y + 3}
+          textAnchor="middle"
+          fontFamily={FONT_CONDENSED}
+          fontSize={8}
+          letterSpacing={0.5}
+          fill={on ? COLORS.panelShadow : COLORS.legend}
+          pointerEvents="none"
+        >
+          {label.toUpperCase()}
+        </text>
+      </g>
+    );
+  };
+  return (
+    <g data-testid="record-format">
+      <title>Capture format — WEBM (small, lossy) or WAV (lossless, larger)</title>
+      {seg('webm', x)}
+      {seg('wav', x + 32)}
     </g>
   );
 });

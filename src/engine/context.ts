@@ -13,11 +13,19 @@ import oscWorkletUrl from './worklets/osc.worklet.ts?worker&url';
 import ladderWorkletUrl from './worklets/ladder.worklet.ts?worker&url';
 import egWorkletUrl from './worklets/eg.worklet.ts?worker&url';
 import edgeWorkletUrl from './worklets/edge.worklet.ts?worker&url';
+import pcmTapWorkletUrl from './worklets/pcmTap.worklet.ts?worker&url';
 import { MasterRecorder } from './recorder';
+import type { RecordFormat } from './recordHelpers';
 import { MasterFxChain, type MasterFxId } from './fx/masterFxChain';
 import type { MasterEffectsState } from '../state/studioState';
 
-export const WORKLET_URLS = [oscWorkletUrl, ladderWorkletUrl, egWorkletUrl, edgeWorkletUrl];
+export const WORKLET_URLS = [
+  oscWorkletUrl,
+  ladderWorkletUrl,
+  egWorkletUrl,
+  edgeWorkletUrl,
+  pcmTapWorkletUrl,
+];
 
 /** Load our worklet modules into any context (each Offline context needs this too). */
 export async function loadWorklets(ctx: BaseAudioContext): Promise<void> {
@@ -64,9 +72,11 @@ export class StudioContext {
       this.softClip.curve = makeSoftClipCurve() as Float32Array<ArrayBuffer>;
       this.softClip.oversample = '2x';
       // Master FX chain occupies the reserved insertSlot:
-      //   masterIn → insertSlot → [flanger→delay→reverb] → masterVolume → softClip → dest.
+      //   masterIn → insertSlot → [flanger→delay→reverb→fold] → masterVolume → softClip → dest.
       // Built once (effects are dry-only when off), captured by the softClip recorder tap.
-      this.masterFx = new MasterFxChain(this.ctx);
+      // 'master' target: the signal here is already ~±1 (mixer applied vvScale ×0.2 + level),
+      // so the FOLD shaper uses ioScale ~1.0 (a per-voice 0.2 would fold ~5× too weakly).
+      this.masterFx = new MasterFxChain(this.ctx, 'master');
       this._masterIn.connect(this.insertSlot);
       this.insertSlot.connect(this.masterFx.input);
       this.masterFx.output.connect(this.masterVolume);
@@ -159,6 +169,12 @@ export class StudioContext {
     if (!this.softClip || !this.ctx) return null;
     if (!this.recorder) this.recorder = new MasterRecorder(this.ctx, this.softClip);
     return this.recorder;
+  }
+
+  /** Select the capture format ('webm' lossy | 'wav' lossless) for the next take. Builds the
+   *  recorder lazily so a pre-record selection sticks; no-op before the graph exists. */
+  setRecordFormat(format: RecordFormat): void {
+    this.getRecorder()?.setFormat(format);
   }
 
   /** Begin recording the master mix. No-op-safe (false) when unpowered/unsupported. */

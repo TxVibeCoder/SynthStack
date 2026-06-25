@@ -52,6 +52,7 @@
 
 import type { Transport, TransportEvent } from '../scheduler';
 import { nextBoundary, type PhaseRef } from '../quantGrid';
+import { swingOffsetS } from '../units';
 
 const PAD_COUNT = 8;
 const DEFAULT_STEPS = 16;
@@ -71,7 +72,8 @@ export class SamplerStepSeq implements Transport {
   nextEventTime = Infinity;
 
   private pattern: boolean[][] = Array.from({ length: PAD_COUNT }, () => new Array(DEFAULT_STEPS).fill(false));
-  private numSteps = DEFAULT_STEPS; // 1..16 wrap length (v1 always 16)
+  private numSteps = DEFAULT_STEPS; // 1..16 wrap length (default 16)
+  private swingPct = 50; // 0..100, 50 = no swing; delays odd WRAPPED columns by swingOffsetS
   private playing = false; // user RUN/STOP
   /** The single master phase (one Monarch master); studio refreshes it before each effect. */
   private phase: PhaseRef = idlePhase();
@@ -93,9 +95,16 @@ export class SamplerStepSeq implements Transport {
     this.recompute();
   }
 
-  /** Wrap length (1..16). v1 never calls it; present for a future var-length item. */
+  /** Wrap length (1..16). Columns >= numSteps are RETAINED in the pattern but never played. */
   setNumSteps(n: number): void {
     this.numSteps = Math.min(16, Math.max(1, Math.round(n)));
+    this.recompute();
+  }
+
+  /** Swing amount 0..100 (50 = none). Delays odd WRAPPED columns; an even, recomputed-each-pull
+   *  offset — NEVER folded into origin (see nextStepTime). The conversion lives in units.swingOffsetS. */
+  setSwing(pct: number): void {
+    this.swingPct = Math.min(100, Math.max(0, pct));
     this.recompute();
   }
 
@@ -212,11 +221,26 @@ export class SamplerStepSeq implements Transport {
     this.recompute();
   }
 
-  /** Next step time, or Infinity when stopped or the master isn't running. */
+  /**
+   * Next step time, or Infinity when stopped or the master isn't running.
+   *
+   * SWING: the BASE step time is the un-swung no-drift closed form
+   *   origin + stepCounter · sixteenthDurS
+   * (origin is NEVER corrupted by swing — see setSwing). On TOP of that base we add a per-column
+   * swing offset for ODD columns, computed fresh every pull. The parity MUST key off the WRAPPED
+   * column (stepCounter % numSteps), NOT stepCounter, so for odd numSteps the swing pattern does
+   * not walk across bars (PHASE PARITY gotcha). swingOffsetS(50,·) = 0, so swing=50 is a byte-
+   * identical no-op and the monotonicity guard is untouched. For swing>50 the offset on an odd
+   * column is ≤ 0.5·sixteenth, so the next even column (base, no offset) is still strictly later —
+   * verified through the real Scheduler at swing=75 (samplerSeq.test.ts).
+   */
   private nextStepTime(): number {
-    return !this.playing || !this.phase.running
-      ? Infinity
-      : this.origin + this.stepCounter * this.phase.sixteenthDurS;
+    if (!this.playing || !this.phase.running) return Infinity;
+    const sixteenth = this.phase.sixteenthDurS;
+    const base = this.origin + this.stepCounter * sixteenth;
+    const col = this.stepCounter % this.numSteps;
+    const swing = col % 2 === 1 ? swingOffsetS(this.swingPct, sixteenth) : 0;
+    return base + swing;
   }
 
   private recompute(): void {

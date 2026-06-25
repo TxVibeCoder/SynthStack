@@ -140,5 +140,22 @@ export const ENABLE_MIDI = { x: 60, y: CLUSTER_LOW_Y };
 export const MIDI_STATUS_LED = { x: 120, y: CLUSTER_LOW_Y - 4 };
 export const MIDI_STATUS_TEXT = { x: 134, y: CLUSTER_LOW_Y - 1 };
 
+/** CLOCK MASTER indicator (external MIDI clock driving the studio) — sits beside the MIDI LED. */
+export const CLOCK_MASTER_LED = { x: 120, y: CLUSTER_LOW_Y + 14 };
+export const CLOCK_MASTER_TEXT = { x: 134, y: CLUSTER_LOW_Y + 17 };
+
 /** PC KEYS latch (computer-key row mapping). */
 export const PC_KEYS = { x: 240, y: CLUSTER_MID_Y };
+
+/**
+ * CHANNEL selector (MIDI input channel filter, G1): OMNI / 1..16, a prev/readout/next stepper
+ * mirroring the OCTAVE cluster, sitting in the lower row beside ENABLE MIDI. The readout shows
+ * "OMNI" or the 1-based channel number. x's locate CH-, the readout, and CH+.
+ */
+export const CH_DOWN = { x: 196, y: CLUSTER_LOW_Y };
+export const CH_READOUT = { x: 230, y: CLUSTER_LOW_Y };
+export const CH_UP = { x: 264, y: CLUSTER_LOW_Y };
+
+/** KB GLIDE knob (separate keyboard/MIDI live-play glide, G1) — a small rotary between OCT+ and
+ *  PC KEYS in the upper row (paints to r+16 below for its label; clears both neighbors' caps). */
+export const KB_GLIDE = { x: 199, y: CLUSTER_MID_Y + 2 };

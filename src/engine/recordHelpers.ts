@@ -44,3 +44,17 @@ export function buildRecordingFilename(timestamp: string, ext: string): string {
 export function recordingExtForMime(mime: string): string {
   return mime.includes('webm') ? 'webm' : mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'mp4' : 'audio';
 }
+
+/**
+ * Capture format the master recorder can target. 'webm' = the lossy MediaRecorder/opus path
+ * (default); 'wav' = the lossless in-browser PCM-tap + encodeWav path. Runtime-only — never
+ * serialized (recording is orthogonal to the saved state tree).
+ */
+export type RecordFormat = 'webm' | 'wav';
+
+/** Pure format -> file extension. 'wav' is always '.wav'; 'webm' keeps its mime-derived ext
+ *  (the actual webm/ogg/mp4 the browser produced), so the shell still passes the resolved
+ *  mime through recordingExtForMime for that branch. */
+export function recordingExtForFormat(format: RecordFormat): string {
+  return format === 'wav' ? 'wav' : 'webm';
+}

@@ -89,15 +89,23 @@ export function peaks(channel: Float32Array, buckets: number): { min: Float32Arr
 }
 
 /**
- * Encode Float32 channels as a 16-bit PCM WAV (interleaved). Pure, dependency-free — the one
+ * Encode Float32 channels as an interleaved signed PCM WAV. Pure, dependency-free — the one
  * place a processed buffer becomes persistable bytes (then wrapped in a File and fed through the
  * SAME bridge.loadPadSample path as any user sample, so it persists/exports/round-trips for free).
  * Samples are clamped to [-1, 1].
+ *
+ * `bitDepth` defaults to 16 so the existing SampleProcessor path + sampleEdit.test.ts stay
+ * byte-identical. 24 selects a 3-byte little-endian signed branch (the lossless capture path the
+ * master WAV recorder uses); blockAlign / byteRate / dataSize all derive from bytesPerSample.
  */
-export function encodeWav(channels: Float32Array[], sampleRate: number): ArrayBuffer {
+export function encodeWav(
+  channels: Float32Array[],
+  sampleRate: number,
+  bitDepth: 16 | 24 = 16,
+): ArrayBuffer {
   const numCh = Math.max(1, channels.length);
   const len = channels[0]?.length ?? 0;
-  const bytesPerSample = 2;
+  const bytesPerSample = bitDepth === 24 ? 3 : 2;
   const blockAlign = numCh * bytesPerSample;
   const dataSize = len * blockAlign;
   const buffer = new ArrayBuffer(44 + dataSize);
@@ -115,16 +123,33 @@ export function encodeWav(channels: Float32Array[], sampleRate: number): ArrayBu
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * blockAlign, true); // byte rate
   view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true); // bits per sample
+  view.setUint16(34, bitDepth, true); // bits per sample
   writeStr(36, 'data');
   view.setUint32(40, dataSize, true);
   let off = 44;
-  for (let i = 0; i < len; i++) {
-    for (let c = 0; c < numCh; c++) {
-      let s = channels[c]?.[i] ?? 0;
-      s = s < -1 ? -1 : s > 1 ? 1 : s;
-      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      off += 2;
+  if (bitDepth === 24) {
+    for (let i = 0; i < len; i++) {
+      for (let c = 0; c < numCh; c++) {
+        let s = channels[c]?.[i] ?? 0;
+        s = s < -1 ? -1 : s > 1 ? 1 : s;
+        // 24-bit signed range: [-0x800000, 0x7fffff]. Truncate to an integer, then emit the
+        // three low bytes little-endian (a negative value's two's-complement low 24 bits).
+        const v = Math.trunc(s < 0 ? s * 0x800000 : s * 0x7fffff);
+        const u = v < 0 ? v + 0x1000000 : v; // map to the unsigned 24-bit pattern
+        view.setUint8(off, u & 0xff);
+        view.setUint8(off + 1, (u >> 8) & 0xff);
+        view.setUint8(off + 2, (u >> 16) & 0xff);
+        off += 3;
+      }
+    }
+  } else {
+    for (let i = 0; i < len; i++) {
+      for (let c = 0; c < numCh; c++) {
+        let s = channels[c]?.[i] ?? 0;
+        s = s < -1 ? -1 : s > 1 ? 1 : s;
+        view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        off += 2;
+      }
     }
   }
   return buffer;

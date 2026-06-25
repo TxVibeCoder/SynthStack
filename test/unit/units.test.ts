@@ -19,6 +19,9 @@ import {
   cascadeVcoKnobHz,
   swingOffsetS,
   vcaGain,
+  velocityToGain,
+  VELOCITY_GAIN_MAX,
+  VELOCITY_GAIN_MIN,
 } from '../../src/engine/units';
 
 describe('param adapters (work order §7.5, D8)', () => {
@@ -110,5 +113,42 @@ describe('param adapters (work order §7.5, D8)', () => {
     expect(swingOffsetS(50, 0.125)).toBe(0);
     expect(swingOffsetS(100, 0.125)).toBeCloseTo(0.0625, 6); // max swing = half a step late
     expect(swingOffsetS(0, 0.125)).toBeCloseTo(-0.0625, 6);
+  });
+});
+
+describe('velocityToGain (G1 — note-on velocity -> EG->VCA scale gain)', () => {
+  it('maps the full 1..127 range monotonically increasing', () => {
+    let prev = -Infinity;
+    for (let v = 1; v <= 127; v++) {
+      const out = velocityToGain(v);
+      expect(out).toBeGreaterThan(prev); // strictly increasing — monotonic
+      prev = out;
+    }
+  });
+
+  it('vel 100 (the on-screen reference) is UNITY gain — no level regression', () => {
+    expect(velocityToGain(100)).toBeCloseTo(1, 6);
+  });
+
+  it('vel 127 -> VELOCITY_GAIN_MAX, vel 1 -> VELOCITY_GAIN_MIN; bounded across the range', () => {
+    expect(velocityToGain(127)).toBeCloseTo(VELOCITY_GAIN_MAX, 6);
+    expect(velocityToGain(1)).toBeCloseTo(VELOCITY_GAIN_MIN, 6);
+    // every velocity lands within [MIN, MAX]
+    for (const v of [1, 32, 64, 100, 127]) {
+      const out = velocityToGain(v);
+      expect(out).toBeGreaterThanOrEqual(VELOCITY_GAIN_MIN);
+      expect(out).toBeLessThanOrEqual(VELOCITY_GAIN_MAX);
+    }
+  });
+
+  it('vel 0 (running-status note-off) -> 0; out-of-range clamps to the rails', () => {
+    expect(velocityToGain(0)).toBe(0);
+    expect(velocityToGain(-5)).toBe(0); // below 1 -> 0
+    expect(velocityToGain(200)).toBeCloseTo(VELOCITY_GAIN_MAX, 6); // above 127 clamps to max
+  });
+
+  it('vel 100 (the on-screen reference) is hotter than vel 64 and cooler than vel 127', () => {
+    expect(velocityToGain(64)).toBeLessThan(velocityToGain(100));
+    expect(velocityToGain(100)).toBeLessThan(velocityToGain(127));
   });
 });

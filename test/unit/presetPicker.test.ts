@@ -188,6 +188,7 @@ function stubBridge() {
   vi.spyOn(engineBridge, 'loadSlot').mockResolvedValue(undefined);
   vi.spyOn(engineBridge, 'loadFactoryPreset').mockResolvedValue(undefined);
   vi.spyOn(engineBridge, 'exportSetup').mockResolvedValue(undefined);
+  vi.spyOn(engineBridge, 'exportSlot').mockResolvedValue(undefined);
   vi.spyOn(engineBridge, 'importSetup').mockResolvedValue({ ok: true });
 }
 
@@ -245,6 +246,28 @@ describe('PresetPicker', () => {
     r.act(() => prop<() => void>(loadBtn, 'onClick')());
     expect(engineBridge.loadSlot).toHaveBeenCalledWith('Alpha');
     expect(closed).toBe(1);
+  });
+
+  it('BUNDLE: a per-slot button calls exportSlot(name) + reports a "Bundled" status', () => {
+    stubBridge();
+    vi.spyOn(engineBridge, 'listSlots').mockReturnValue(['Alpha', 'Beta']);
+    const r = renderComponent(PresetPicker, { mode: 'browse', onClose: () => undefined });
+
+    // a BUNDLE button renders per slot.
+    expect(findByTestIdPrefix(r.tree, 'slot-bundle-').length).toBe(2);
+
+    const bundleBtn = findByTestId(r.tree, 'slot-bundle-Alpha')!;
+    expect(bundleBtn).toBeDefined();
+    expect(textOf(bundleBtn)).toContain('BUNDLE');
+    expect(prop(bundleBtn, 'aria-label')).toBe('Export Alpha as bundle');
+
+    r.act(() => prop<() => void>(bundleBtn, 'onClick')());
+    expect(engineBridge.exportSlot).toHaveBeenCalledWith('Alpha');
+    expect(engineBridge.exportSlot).toHaveBeenCalledTimes(1);
+    // clicking BUNDLE does not delete or load.
+    expect(engineBridge.deleteSlot).not.toHaveBeenCalled();
+    expect(engineBridge.loadSlot).not.toHaveBeenCalled();
+    expect(textOf(findByTestId(r.tree, 'preset-status')!)).toContain('Bundled "Alpha"');
   });
 
   it('two-step delete: first click arms (no delete), second click deletes + re-reads', () => {

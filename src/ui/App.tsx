@@ -21,7 +21,7 @@
  *   - 'patchbay': the consolidated 88-jack field + the 16 sampler pad jacks + the group
  *                 borders + the CableLayer. This is the ONLY tab cables render on.
  *   - 'sampler' : the SAMPLER pad-control section + the DRUM MACHINE grid (no jacks).
- *   - 'fx'      : the master effects panel (flanger/delay/reverb).
+ *   - 'fx'      : the master effects panel (flanger/delay/reverb/fold).
  * The 3 voices each get their OWN control tab, but all 104 jacks (88 voice + 16 sampler)
  * still co-mount together on 'patchbay' (HARD CONSTRAINT: every jack a cable touches must
  * be in the DOM together or the cable vanishes — CableLayer renders null for an unmounted
@@ -100,6 +100,8 @@ import { OrientationHint } from './OrientationHint';
 import { TabBar } from './TabBar';
 import { MasterRibbon } from './MasterRibbon';
 import { ErrorOverlay } from './ErrorOverlay';
+import { startSamplerHost } from './sampler/samplerHost';
+import { realSamplerBridge } from './sampler/samplerBridge';
 import type { ModuleTabId } from '../engine/modules/moduleConfig';
 
 /**
@@ -310,6 +312,14 @@ export function App() {
   // model entirely (the sampler panels are now zoomed to fill the window on their tab).
   useEffect(() => setScale(computeScale(box)), [box]);
 
+  // SAMPLER POP-OUT HOST (G5) — MAIN-window only. It bridges the ONE engineBridge to the pop-out
+  // window over the sampler channel (broadcasts the live mirror; forwards pop-out actions). The
+  // `window.opener == null` guard means it NEVER runs inside the pop-out (which owns no engine).
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.opener != null) return; // we ARE a pop-out — skip
+    return startSamplerHost();
+  }, []);
+
   const dim = !powered;
   const isCascade = tab === 'cascade';
   const isAnvil = tab === 'anvil';
@@ -449,10 +459,10 @@ export function App() {
             {isSampler && (
               <>
                 <Region box={SAMPLER_REGION} testId="sampler-section" dimmed={dim}>
-                  <SamplerPanel />
+                  <SamplerPanel bridge={realSamplerBridge} />
                 </Region>
                 <Region box={DRUM_REGION} testId="drum-section" dimmed={dim}>
-                  <DrumMachinePanel />
+                  <DrumMachinePanel bridge={realSamplerBridge} />
                 </Region>
               </>
             )}

@@ -15,6 +15,7 @@
  */
 
 import { clamp } from '../units';
+import { buildFoldCurve, FOLD_DRIVE_MIN, FOLD_DRIVE_MAX } from '../dsp/foldCore';
 
 /** One master effect: a fixed input→output sub-graph with an on-toggle + named params. */
 export interface FxUnit {
@@ -122,6 +123,86 @@ export function buildDelay(ctx: BaseAudioContext): FxUnit {
           break;
         case 'feedback':
           feedback.gain.value = clamp(value, 0, 0.95);
+          break;
+        case 'mix':
+          mix = clamp(value, 0, 1);
+          if (on) wet.gain.value = mix;
+          break;
+      }
+    },
+  };
+}
+
+/** Options for buildFold (and, via MasterFxChain, the whole chain). */
+export interface FoldOptions {
+  /**
+   * Pre-shaper gain that brings the incoming signal into the WaveShaper's [-1, 1] domain;
+   * the post-shaper gain is its reciprocal (1/ioScale) to restore the original amplitude.
+   * Pick this to match the operating point at THIS target:
+   *  - per-voice insert: the signal is the raw ±5 vv voice tap (pre-mixer) → 0.2.
+   *  - master chain: mixer.ts has already applied vvScale ×0.2 + level, so the signal is
+   *    already ~±1 → ~1.0 (a fixed 0.2 here would fold ~5× too weakly).
+   */
+  readonly ioScale: number;
+}
+
+const DEFAULT_FOLD_IO_SCALE = 0.2;
+
+/**
+ * FOLD — a wavefolder (pure foldCore curve → WaveShaperNode), mixed against dry.
+ *  params: drive (1..8), symmetry (-1..1) REBUILD the static fold curve (commit-only in the
+ *  panel to avoid per-frame Float32Array GC thrash); mix (0..1) is a live wet-gain write.
+ *
+ * A WaveShaperNode's curve domain is [-1, 1], so the wet branch pre-gains the incoming signal
+ * into that range (×ioScale) IN and post-gains it back (×1/ioScale) OUT around the shaper, or
+ * the fold would collapse to a hard square. The right ioScale depends on WHERE the unit sits:
+ * the per-voice insert sees the raw ±5 vv voice tap (ioScale 0.2 → ±5vv→±1), but the master
+ * chain sits AFTER the mixer's own ×0.2 vvScale so its signal is already ~±1 (ioScale ~1.0).
+ * MasterFxChain threads the per-target scale through. This is a within-shell graph detail
+ * mirroring mixer.ts's own vvScale (NOT a units.ts conversion — it does not violate the
+ * conversion-only rule).
+ */
+export function buildFold(ctx: BaseAudioContext, opts?: FoldOptions): FxUnit {
+  const ioScale = opts?.ioScale ?? DEFAULT_FOLD_IO_SCALE;
+  const input = ctx.createGain();
+  const output = ctx.createGain();
+  const dry = ctx.createGain();
+  const wet = ctx.createGain();
+  wet.gain.value = 0;
+
+  // ×ioScale into the shaper's [-1,1] domain, then ×1/ioScale back out.
+  const preGain = ctx.createGain();
+  preGain.gain.value = ioScale;
+  const postGain = ctx.createGain();
+  postGain.gain.value = 1 / ioScale;
+
+  let drive = 2;
+  let symmetry = 0;
+  const shaper = ctx.createWaveShaper();
+  shaper.curve = buildFoldCurve(drive, symmetry) as Float32Array<ArrayBuffer>;
+  shaper.oversample = '4x'; // tame fold aliasing
+
+  input.connect(dry).connect(output);
+  input.connect(preGain).connect(shaper).connect(postGain).connect(wet).connect(output);
+
+  let mix = 0.5;
+  let on = false;
+  return {
+    input,
+    output,
+    setOn(next) {
+      on = next;
+      wet.gain.value = on ? mix : 0;
+    },
+    setParam(name, value) {
+      switch (name) {
+        case 'drive':
+          drive = clamp(value, FOLD_DRIVE_MIN, FOLD_DRIVE_MAX);
+          shaper.curve = buildFoldCurve(drive, symmetry) as Float32Array<ArrayBuffer>;
+          break;
+        case 'symmetry':
+          symmetry = clamp(value, -1, 1);
+          shaper.curve = buildFoldCurve(drive, symmetry) as Float32Array<ArrayBuffer>;
           break;
         case 'mix':
           mix = clamp(value, 0, 1);

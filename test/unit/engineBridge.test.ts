@@ -7,9 +7,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { classifyControl, engineBridge, parseControlRoute, type ControlRoute } from '../../src/ui/engineBridge';
 import { defaultFactoryPad } from '../../src/state/studioState';
-import { FACTORY_KIT } from '../../src/engine/factorySamples';
+import { FACTORY_KIT, KIT_LIBRARY, DEFAULT_KIT_ID } from '../../src/engine/factorySamples';
 import { noteToVv } from '../../src/engine/voice/monoVoice';
+import { velocityToGain } from '../../src/engine/units';
 import monarch from '../../data/monarch.json';
+
+/** G1: the bridge threads a velocity GAIN + the separate keyboard glide (s) into {monarch,courier}NoteOn.
+ *  The on-screen / test default velocity is 100 and the default keyboard glide is 0, so a plain
+ *  noteOn(note, 100) calls NoteOn(vv, retrigger, velocityToGain(100)=1, 0). expect.closeTo keeps the
+ *  float velGain match robust. */
+const VEL100 = expect.closeTo(velocityToGain(100), 5);
+const GLIDE0 = 0;
 import anvil from '../../data/anvil.json';
 import cascade from '../../data/cascade.json';
 import type { ModuleDef } from '../../data/schema';
@@ -273,6 +281,77 @@ describe('engineBridge factory picker surface', () => {
 });
 
 /**
+ * Global KIT-SELECT bridge surface (G6, PURE / store-level — unpowered, so engine writes are
+ * no-ops; only the coalesced store commit is observable). Re-points all 8 pads at once and
+ * persists the selected kitId. Each test restores the default kit at the end so the singleton
+ * bridge stays order-independent for the cases above (which use pad 4 against the default kit).
+ */
+describe('engineBridge global kit selector (G6)', () => {
+  afterEach(() => {
+    engineBridge.selectKit(DEFAULT_KIT_ID);
+  });
+
+  it('default kitId is DEFAULT_KIT_ID and library has >= 2 kits', () => {
+    expect(engineBridge.getKitId()).toBe(DEFAULT_KIT_ID);
+    expect(KIT_LIBRARY.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('selectKit re-points all 8 pad metas to the chosen kit and persists kitId', () => {
+    const kit = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    engineBridge.selectKit(kit.id);
+    expect(engineBridge.getKitId()).toBe(kit.id);
+    for (let i = 0; i < 8; i++) {
+      const pad = engineBridge.getPadState(i);
+      expect(pad.sampleId).toBe(kit.pads[i]!.id);
+      expect(pad.sampleName).toBe(kit.pads[i]!.name);
+    }
+    // the selection persists in the store slice
+    expect(engineBridge.store.getState().sampler.kitId).toBe(kit.id);
+    // never leaks into the controls map
+    expect(engineBridge.store.getState().controls['sampler'] ?? {}).toEqual({});
+  });
+
+  it('selectKit ignores an unknown kit id (no-op, kitId + pads unchanged)', () => {
+    const kit = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    engineBridge.selectKit(kit.id);
+    const padsBefore = Array.from({ length: 8 }, (_, i) => engineBridge.getPadState(i).sampleId);
+    engineBridge.selectKit('kit-nope'); // unknown -> no-op
+    expect(engineBridge.getKitId()).toBe(kit.id);
+    const padsAfter = Array.from({ length: 8 }, (_, i) => engineBridge.getPadState(i).sampleId);
+    expect(padsAfter).toEqual(padsBefore);
+  });
+
+  it('per-pad KIT override after a kit-select still works (last-action-wins)', () => {
+    const kit = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    engineBridge.selectKit(kit.id);
+    // re-point pad 2 to a DIFFERENT sound from the SAME (current) kit
+    const other = kit.pads.find((e) => e.id !== kit.pads[2]!.id)!;
+    engineBridge.assignFactoryToPad(2, other.id);
+    expect(engineBridge.getPadState(2).sampleId).toBe(other.id);
+    // the other 7 pads keep the kit's assignment; kitId stays the selected kit
+    expect(engineBridge.getKitId()).toBe(kit.id);
+    expect(engineBridge.getPadState(0).sampleId).toBe(kit.pads[0]!.id);
+  });
+
+  it('a kit-select preserves per-pad LEVEL / TUNE / LOOP (only the sound ref changes)', () => {
+    engineBridge.commitPadControl(6, 'level', 0.55);
+    engineBridge.commitPadControl(6, 'tuneSemis', -4);
+    engineBridge.setPadLoop(6, true);
+    const kit = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    engineBridge.selectKit(kit.id);
+    const pad = engineBridge.getPadState(6);
+    expect(pad.sampleId).toBe(kit.pads[6]!.id);
+    expect(pad.level).toBe(0.55);
+    expect(pad.tuneSemis).toBe(-4);
+    expect(pad.loop).toBe(true);
+    // reset pad 6's level/tune/loop after the suite-level kit restore in afterEach
+    engineBridge.commitPadControl(6, 'level', defaultFactoryPad(6).level);
+    engineBridge.commitPadControl(6, 'tuneSemis', defaultFactoryPad(6).tuneSemis);
+    engineBridge.setPadLoop(6, defaultFactoryPad(6).loop);
+  });
+});
+
+/**
  * Drum step sequencer bridge surface (PURE / store-level — unpowered, so engine writes are
  * no-ops; only the coalesced store commit is observable). Each test starts from a known
  * clean grid (clearDrumPattern + drumStop) so it is order-independent against the singleton
@@ -356,6 +435,41 @@ describe('engineBridge drum step sequencer surface', () => {
   it('getStepPosition(drum) is -1 initially and drumRunning is false on the fresh bridge', () => {
     expect(engineBridge.getStepPosition('drum')).toBe(-1);
     expect(engineBridge.getTransportFlags().drumRunning).toBe(false);
+  });
+
+  it('setDrumNumSteps / getDrumNumSteps round-trip + clamp (commit-only LENGTH)', () => {
+    expect(engineBridge.getDrumNumSteps()).toBe(16); // default
+    engineBridge.setDrumNumSteps(8);
+    expect(engineBridge.getDrumNumSteps()).toBe(8);
+    expect(engineBridge.store.getState().sampler.numSteps).toBe(8);
+    // clamp + round on the bridge write
+    engineBridge.setDrumNumSteps(99);
+    expect(engineBridge.getDrumNumSteps()).toBe(16);
+    engineBridge.setDrumNumSteps(0);
+    expect(engineBridge.getDrumNumSteps()).toBe(1);
+    engineBridge.setDrumNumSteps(3.7);
+    expect(engineBridge.getDrumNumSteps()).toBe(4);
+    engineBridge.setDrumNumSteps(16); // restore default for other tests
+  });
+
+  it('setDrumSwing / getDrumSwing round-trip + clamp (commit-only SWING)', () => {
+    expect(engineBridge.getDrumSwing()).toBe(50); // default = no swing
+    engineBridge.setDrumSwing(66);
+    expect(engineBridge.getDrumSwing()).toBe(66);
+    expect(engineBridge.store.getState().sampler.swingPct).toBe(66);
+    engineBridge.setDrumSwing(200);
+    expect(engineBridge.getDrumSwing()).toBe(100);
+    engineBridge.setDrumSwing(-10);
+    expect(engineBridge.getDrumSwing()).toBe(0);
+    engineBridge.setDrumSwing(50); // restore default
+  });
+
+  it('LENGTH / SWING never leak into the controls map', () => {
+    engineBridge.setDrumNumSteps(8);
+    engineBridge.setDrumSwing(66);
+    expect(engineBridge.store.getState().controls['sampler'] ?? {}).toEqual({});
+    engineBridge.setDrumNumSteps(16);
+    engineBridge.setDrumSwing(50);
   });
 });
 
@@ -441,6 +555,22 @@ describe('engineBridge keyboard surface (store-level, unpowered)', () => {
     expect(status.deviceCount).toBe(0);
     expect(status.deviceNames).toEqual([]);
   });
+
+  it('isMidiClockMaster is false while unpowered and never throws (parity with getRecordingState)', () => {
+    let master: boolean | undefined;
+    expect(() => {
+      master = engineBridge.isMidiClockMaster();
+    }).not.toThrow();
+    expect(master).toBe(false);
+  });
+
+  it('getMidiClockTempo returns the 120 BPM default while unpowered and never throws', () => {
+    let tempo: number | undefined;
+    expect(() => {
+      tempo = engineBridge.getMidiClockTempo();
+    }).not.toThrow();
+    expect(tempo).toBe(120);
+  });
 });
 
 describe('engineBridge keyboard mono semantics (engine writes spied; AudioContext-free)', () => {
@@ -479,22 +609,22 @@ describe('engineBridge keyboard mono semantics (engine writes spied; AudioContex
   it('single note: noteOn -> monarchNoteOn(vv, retrigger=true), noteOff -> monarchNoteOff', () => {
     engineBridge.noteOn(60, 100); // middle C
     expect(monarchNoteOn).toHaveBeenCalledTimes(1);
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(0, true); // noteToVv(60)=0; fresh attack retriggers
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(0, true, VEL100, GLIDE0); // noteToVv(60)=0; fresh attack retriggers
     engineBridge.noteOff(60);
     expect(monarchNoteOff).toHaveBeenCalledTimes(1);
   });
 
   it('vv mapping: 72 -> +1, 48 -> -1, 61 -> 1/12', () => {
     engineBridge.noteOn(72, 100);
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(1, true);
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(1, true, VEL100, GLIDE0);
     engineBridge.releaseAllNotes();
     monarchNoteOn.mockClear();
     engineBridge.noteOn(48, 100);
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(-1, true);
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(-1, true, VEL100, GLIDE0);
     engineBridge.releaseAllNotes();
     monarchNoteOn.mockClear();
     engineBridge.noteOn(61, 100);
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(61), true);
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(61), true, VEL100, GLIDE0);
     expect(noteToVv(61)).toBeCloseTo(1 / 12, 10);
   });
 
@@ -503,7 +633,7 @@ describe('engineBridge keyboard mono semantics (engine writes spied; AudioContex
     monarchNoteOn.mockClear();
     engineBridge.noteOn(64, 100); // legato: gate already high
     expect(monarchNoteOn).toHaveBeenCalledTimes(1);
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(64), false);
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(64), false, VEL100, GLIDE0);
     expect(monarchNoteOff).not.toHaveBeenCalled();
   });
 
@@ -515,7 +645,7 @@ describe('engineBridge keyboard mono semantics (engine writes spied; AudioContex
     engineBridge.noteOff(64); // fall back to 60
     expect(monarchNoteOff).not.toHaveBeenCalled();
     expect(monarchNoteOn).toHaveBeenCalledTimes(1);
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(60), false);
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(60), false, VEL100, GLIDE0);
   });
 
   it('releasing a non-top held note writes nothing (gate:unchanged)', () => {
@@ -548,12 +678,12 @@ describe('engineBridge keyboard mono semantics (engine writes spied; AudioContex
     engineBridge.setKeyboardOctave(1);
     engineBridge.noteOn(60, 100);
     // noteToVv(60)=0, +1 octave -> vv 1, applied a single time in the bridge
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(1, true);
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(1, true, VEL100, GLIDE0);
     engineBridge.releaseAllNotes();
     monarchNoteOn.mockClear();
     engineBridge.setKeyboardOctave(-2);
     engineBridge.noteOn(72, 100); // noteToVv(72)=1, -2 -> vv -1
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(-1, true);
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(-1, true, VEL100, GLIDE0);
   });
 
   it('releaseAllNotes gates off and clears the stack (next press retriggers fresh)', () => {
@@ -564,7 +694,85 @@ describe('engineBridge keyboard mono semantics (engine writes spied; AudioContex
     expect(monarchNoteOff).toHaveBeenCalledTimes(1); // single panic gate-off
     monarchNoteOn.mockClear();
     engineBridge.noteOn(67, 100); // empty stack -> fresh attack
-    expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(67), true);
+    expect(monarchNoteOn).toHaveBeenLastCalledWith(noteToVv(67), true, VEL100, GLIDE0);
+  });
+});
+
+describe('engineBridge G1 — velocity, keyboard glide, MIDI channel', () => {
+  const priv = engineBridge as unknown as BridgePrivates;
+  let monarchNoteOn: ReturnType<typeof vi.fn>;
+  let monarchNoteOff: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    void engineBridge.store;
+    const studio = priv.studioInstance!;
+    monarchNoteOn = vi.fn();
+    monarchNoteOff = vi.fn();
+    vi.spyOn(studio, 'monarchNoteOn').mockImplementation(monarchNoteOn);
+    vi.spyOn(studio, 'monarchNoteOff').mockImplementation(monarchNoteOff);
+    engineBridge.releaseAllNotes();
+    engineBridge.setKeyboardOctave(0);
+    engineBridge.setKeyboardGlide(0);
+    engineBridge.setMidiChannel(-1);
+    monarchNoteOn.mockClear();
+    monarchNoteOff.mockClear();
+    priv._powered = true;
+  });
+
+  afterEach(() => {
+    engineBridge.releaseAllNotes();
+    priv._powered = false;
+    vi.restoreAllMocks();
+    engineBridge.setKeyboardOctave(0);
+    engineBridge.setKeyboardGlide(0);
+    engineBridge.setMidiChannel(-1);
+  });
+
+  it('threads the note-on velocity GAIN into monarchNoteOn (a higher velocity -> a higher gain)', () => {
+    engineBridge.noteOn(60, 127);
+    const hi = monarchNoteOn.mock.calls.at(-1)![2] as number;
+    engineBridge.releaseAllNotes();
+    monarchNoteOn.mockClear();
+    engineBridge.noteOn(60, 32);
+    const lo = monarchNoteOn.mock.calls.at(-1)![2] as number;
+    expect(hi).toBeGreaterThan(lo);
+    expect(hi).toBeCloseTo(velocityToGain(127), 5);
+    expect(lo).toBeCloseTo(velocityToGain(32), 5);
+  });
+
+  it('a legato fall-back reuses the most-recent note-on velocity (the side-store)', () => {
+    engineBridge.noteOn(60, 120); // fresh attack, velocity 120 remembered
+    engineBridge.noteOn(64, 40); // legato, velocity 40 remembered
+    monarchNoteOn.mockClear();
+    engineBridge.noteOff(64); // fall back to 60 — gate stays 'on', no fresh velocity to read
+    // the fall-back reuses lastNoteVelocity (40, the most recent note-on), NOT 120
+    expect(monarchNoteOn).toHaveBeenCalledTimes(1);
+    expect(monarchNoteOn.mock.calls.at(-1)![2]).toBeCloseTo(velocityToGain(40), 5);
+  });
+
+  it('keyboard glide is threaded as the setPitchAt override (NOT MON_GLIDE) and persists', () => {
+    engineBridge.setKeyboardGlide(0.4);
+    expect(engineBridge.getKeyboardGlide()).toBeCloseTo(0.4, 6);
+    expect(engineBridge.store.getState().keyboard.glideS).toBeCloseTo(0.4, 6);
+    engineBridge.noteOn(60, 100);
+    expect(monarchNoteOn.mock.calls.at(-1)![3]).toBeCloseTo(0.4, 6); // 4th arg = glideS
+  });
+
+  it('keyboard glide clamps to 0..1 on the persisted slice (coalesce)', () => {
+    engineBridge.setKeyboardGlide(5);
+    expect(engineBridge.getKeyboardGlide()).toBe(1);
+    engineBridge.setKeyboardGlide(-1);
+    expect(engineBridge.getKeyboardGlide()).toBe(0);
+  });
+
+  it('setMidiChannel persists + pushes the filter to the shell; clamps to -1..15 (OMNI fallback)', () => {
+    engineBridge.setMidiChannel(9);
+    expect(engineBridge.getMidiChannel()).toBe(9);
+    expect(engineBridge.store.getState().keyboard.midiChannel).toBe(9);
+    engineBridge.setMidiChannel(99); // out of range -> OMNI
+    expect(engineBridge.getMidiChannel()).toBe(-1);
+    engineBridge.setMidiChannel(3.5); // non-integer -> OMNI
+    expect(engineBridge.getMidiChannel()).toBe(-1);
   });
 });
 
@@ -619,7 +827,7 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     monarchNoteOff.mockClear(); // the flip released a (empty) stack — ignore any gate-off here
     engineBridge.noteOn(72, 100); // noteToVv(72) = +1
     expect(courierNoteOn).toHaveBeenCalledTimes(1);
-    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true); // fresh attack retriggers
+    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true, VEL100, GLIDE0); // fresh attack retriggers
     expect(monarchNoteOn).not.toHaveBeenCalled();
     expect(monarchNoteOff).not.toHaveBeenCalled();
   });
@@ -640,7 +848,7 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     courierNoteOn.mockClear();
     engineBridge.noteOn(64, 100); // legato
     expect(courierNoteOn).toHaveBeenCalledTimes(1);
-    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(64), false);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(64), false, VEL100, GLIDE0);
     expect(courierNoteOff).not.toHaveBeenCalled();
   });
 
@@ -648,7 +856,7 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     engineBridge.setKeyboardTarget('courier');
     engineBridge.setKeyboardOctave(1);
     engineBridge.noteOn(60, 100); // noteToVv(60)=0, +1 octave -> vv 1
-    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(1, true, VEL100, GLIDE0);
   });
 
   it('flipping target mid-hold gates OFF the old voice (no stranded gate)', () => {
@@ -659,7 +867,7 @@ describe('engineBridge keyboard target select (Courier vs Monarch; engine writes
     expect(monarchNoteOff).toHaveBeenCalledTimes(1);
     // The next press now plays Courier with a clean (retriggered) attack.
     engineBridge.noteOn(67, 100);
-    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(67), true);
+    expect(courierNoteOn).toHaveBeenLastCalledWith(noteToVv(67), true, VEL100, GLIDE0);
   });
 
   it('setKeyboardTarget is idempotent (same target does not release a held note)', () => {

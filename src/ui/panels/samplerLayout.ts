@@ -258,8 +258,21 @@ export const DRUM_BEATROW_Y = 60;
 /**
  * Transport buttons, in the strip to the right of the grid (which now ends ~1498).
  * Both x (plus a button footprint) stay < STAGE.w — pinned in the layout test.
+ *
+ * LENGTH (wrap length 1..16) + SWING (0..100, UI-capped 75) commit-only Knobs sit in the same
+ * right strip, BELOW the RUN/STOP + CLEAR buttons. Both knob centers (x ~1610/1730, knob r≈18
+ * plus its readout pill ≈ ±34) stay clear of the grid's right edge (≈1498) and inside STAGE.w
+ * (1805.19) — pinned in samplerLayout.test.ts.
  */
-export const DRUM_TRANSPORT = { runStopX: 1580, clearX: 1700, y: 260 } as const;
+export const DRUM_TRANSPORT = {
+  runStopX: 1580,
+  clearX: 1700,
+  y: 260,
+  lengthX: 1610,
+  lengthY: 360,
+  swingX: 1730,
+  swingY: 360,
+} as const;
 
 /** CENTER x of column `step` (0..15). */
 export function columnX(step: number): number {

@@ -24,7 +24,7 @@ import {
   ARP_RHYTHMS as ENGINE_ARP_RHYTHMS,
 } from '../../src/engine/sequencers/courierSeq';
 import { QUANT_CYCLE } from '../../src/engine/quantGrid';
-import { FACTORY_KIT } from '../../src/engine/factorySamples';
+import { FACTORY_KIT, KIT_LIBRARY, DEFAULT_KIT_ID } from '../../src/engine/factorySamples';
 import monarch from '../../data/monarch.json';
 import anvil from '../../data/anvil.json';
 import cascade from '../../data/cascade.json';
@@ -240,6 +240,114 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(coalesceSamplerState(lit).seqRunning).toBe(true);
   });
 
+  // ---- G4 drum var-length (numSteps) + swing (swingPct) -----------------------------------
+
+  it('default sampler numSteps is 16 and swingPct is 50 (no swing)', () => {
+    const s = defaultStudioState();
+    expect(s.sampler.numSteps).toBe(16);
+    expect(s.sampler.swingPct).toBe(50);
+  });
+
+  it('coalesceSamplerState(undefined) yields numSteps 16 + swingPct 50', () => {
+    const s = coalesceSamplerState(undefined);
+    expect(s.numSteps).toBe(16);
+    expect(s.swingPct).toBe(50);
+  });
+
+  it('coalesceSamplerState fills numSteps 16 + swingPct 50 for an older tree lacking them', () => {
+    const oldTree = {
+      pads: [{ sampleId: 'x', sampleName: 'y', level: 0.5, tuneSemis: 0 }],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    const s = coalesceSamplerState(oldTree);
+    expect(s.numSteps).toBe(16);
+    expect(s.swingPct).toBe(50);
+  });
+
+  it('coalesceSamplerState clamps/guards garbage numSteps + swingPct', () => {
+    const c = (raw: unknown) =>
+      coalesceSamplerState(raw as Parameters<typeof coalesceSamplerState>[0]);
+    // numSteps: non-finite/huge -> 16; below 1 -> 1; non-integer -> rounded; in-range kept
+    expect(c({ numSteps: 1e308 }).numSteps).toBe(16);
+    expect(c({ numSteps: 0 }).numSteps).toBe(1);
+    expect(c({ numSteps: -5 }).numSteps).toBe(1);
+    expect(c({ numSteps: 3.7 }).numSteps).toBe(4);
+    expect(c({ numSteps: 99 }).numSteps).toBe(16);
+    expect(c({ numSteps: 'x' }).numSteps).toBe(16);
+    expect(c({ numSteps: NaN }).numSteps).toBe(16);
+    // swingPct: over 100 -> 100; below 0 -> 0; non-number -> 50; in-range kept
+    expect(c({ swingPct: 200 }).swingPct).toBe(100);
+    expect(c({ swingPct: -10 }).swingPct).toBe(0);
+    expect(c({ swingPct: 'x' }).swingPct).toBe(50);
+    expect(c({ swingPct: NaN }).swingPct).toBe(50);
+    expect(c({ swingPct: 66 }).swingPct).toBe(66);
+  });
+
+  it('round-trips a drum numSteps 8 + swingPct 66 across the store', () => {
+    const store = new StudioStore();
+    const s = store.getState();
+    s.sampler.numSteps = 8;
+    s.sampler.swingPct = 66;
+    store.setState(s);
+    expect(store.getState().sampler.numSteps).toBe(8);
+    expect(store.getState().sampler.swingPct).toBe(66);
+    expect(store.getState()).toEqual(s);
+  });
+
+  // ---- G6 selectable kit library (kitId) -------------------------------------------------
+
+  it('default sampler kitId is DEFAULT_KIT_ID', () => {
+    expect(defaultStudioState().sampler.kitId).toBe(DEFAULT_KIT_ID);
+    expect(KIT_LIBRARY.some((k) => k.id === DEFAULT_KIT_ID)).toBe(true);
+  });
+
+  it('coalesceSamplerState(undefined) yields kitId DEFAULT_KIT_ID', () => {
+    expect(coalesceSamplerState(undefined).kitId).toBe(DEFAULT_KIT_ID);
+  });
+
+  it('coalesceSamplerState fills kitId DEFAULT_KIT_ID for an older tree lacking it', () => {
+    const oldTree = {
+      pads: [{ sampleId: 'x', sampleName: 'y', level: 0.5, tuneSemis: 0 }],
+    } as unknown as Parameters<typeof coalesceSamplerState>[0];
+    expect(coalesceSamplerState(oldTree).kitId).toBe(DEFAULT_KIT_ID);
+  });
+
+  it('coalesceSamplerState membership-clamps an unknown/garbage kitId to the default', () => {
+    const c = (raw: unknown) =>
+      coalesceSamplerState(raw as Parameters<typeof coalesceSamplerState>[0]).kitId;
+    expect(c({ kitId: 'kit-nope' })).toBe(DEFAULT_KIT_ID); // unknown id
+    expect(c({ kitId: 42 })).toBe(DEFAULT_KIT_ID); // non-string
+    expect(c({ kitId: '' })).toBe(DEFAULT_KIT_ID); // empty
+    expect(c({ kitId: null })).toBe(DEFAULT_KIT_ID);
+    // every real library id round-trips unchanged
+    for (const k of KIT_LIBRARY) expect(c({ kitId: k.id })).toBe(k.id);
+  });
+
+  it('round-trips a changed kitId across the store', () => {
+    const other = KIT_LIBRARY.find((k) => k.id !== DEFAULT_KIT_ID)!;
+    const store = new StudioStore();
+    const s = store.getState();
+    s.sampler.kitId = other.id;
+    store.setState(s);
+    expect(store.getState().sampler.kitId).toBe(other.id);
+    expect(store.getState()).toEqual(s);
+  });
+
+  it('every KIT_LIBRARY kit has globally-unique factory- ids and exactly 8 pads', () => {
+    const allIds: string[] = [];
+    const kitIds = new Set<string>();
+    for (const kit of KIT_LIBRARY) {
+      expect(kit.pads).toHaveLength(8);
+      expect(kitIds.has(kit.id), `duplicate kit id ${kit.id}`).toBe(false);
+      kitIds.add(kit.id);
+      for (const entry of kit.pads) {
+        expect(entry.id.startsWith('factory-'), `${entry.id} not factory- prefixed`).toBe(true);
+        allIds.push(entry.id);
+      }
+    }
+    // pad ids are globally unique across all kits (the flat factoryBuffers map depends on it)
+    expect(new Set(allIds).size).toBe(allIds.length);
+  });
+
   it('coalesceSamplerState clamps/guards a garbage pad (level / tuneSemis / sampleId / sampleName)', () => {
     // A hand-edited bundle could inject junk per pad. Before the field-level guards, `...p`
     // spread these through verbatim: tuneSemis: 1e308 would reach setPadTune -> playbackRate
@@ -306,34 +414,45 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(QUANT_CYCLE).toEqual(QUANTIZE_DIVISIONS);
   });
 
-  it('default state carries keyboard:{octave:0} and version stays 1', () => {
+  it('default state carries keyboard:{octave:0,midiChannel:-1,glideS:0} and version stays 1', () => {
     const s = defaultStudioState();
-    expect(s.keyboard).toEqual({ octave: 0 });
+    expect(s.keyboard).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
     expect(s.version).toBe(1); // additive slice — no version bump (mirrors the sampler slice)
   });
 
-  it('JSON round-trips the keyboard octave across the store', () => {
+  it('JSON round-trips the keyboard octave + midiChannel + glideS across the store', () => {
     const store = new StudioStore();
     const s = store.getState();
     s.keyboard.octave = 2;
+    s.keyboard.midiChannel = 9; // ch 10 (drum)
+    s.keyboard.glideS = 0.25;
     store.setState(s);
-    expect(store.getState().keyboard).toEqual({ octave: 2 });
+    expect(store.getState().keyboard).toEqual({ octave: 2, midiChannel: 9, glideS: 0.25 });
     expect(store.getState()).toEqual(s);
   });
 
-  it('defaultKeyboardState() is {octave:0}', () => {
-    expect(defaultKeyboardState()).toEqual({ octave: 0 });
+  it('defaultKeyboardState() is {octave:0,midiChannel:-1,glideS:0}', () => {
+    expect(defaultKeyboardState()).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
   });
 
-  it('coalesceKeyboardState(undefined) yields {octave:0}', () => {
-    expect(coalesceKeyboardState(undefined)).toEqual({ octave: 0 });
+  it('coalesceKeyboardState(undefined) yields the full default', () => {
+    expect(coalesceKeyboardState(undefined)).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
   });
 
-  it('coalesceKeyboardState coalesces a pre-feature tree missing keyboard to {octave:0}', () => {
+  it('coalesceKeyboardState coalesces a pre-feature tree missing keyboard to the full default', () => {
     // A whole studio tree built before the keyboard slice existed has no `keyboard` field.
     const preFeatureTree = defaultStudioState() as Partial<ReturnType<typeof defaultStudioState>>;
     delete preFeatureTree.keyboard;
-    expect(coalesceKeyboardState(preFeatureTree.keyboard)).toEqual({ octave: 0 });
+    expect(coalesceKeyboardState(preFeatureTree.keyboard)).toEqual({ octave: 0, midiChannel: -1, glideS: 0 });
+  });
+
+  it('coalesceKeyboardState heals a pre-G1 {octave} tree to {octave,midiChannel:-1,glideS:0}', () => {
+    // A tree from before midiChannel/glideS existed carries only `octave`.
+    expect(coalesceKeyboardState({ octave: 2 } as Partial<{ octave: number }>)).toEqual({
+      octave: 2,
+      midiChannel: -1,
+      glideS: 0,
+    });
   });
 
   it('coalesceKeyboardState clamps/defaults a corrupt octave', () => {
@@ -347,9 +466,37 @@ describe('studio state round-trip (work order §3.6)', () => {
     expect(bad(undefined)).toBe(0); // missing -> default 0
   });
 
-  it('coalesceKeyboardState passes the full -3..+3 range through unchanged', () => {
+  it('coalesceKeyboardState clamps/defaults a corrupt midiChannel (-1 OMNI / 0..15)', () => {
+    const ch = (midiChannel: unknown) =>
+      coalesceKeyboardState({ midiChannel } as Partial<{ midiChannel: number }>).midiChannel;
+    expect(ch(-1)).toBe(-1); // OMNI passes
+    expect(ch(0)).toBe(0); // ch 1
+    expect(ch(15)).toBe(15); // ch 16
+    expect(ch(16)).toBe(-1); // above range -> OMNI
+    expect(ch(-2)).toBe(-1); // below -1 -> OMNI
+    expect(ch(3.5)).toBe(-1); // non-integer -> OMNI
+    expect(ch('x')).toBe(-1); // wrong type -> OMNI
+    expect(ch(NaN)).toBe(-1); // NaN -> OMNI
+    expect(ch(undefined)).toBe(-1); // missing -> OMNI
+  });
+
+  it('coalesceKeyboardState clamps/defaults a corrupt glideS (finite 0..1)', () => {
+    const g = (glideS: unknown) =>
+      coalesceKeyboardState({ glideS } as Partial<{ glideS: number }>).glideS;
+    expect(g(0)).toBe(0);
+    expect(g(0.5)).toBe(0.5);
+    expect(g(1)).toBe(1);
+    expect(g(2)).toBe(1); // above range -> clamp 1
+    expect(g(-0.5)).toBe(0); // below range -> clamp 0
+    expect(g(NaN)).toBe(0); // non-finite -> 0
+    expect(g(Infinity)).toBe(0); // non-finite -> 0
+    expect(g('x')).toBe(0); // wrong type -> 0
+    expect(g(undefined)).toBe(0); // missing -> 0
+  });
+
+  it('coalesceKeyboardState passes the full -3..+3 octave range through unchanged', () => {
     for (const octave of [-3, -2, -1, 0, 1, 2, 3]) {
-      expect(coalesceKeyboardState({ octave })).toEqual({ octave });
+      expect(coalesceKeyboardState({ octave })).toEqual({ octave, midiChannel: -1, glideS: 0 });
     }
   });
 

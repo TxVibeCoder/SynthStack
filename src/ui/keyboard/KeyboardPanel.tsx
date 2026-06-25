@@ -27,6 +27,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { ControlDef } from '../../../data/schema';
 import { COLORS, FONT_CONDENSED } from '../theme';
 import { Button } from '../controls/Button';
+import { Knob } from '../controls/Knob';
 import { engineBridge, type MidiStatus } from '../engineBridge';
 import { keyToNote } from '../../engine/voice/keyMap';
 import {
@@ -43,7 +44,13 @@ import {
   ENABLE_MIDI,
   MIDI_STATUS_LED,
   MIDI_STATUS_TEXT,
+  CLOCK_MASTER_LED,
+  CLOCK_MASTER_TEXT,
   PC_KEYS,
+  CH_DOWN,
+  CH_READOUT,
+  CH_UP,
+  KB_GLIDE,
   type KeyRect,
 } from './keyboardLayout';
 
@@ -55,7 +62,22 @@ const OCT_MAX = 3;
 
 const OCT_DOWN_DEF: ControlDef = { id: 'KB_OCT_DOWN', panelLabel: 'OCT-', type: 'button' };
 const OCT_UP_DEF: ControlDef = { id: 'KB_OCT_UP', panelLabel: 'OCT+', type: 'button' };
+const CH_DOWN_DEF: ControlDef = { id: 'KB_CH_DOWN', panelLabel: 'CH-', type: 'button' };
+const CH_UP_DEF: ControlDef = { id: 'KB_CH_UP', panelLabel: 'CH+', type: 'button' };
 const ENABLE_MIDI_DEF: ControlDef = { id: 'KB_ENABLE_MIDI', panelLabel: 'ENABLE MIDI', type: 'button' };
+/** KB GLIDE: separate keyboard/MIDI live-play glide (G1), 0..1 s; the seq keeps MON_GLIDE. */
+const KB_GLIDE_DEF: ControlDef = {
+  id: 'KB_GLIDE',
+  panelLabel: 'KB GLIDE',
+  type: 'knob',
+  min: 0,
+  max: 1,
+  default: 0,
+  unit: 's',
+};
+/** MIDI channel: -1 = OMNI, else 0..15 -> shown 1-based. */
+const CH_MIN = -1;
+const CH_MAX = 15;
 const PC_KEYS_DEF: ControlDef = {
   id: 'KB_PC_KEYS',
   panelLabel: 'PC KEYS',
@@ -110,16 +132,26 @@ const SEMITONE_KEYCAP: Record<number, string> = Object.fromEntries(
 
 const subscribeStore = (onChange: () => void) => engineBridge.store.subscribe(onChange);
 const getOctaveSnapshot = () => engineBridge.getKeyboardOctave();
+const getChannelSnapshot = () => engineBridge.getMidiChannel();
+const getGlideSnapshot = () => engineBridge.getKeyboardGlide();
 
 function useKeyboardOctave(): number {
   return useSyncExternalStore(subscribeStore, getOctaveSnapshot);
+}
+
+function useMidiChannel(): number {
+  return useSyncExternalStore(subscribeStore, getChannelSnapshot);
+}
+
+function useKeyboardGlide(): number {
+  return useSyncExternalStore(subscribeStore, getGlideSnapshot);
 }
 
 // ---- MIDI status (RUNTIME only — not in the store; poll a light interval) --------------
 
 const MIDI_POLL_MS = 600;
 
-function midiCaption(status: MidiStatus): { color: string; text: string } {
+export function midiCaption(status: MidiStatus): { color: string; text: string } {
   switch (status.state) {
     case 'enabled': {
       const first = status.deviceNames[0];
@@ -136,7 +168,7 @@ function midiCaption(status: MidiStatus): { color: string; text: string } {
   }
 }
 
-function useMidiStatus(): MidiStatus {
+export function useMidiStatus(): MidiStatus {
   const [status, setStatus] = useState<MidiStatus>(() => engineBridge.getMidiStatus());
   useEffect(() => {
     // getMidiStatus is runtime (never in the store), so a small interval keeps the
@@ -154,6 +186,23 @@ function useMidiStatus(): MidiStatus {
     return () => clearInterval(id);
   }, []);
   return status;
+}
+
+/**
+ * CLOCK MASTER poll — true while external MIDI clock (0xFA Start) is driving the studio. RUNTIME
+ * only (implicit enable; no store field), so it shares the MIDI_POLL_MS interval idiom. Master is
+ * released by a 0xFC Stop OR the studio watchdog (a stalled/unplugged upstream clock).
+ */
+function useMidiClockMaster(): boolean {
+  const [master, setMaster] = useState<boolean>(() => engineBridge.isMidiClockMaster());
+  useEffect(() => {
+    const id = setInterval(() => {
+      const next = engineBridge.isMidiClockMaster();
+      setMaster((prev) => (prev === next ? prev : next));
+    }, MIDI_POLL_MS);
+    return () => clearInterval(id);
+  }, []);
+  return master;
 }
 
 // ---- one key (white or black <g role="button">) ---------------------------------------
@@ -198,7 +247,10 @@ const Key = memo(function Key({ k, held, onDown, onUp, onMove }: KeyProps) {
 
 export function KeyboardPanel() {
   const octave = useKeyboardOctave();
+  const midiChannel = useMidiChannel();
+  const glideS = useKeyboardGlide();
   const midiStatus = useMidiStatus();
+  const clockMaster = useMidiClockMaster();
 
   /** Physically-held semitone indices (drives the amber repaint). */
   const [held, setHeld] = useState<ReadonlySet<number>>(() => new Set());
@@ -341,6 +393,28 @@ export function KeyboardPanel() {
     if (pos === 'ON') shiftOctave(1);
   }, [shiftOctave]);
 
+  // ---- MIDI CHANNEL filter (OMNI / 1..16) ---------------------------------------------
+
+  const shiftChannel = useCallback(
+    (delta: number) => {
+      const next = Math.max(CH_MIN, Math.min(CH_MAX, midiChannel + delta));
+      if (next !== midiChannel) engineBridge.setMidiChannel(next);
+    },
+    [midiChannel],
+  );
+  const onChDown = useCallback((pos: string) => {
+    if (pos === 'ON') shiftChannel(-1);
+  }, [shiftChannel]);
+  const onChUp = useCallback((pos: string) => {
+    if (pos === 'ON') shiftChannel(1);
+  }, [shiftChannel]);
+
+  // ---- KB GLIDE (separate keyboard/MIDI live-play glide) ------------------------------
+  // onInput is debounce-free (it persists via setKeyboardGlide which writes the store + live
+  // value); onCommit re-commits the final value. Both go through the same bridge setter.
+  const onGlideInput = useCallback((v: number) => engineBridge.setKeyboardGlide(v), []);
+  const onGlideCommit = useCallback((v: number) => engineBridge.setKeyboardGlide(v), []);
+
   // ---- ENABLE MIDI --------------------------------------------------------------------
 
   const onEnableMidi = useCallback((pos: string) => {
@@ -397,6 +471,8 @@ export function KeyboardPanel() {
   const status = midiCaption(midiStatus);
   // Low-C octave readout: octave 0 -> the low C is MIDI 48 = C3 (keyToNote semitone 0).
   const lowCLabel = `C${3 + octave}`;
+  // CHANNEL readout: -1 = OMNI; else the 1-based channel number (0..15 -> "1".."16").
+  const chLabel = midiChannel < 0 ? 'OMNI' : `${midiChannel + 1}`;
 
   return (
     <svg
@@ -498,6 +574,30 @@ export function KeyboardPanel() {
         </text>
       </g>
 
+      {/* CLOCK MASTER indicator: amber LED + caption while external MIDI clock drives the studio.
+          EARS: the panel TEMPO readout intentionally still shows the internal value while MIDI
+          silently overrides timing (do not drive the readout from external tempo) — see report. */}
+      <g data-testid="midi-clock-master" aria-label={clockMaster ? 'MIDI clock master' : 'Internal clock'}>
+        <circle
+          cx={CLOCK_MASTER_LED.x}
+          cy={CLOCK_MASTER_LED.y}
+          r={5}
+          fill={clockMaster ? COLORS.ledAmber : COLORS.ledOff}
+          stroke={COLORS.panelShadow}
+          strokeWidth={1}
+        />
+        <text
+          x={CLOCK_MASTER_TEXT.x}
+          y={CLOCK_MASTER_TEXT.y + 4}
+          fontFamily={FONT_CONDENSED}
+          fontSize={10}
+          letterSpacing={1}
+          fill={clockMaster ? COLORS.ledAmber : COLORS.legendDim}
+        >
+          {clockMaster ? 'CLOCK MASTER' : 'INT CLOCK'}
+        </text>
+      </g>
+
       {/* PC KEYS latch */}
       <g data-testid="pc-keys">
         <Button
@@ -508,6 +608,52 @@ export function KeyboardPanel() {
           x={PC_KEYS.x}
           y={PC_KEYS.y}
         />
+      </g>
+
+      {/* KB GLIDE: separate keyboard/MIDI live-play glide (the seq keeps MON_GLIDE). */}
+      <g data-testid="kb-glide">
+        <Knob
+          def={KB_GLIDE_DEF}
+          value={glideS}
+          onInput={onGlideInput}
+          onCommit={onGlideCommit}
+          size="s"
+          x={KB_GLIDE.x}
+          y={KB_GLIDE.y}
+        />
+      </g>
+
+      {/* CHANNEL: MIDI input channel filter (OMNI / 1..16) — prev/readout/next stepper. */}
+      <g data-testid="channel-down">
+        <Button def={CH_DOWN_DEF} value="OFF" onChange={onChDown} momentary x={CH_DOWN.x} y={CH_DOWN.y} />
+      </g>
+      <g data-testid="midi-channel">
+        <text
+          data-testid="channel-readout"
+          x={CH_READOUT.x}
+          y={CH_READOUT.y + 1}
+          textAnchor="middle"
+          fontFamily={FONT_CONDENSED}
+          fontSize={13}
+          letterSpacing={1}
+          fill={COLORS.legend}
+        >
+          {chLabel}
+        </text>
+        <text
+          x={CH_READOUT.x}
+          y={CH_READOUT.y + 14}
+          textAnchor="middle"
+          fontFamily={FONT_CONDENSED}
+          fontSize={7}
+          letterSpacing={1.2}
+          fill={COLORS.legendDim}
+        >
+          CHANNEL
+        </text>
+      </g>
+      <g data-testid="channel-up">
+        <Button def={CH_UP_DEF} value="OFF" onChange={onChUp} momentary x={CH_UP.x} y={CH_UP.y} />
       </g>
 
       {/* ---- keybed: whites first, blacks painted on top ---- */}

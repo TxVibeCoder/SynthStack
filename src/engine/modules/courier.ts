@@ -89,6 +89,7 @@ export class CourierModule extends ModuleBase {
 
   // VCA
   private readonly vcaGainNode: GainNode;
+  private readonly velocityGain: GainNode; // G1: per-note velocity SCALE on the EG->vcaCtl path (default unity)
   private readonly ampVca: GainNode; // LFO 2 AMP-destination tremolo
   private readonly volume: GainNode;
 
@@ -363,7 +364,14 @@ export class CourierModule extends ModuleBase {
     const vcaShape = shaper(ctx, (x) => Math.pow(clamp(x, 0, 1), 1.3));
     this.ampEg.connect(vcaEgNorm).connect(vcaShape);
     const vcaCtl = gain(ctx, 0.5); // into the 0..1 shaper domain
-    vcaShape.connect(vcaCtl);
+    // G1 (velocity -> VCA): velocity SCALES the amp-EG contribution rather than summing a parallel DC
+    // offset. A per-note velocity GAIN (default UNITY — the sequencer/arp never calls velocityAt, so
+    // that path is unchanged) sits on the EG->vcaCtl path; velocityAt sets it at note-on. Because it
+    // only multiplies the already-decaying envelope, once the EG reaches 0 the velocity term is 0 too
+    // (no residual oscillator bleed after note-off) and there is no note-off click. EARS: vel 100 =
+    // unity (today's level); the curve/range is a by-ear knob (see units.velocityToGain).
+    this.velocityGain = gain(ctx, 1);
+    vcaShape.connect(this.velocityGain).connect(vcaCtl);
     const vcaClip = shaper(ctx, (x) => {
       const g = clamp(x, 0, 1) * 2;
       return g <= 1 ? g : 1 + 0.2 * Math.tanh((g - 1) / 0.2);
@@ -664,12 +672,18 @@ export class CourierModule extends ModuleBase {
 
   // ---- transport binding surface ----------------------------------------------
 
-  /** Set keyboard pitch CV at an exact time, with optional glide (mirrors the Monarch). */
-  setPitchAt(noteVv: number, time: number, glide: boolean): void {
+  /**
+   * Set keyboard pitch CV at an exact time, with optional glide (mirrors the Monarch).
+   *   `glideTimeSOverride` (G1): when provided, glide uses THIS time instead of `this.glideTimeS` —
+   *   DEFAULTS to `this.glideTimeS` so the sequencer/arp binder is untouched (only the keyboard/MIDI
+   *   live path passes the separate keyboard-glide value).
+   */
+  setPitchAt(noteVv: number, time: number, glide: boolean, glideTimeSOverride?: number): void {
+    const glideS = glideTimeSOverride ?? this.glideTimeS;
     const p = this.kbCv.offset;
     p.cancelAndHoldAtTime?.(time);
-    if (glide && this.glideTimeS > 0.001) {
-      p.setTargetAtTime(noteVv, time, this.glideTimeS / 3);
+    if (glide && glideS > 0.001) {
+      p.setTargetAtTime(noteVv, time, glideS / 3);
     } else {
       p.setValueAtTime(noteVv, time);
     }
@@ -678,6 +692,18 @@ export class CourierModule extends ModuleBase {
   /** Set the keyboard gate (0/5 vv) at an exact time. */
   gateAt(on: boolean, time: number): void {
     this.kbGate.offset.setValueAtTime(on ? 5 : 0, time);
+  }
+
+  /**
+   * Set the note-on VELOCITY at an exact time (mirrors gateAt / the Monarch). `velGain` is the
+   * velocity already mapped to a GAIN by units.velocityToGain (unity at 100). It SCALES the
+   * amp-EG->vcaCtl contribution, so vel=100 = unity (today's level), louder = hotter, quieter =
+   * softer — and since it only scales the (decaying) envelope, NO velocity reset is needed on
+   * note-off (the EG returns the VCA to silence; no residual bleed, no click). Only the
+   * keyboard/MIDI live path drives this; the sequencer/arp leaves the gain at unity (unchanged).
+   */
+  velocityAt(velGain: number, time: number): void {
+    this.velocityGain.gain.setValueAtTime(velGain, time);
   }
 
   /** PITCH WHEEL: live bend in SEMITONES (vv = semitones/12), summed onto the pitch bus so all

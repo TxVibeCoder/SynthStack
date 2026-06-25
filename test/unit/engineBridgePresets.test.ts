@@ -22,7 +22,7 @@
  * resetAll + restoreFullState run the store-side of the path and reloadPadBuffers is skipped.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { engineBridge, __setSampleBackendForTests } from '../../src/ui/engineBridge';
 import {
   defaultStudioState,
@@ -31,6 +31,7 @@ import {
 import {
   buildBundle,
   collectUserSampleIds,
+  parseBundle,
   type PresetBundle,
 } from '../../src/state/presets';
 import { listFactoryPresets } from '../../src/state/factoryPresets';
@@ -519,5 +520,142 @@ describe('engineBridge presets — reference-aware sample-byte deletion (FIX 1)'
     expect(engineBridge.getPadState(0).sampleId).toBe('factory-snare');
     // nothing to assert on the backend (no user bytes existed); the gate's factory-id exclusion
     // is what guarantees no spurious delete — this case simply must not throw.
+  });
+});
+
+/**
+ * G7 — exportSlot: emit a portable .json bundle for a SAVED localStorage slot (NOT the live
+ * setup), embedding the slot's referenced USER sample bytes via the SAME export codec exportSetup
+ * uses. The bridge stays UNPOWERED. triggerJsonDownload is a Node no-op (no DOM), so we spy the
+ * private method to capture the download text, parseBundle it back, and assert the envelope +
+ * a known control round-trip + the sample bytes ride along. Absent / corrupt slots = silent no-op.
+ */
+describe('engineBridge presets — exportSlot (portable per-slot bundle, unpowered)', () => {
+  const originalLs = (globalThis as { localStorage?: unknown }).localStorage;
+  let stub: LocalStorageStub;
+  let backend: MemoryBackend;
+  let prevBackend: SampleBackend;
+
+  /** A File whose .arrayBuffer() resolves to the given ASCII bytes (Node has global File). */
+  const wavFile = (bytes: string, name: string): File =>
+    new File([new TextEncoder().encode(bytes)], name, { type: 'audio/wav' });
+
+  /** Spy the private triggerJsonDownload to capture the emitted JSON text (Node DOM-less no-op). */
+  interface DownloadPrivate {
+    triggerJsonDownload(text: string, filename: string): void;
+  }
+  function captureDownloads(): { texts: string[]; filenames: string[]; restore: () => void } {
+    const texts: string[] = [];
+    const filenames: string[] = [];
+    const spy = vi
+      .spyOn(engineBridge as unknown as DownloadPrivate, 'triggerJsonDownload')
+      .mockImplementation((text: string, filename: string) => {
+        texts.push(text);
+        filenames.push(filename);
+      });
+    return { texts, filenames, restore: () => spy.mockRestore() };
+  }
+
+  beforeEach(() => {
+    stub = new LocalStorageStub();
+    (globalThis as { localStorage?: unknown }).localStorage = stub;
+    backend = new MemoryBackend();
+    prevBackend = __setSampleBackendForTests(backend);
+    engineBridge.resetAll();
+  });
+
+  afterEach(() => {
+    __setSampleBackendForTests(prevBackend);
+    (globalThis as { localStorage?: unknown }).localStorage = originalLs;
+  });
+
+  it('emits a synthstack-preset bundle whose state round-trips a known control + carries user bytes', async () => {
+    // Author a distinctive live state with a USER sample on pad 0, then SAVE it to a slot.
+    engineBridge.setKeyboardOctave(2);
+    engineBridge.store.setState({
+      ...engineBridge.store.getState(),
+      controls: {
+        ...engineBridge.store.getState().controls,
+        monarch: { ...engineBridge.store.getState().controls['monarch'], MON_TEMPO: 142 },
+      },
+    });
+    await engineBridge.loadPadSample(0, wavFile('SLOTBYTES', 's.wav'));
+    const idX = engineBridge.getPadState(0).sampleId!;
+    expect(idX).toBeTruthy();
+    expect(await backend.get(idX)).not.toBeNull();
+
+    engineBridge.saveSlot('Kit One');
+
+    // Mutate the LIVE setup away from the saved snapshot so a leak from getState() would be visible.
+    engineBridge.setKeyboardOctave(-2);
+    engineBridge.store.setState({
+      ...engineBridge.store.getState(),
+      controls: {
+        ...engineBridge.store.getState().controls,
+        monarch: { ...engineBridge.store.getState().controls['monarch'], MON_TEMPO: 60 },
+      },
+    });
+
+    const cap = captureDownloads();
+    await engineBridge.exportSlot('Kit One');
+    cap.restore();
+
+    expect(cap.texts.length).toBe(1);
+    const filename = cap.filenames[0]!;
+    // buildPresetFilename slugifies the SLOT name (spaces/case -> kebab) — built from the slot
+    // name, NOT the live setup's default 'setup'.
+    expect(filename).toContain('kit-one');
+    expect(filename).not.toContain('setup');
+
+    const parsed = parseBundle(cap.texts[0]!);
+    expect(parsed).not.toBeNull();
+    // The state reflects the SLOT (octave 2 / TEMPO 142), NOT the mutated live setup.
+    expect(parsed!.state.keyboard.octave).toBe(2);
+    expect(parsed!.state.controls['monarch']!['MON_TEMPO']).toBe(142);
+    // The slot's referenced user sample rides along as a base64 blob.
+    const blob = parsed!.samples.find((s) => s.id === idX);
+    expect(blob).toBeDefined();
+    expect(blob!.bytesBase64.length).toBeGreaterThan(0);
+
+    // The raw envelope is the scrubbed kind.
+    expect((JSON.parse(cap.texts[0]!) as { kind: string }).kind).toBe('synthstack-preset');
+  });
+
+  it('a slot referencing only factory pads yields an empty samples[] (no user bytes)', async () => {
+    // Default state's pads are all factory ids — saving + exporting carries no portable bytes.
+    engineBridge.saveSlot('FactoryOnly');
+    const cap = captureDownloads();
+    await engineBridge.exportSlot('FactoryOnly');
+    cap.restore();
+    expect(cap.texts.length).toBe(1);
+    const parsed = parseBundle(cap.texts[0]!)!;
+    expect(parsed.samples).toEqual([]);
+  });
+
+  it('an unknown slot name is a silent no-op (no download, no throw)', async () => {
+    const cap = captureDownloads();
+    await expect(engineBridge.exportSlot('never-saved')).resolves.toBeUndefined();
+    cap.restore();
+    expect(cap.texts.length).toBe(0);
+  });
+
+  it('a corrupt slot payload is a silent no-op (no download, no throw)', async () => {
+    engineBridge.saveSlot('Bad');
+    stub.setItem('synthstack-preset:Bad', '{not valid json'); // clobber the payload
+    const cap = captureDownloads();
+    await expect(engineBridge.exportSlot('Bad')).resolves.toBeUndefined();
+    cap.restore();
+    // The wrapper JSON.parse throws on the corrupt bytes, so readSlotState returns null and
+    // exportSlot returns BEFORE any download — no bundle is emitted, no throw escapes.
+    expect(cap.texts.length).toBe(0);
+  });
+
+  it('exportSlot without localStorage is a silent no-op (no download, no throw)', async () => {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+    const cap = captureDownloads();
+    await expect(engineBridge.exportSlot('whatever')).resolves.toBeUndefined();
+    cap.restore();
+    expect(cap.texts.length).toBe(0);
+    (globalThis as { localStorage?: unknown }).localStorage = stub; // restore for afterEach symmetry
   });
 });
