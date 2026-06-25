@@ -37,6 +37,9 @@ const ROW = [90, 200, 310] as const;
 const C = [100, 284, 468, 652, 836, 1020, 1204, 1388] as const;
 /** Transport button row, tucked directly below the third control row. */
 const TR_Y = 372;
+/** ASSIGN-source 9-position lever — centered low in the right gutter so its tall body
+ *  (~142u) stays inside the 408u canvas (337 ± 71 = 266..408). */
+const ASSIGN_Y = 337;
 
 export const monarchLayout: PanelLayout = {
   width: MONARCH_W,
@@ -80,6 +83,14 @@ export const monarchLayout: PanelLayout = {
     MON_RUN_STOP: { x: C[0], y: TR_Y },
     MON_RESET: { x: C[1], y: TR_Y },
     MON_HOLD: { x: C[2], y: TR_Y },
+
+    // ---- Setup: ASSIGN out source selector ----
+    // Real-hardware Setup-mode page-1 parameter (no front-panel pot on the unit); the emulator
+    // surfaces it as a 9-position selector so a running patch can pick the ASSIGN source. The
+    // 9-position lever is tall (~142u), so it sits in the open right-hand gutter beside the
+    // transport row, vertically centered low enough to stay inside the 408u canvas yet clear of
+    // the row-3 knobs (MON_SUSTAIN / MON_VC_MIX) by > 40u.
+    MON_ASSIGN_SOURCE: { x: 1300, y: ASSIGN_Y },
   },
 
   /** Empty — all jacks live in jackFieldLayout.ts. */

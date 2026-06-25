@@ -169,6 +169,44 @@ describe('Cascade polyrhythm clock (work order §11.2)', () => {
     ).toBe(true); // d clamped to 1 -> fires every tick
   });
 
+  it('division CV (U2): effectiveDivision clamps to 1..16 — no 0/negative/NaN divider', () => {
+    // U2 CV-rate guard: CAS_RHYTHM_n_IN CV rides divisionCvVv and feeds effectiveDivision via
+    // cascadeRhythmDivision(knob, cv). A 0 or negative divider would be `tickIndex % 0` (NaN) — a
+    // divide-by-zero that silently wedges the polyrhythm. Confirm every CV extreme clamps to 1..16.
+    const c = fresh();
+    c.divisions = [4, 1, 1, 1];
+    c.assign = [
+      [true, false],
+      [false, false],
+      [false, false],
+      [false, false],
+    ];
+    // huge NEGATIVE CV would push the divider far below 1 → clamps to 1 → RG fires every tick
+    c.divisionCvVv = [-100, 0, 0, 0];
+    const neg = runTicks(c, 5);
+    expect(
+      neg.every((evs) => (evs.find((e) => e.type === 'rgFired')?.data?.['rgs'] as number[]).includes(0)),
+    ).toBe(true); // d clamped to 1 — never a 0/negative divider (no NaN tick math)
+
+    // huge POSITIVE CV clamps to 16 (never blows past the 16-tick ceiling)
+    c.reset();
+    c.divisionCvVv = [100, 0, 0, 0];
+    const pos = runTicks(c, 17);
+    const firedAt = pos
+      .map((evs, i) => ({ i, rgs: evs.find((e) => e.type === 'rgFired')?.data?.['rgs'] as number[] | undefined }))
+      .filter((x) => x.rgs?.includes(0))
+      .map((x) => x.i);
+    expect(firedAt).toEqual([0, 16]); // d clamped to 16
+
+    // NaN CV must NOT propagate a NaN divider (clamp defaults NaN to the low rail = 1)
+    c.reset();
+    c.divisionCvVv = [NaN, 0, 0, 0];
+    const nan = runTicks(c, 3);
+    expect(
+      nan.every((evs) => (evs.find((e) => e.type === 'rgFired')?.data?.['rgs'] as number[]).includes(0)),
+    ).toBe(true); // d defaulted to 1 — never a NaN divider
+  });
+
   it('division changes take effect on the next tick without phase jump', () => {
     const c = fresh();
     c.divisions = [4, 1, 1, 1];

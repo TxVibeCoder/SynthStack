@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AnvilSequencer } from '../../src/engine/sequencers/anvilseq';
+import { anvilStepRateHz, expKnob01 } from '../../src/engine/units';
 import { Scheduler, type TransportEvent } from '../../src/engine/scheduler';
 
 describe('Anvil sequencer (work order §10.2)', () => {
@@ -62,6 +63,26 @@ describe('Anvil sequencer (work order §10.2)', () => {
     seq.steps[0]!.velocityVv = 2.5;
     const evs = seq.manualTrigger(0);
     expect(evs.find((e) => e.type === 'trigger')?.data?.['velocityVv']).toBe(2.5);
+  });
+
+  it('U2 CV-rate: rateCvVv defaults to 0 (knob-only) and the studio rate recompute uses it', () => {
+    // The pure seq carries the sampled CV offset (rateCvVv, mirror of cascadeClock.divisionCvVv);
+    // the rate DERIVATION stays in the studio binding via units.anvilStepRateHz so this engine
+    // never touches an AudioParam. Default is 0 = no CV.
+    const seq = new AnvilSequencer();
+    expect(seq.rateCvVv).toBe(0);
+
+    // The studio folds the sampled vv in exactly like this (ANV_TEMPO knob base 8 Hz, default):
+    const baseHz = 8;
+    const knob01 = expKnob01(baseHz, 0.7, 700);
+    const noCv = anvilStepRateHz(knob01, 0);
+    const upOctave = anvilStepRateHz(knob01, 1); // +1 vv = ×2
+    expect(noCv).toBeCloseTo(baseHz, 5);
+    expect(upOctave / noCv).toBeCloseTo(2, 5);
+    // round-trip the field through the seq (it is a plain runtime field, no clamping of its own)
+    seq.rateCvVv = 1;
+    seq.rateHz = anvilStepRateHz(knob01, seq.rateCvVv);
+    expect(seq.rateHz).toBeCloseTo(upOctave, 5);
   });
 
   it('rate change takes effect from the next boundary', () => {

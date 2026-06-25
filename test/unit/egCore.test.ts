@@ -185,3 +185,118 @@ describe('eg.worklet core (work order §7.6, D2)', () => {
     expect(at(dLong, 0.2)).toBeGreaterThan(8 * 0.8); // 10 s decay barely moved at 200 ms
   });
 });
+
+// ---- Courier ADSR mode (control audit A: real sustain LEVEL + independent RELEASE + ENV LOOP) ----
+
+describe('eg.worklet core — Courier ADSR mode', () => {
+  const courierAdsr: EgConfig = {
+    attackS: 0.005,
+    decayS: 0.1,
+    sustainMode: 'adsr',
+    retrigInAttack: false,
+    attackCompletes: true,
+    peakVv: 8,
+    sustainLevel: 0.5,
+    releaseS: 0.2,
+  };
+
+  it('held note decays to the SUSTAIN level and holds there (not pinned at peak)', () => {
+    const buf = renderEg(courierAdsr, (t) => (t < 0.5 ? 5 : 0), 1.0);
+    // sustain = 0.5 * peak(8) = 4 vv; settled well before 0.3 s (decay τ = 100 ms / 4)
+    expect(Math.abs(at(buf, 0.3) - 4)).toBeLessThan(0.3);
+    expect(at(buf, 0.3)).toBeLessThan(8 * 0.7); // categorically not pinned at peak
+  });
+
+  it('SUSTAIN = 0 decays to silence while held and stays there (AD-style, no NaN)', () => {
+    const cfg: EgConfig = { ...courierAdsr, sustainLevel: 0, decayS: 0.05 };
+    const buf = renderEg(cfg, (t) => (t < 0.4 ? 5 : 0), 0.6);
+    expect(at(buf, 0.02)).toBeGreaterThan(1); // mid-decay, still falling toward 0
+    expect(at(buf, 0.3)).toBeLessThan(0.05); // settled to silence (sustain 0) while still gated
+    expect(Number.isFinite(at(buf, 0.3))).toBe(true);
+  });
+
+  it('SUSTAIN at full (level=1, the default) holds near peak — A-D-with-hold feel', () => {
+    const cfg: EgConfig = {
+      attackS: 0.005, decayS: 0.1, sustainMode: 'adsr',
+      retrigInAttack: false, attackCompletes: true, peakVv: 8, releaseS: 0.005,
+    };
+    const buf = renderEg(cfg, (t) => (t < 0.3 ? 5 : 0), 0.5);
+    expect(at(buf, 0.2)).toBeGreaterThan(8 * 0.95); // sustainLevel default 1 -> holds at peak
+    expect(at(buf, 0.35)).toBeLessThan(0.5); // released after gate-off
+  });
+
+  it('RELEASE is an independent stage governed by releaseS, not DECAY', () => {
+    // huge DECAY (1 s) but a fast RELEASE (5 ms): on gate-off the fall must follow RELEASE.
+    const cfg: EgConfig = { ...courierAdsr, decayS: 1.0, releaseS: 0.005, sustainLevel: 0.8 };
+    const buf = renderEg(cfg, (t) => (t < 0.3 ? 5 : 0), 0.6);
+    expect(at(buf, 0.28)).toBeGreaterThan(8 * 0.6); // still high (1 s decay barely moved)
+    expect(at(buf, 0.315)).toBeLessThan(0.5); // ~15 ms after gate-off already collapsed via RELEASE
+  });
+
+  it('a long RELEASE produces an exponential tail after gate-off', () => {
+    const cfg: EgConfig = { ...courierAdsr, decayS: 0.02, releaseS: 0.4, sustainLevel: 0.5 };
+    const buf = renderEg(cfg, (t) => (t < 0.3 ? 5 : 0), 0.9);
+    expect(Math.abs(at(buf, 0.28) - 4)).toBeLessThan(0.4); // at sustain just before release
+    const relAt = (dt: number) => 4 * Math.exp(-dt / 0.1); // τ = releaseS / 4 = 100 ms
+    expect(Math.abs(at(buf, 0.4) - relAt(0.1)) / 8).toBeLessThan(0.1);
+    expect(at(buf, 0.5)).toBeGreaterThan(0.2); // still releasing (not an instant cut)
+  });
+
+  it('ENV LOOP re-attacks while gated — free-running envelope-as-LFO', () => {
+    const cfg: EgConfig = { ...courierAdsr, attackS: 0.003, decayS: 0.008, loop: true, sustainLevel: 0.5 };
+    const buf = renderEg(cfg, () => 5, 0.3); // gate held the whole time
+    let cycles = 0;
+    let above = false;
+    for (let i = 0; i < buf.length; i++) {
+      const v = buf[i]!;
+      if (!above && v > 8 * 0.9) { cycles++; above = true; }
+      else if (above && v < 8 * 0.2) above = false;
+    }
+    expect(cycles).toBeGreaterThan(2); // looped several times in 300 ms (LFO behavior)
+  });
+
+  it('useVelocity gate: false ignores velocity (full peak); true scales the peak (Courier F/A ENV VEL, U4)', () => {
+    const base: EgConfig = {
+      attackS: 0.001,
+      decayS: 0.2,
+      sustainMode: 'off',
+      retrigInAttack: true,
+      attackCompletes: false,
+      peakVv: 8,
+    };
+    const n = Math.floor(0.05 * FS);
+    const peakOf = (eg: EgCore): number => {
+      let p = 0;
+      for (let i = 0; i < n; i++) p = Math.max(p, eg.processSample(i < FS * 0.001 ? 5 : 0));
+      return p;
+    };
+    // useVelocity false: setVelocity(2.5) is ignored, so the EG still reaches full peak.
+    const disarmed = new EgCore(FS, { ...base, useVelocity: false });
+    disarmed.setVelocity(2.5);
+    expect(peakOf(disarmed)).toBeGreaterThan(8 * 0.95);
+    // useVelocity true: setVelocity(2.5) scales the peak to ~half.
+    const armed = new EgCore(FS, { ...base, useVelocity: true });
+    armed.setVelocity(2.5);
+    expect(peakOf(armed)).toBeCloseTo(4, 0);
+    // configure(useVelocity:false) on an armed EG drops the stale scale back to full peak.
+    const toggled = new EgCore(FS, { ...base, useVelocity: true });
+    toggled.setVelocity(2.5);
+    toggled.configure({ useVelocity: false });
+    expect(peakOf(toggled)).toBeGreaterThan(8 * 0.95);
+  });
+
+  it('a new gate during RELEASE retriggers the attack from the current level (no zero-snap click)', () => {
+    // gate on 0..0.1, off, then on again at 0.2 while the (slow) release is still falling
+    const cfg: EgConfig = { ...courierAdsr, releaseS: 0.5 };
+    const buf = renderEg(cfg, (t) => (t < 0.1 || (t >= 0.2 && t < 0.4) ? 5 : 0), 0.6);
+    const midRelease = at(buf, 0.18); // partway down the slow release, still sounding
+    expect(midRelease).toBeGreaterThan(0.5);
+    expect(midRelease).toBeLessThan(8 * 0.6); // and clearly below peak (so the climb is real)
+    // the new gate re-attacks back up to ~peak (window max, robust to the few-ms attack timing)
+    let reattackPeak = 0;
+    for (let i = Math.floor(0.2 * FS); i < Math.floor(0.215 * FS); i++) {
+      reattackPeak = Math.max(reattackPeak, buf[i]!);
+    }
+    expect(reattackPeak).toBeGreaterThan(8 * 0.95);
+  });
+});

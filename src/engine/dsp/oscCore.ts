@@ -179,8 +179,11 @@ export class OscCore {
     // naive unit triangle, DC-free: +1 at t=0, -1 at t=0.5, back to +1 at t=1
     const tri = 1 - 4 * Math.abs(t - 0.5);
 
-    if (ws <= WS_TRI) {
-      // ---- WAVEFOLDER region [0, WS_TRI]: fold the unit triangle ----
+    if (ws < WS_TRI) {
+      // ---- WAVEFOLDER region [0, WS_TRI): fold the unit triangle ----
+      // The fold region is STRICTLY CCW of the detent. At EXACTLY ws == WS_TRI the code falls
+      // through to the triangle->saw branch with blend m=0, returning the raw naive `tri` — a
+      // sharp odd-harmonic 1/k² triangle (the true "triangle" detent), NOT a rounded near-sine.
       // frac 0 at WS_TRI (no fold) -> 1 at ws=0 (max fold)
       const frac = WS_TRI > 0 ? (WS_TRI - ws) / WS_TRI : 0;
       const drive = 1 + frac * (FOLD_MAX_DRIVE - 1);

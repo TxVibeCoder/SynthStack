@@ -231,6 +231,104 @@ async function courierVelocity(): Promise<AudioTestResult> {
   };
 }
 
+async function courierAmpEnvVel(): Promise<AudioTestResult> {
+  // U4: COU_A_ENV_VEL GATES G1's velocityGain (the ONE amp-velocity path) — proving NO double-apply.
+  // OFF: the amp level is INDEPENDENT of velGain (a loud vs soft velocity render the same). ON: the
+  // loud velocity is measurably louder. Single deterministic source (OSC1 only), steady sustain.
+  const render = async (velGain: number, ampEnvVel: 'ON' | 'OFF'): Promise<Float32Array> => {
+    const { mod, render } = await buildModule(1.0, CourierModule, courierDef);
+    mod.setControl('COU_A_ATTACK', 0.02);
+    mod.setControl('COU_A_DECAY', 0.2);
+    mod.setControl('COU_A_SUSTAIN', 1); // hold at peak so the window is steady
+    mod.setControl('COU_MIX_OSC1', 0.9);
+    mod.setControl('COU_MIX_OSC2', 0);
+    mod.setControl('COU_MIX_SUB', 0);
+    mod.setControl('COU_MIX_NOISE', 0);
+    mod.setControl('COU_CUTOFF', 8000);
+    mod.setControl('COU_VOLUME', 0.8);
+    mod.setControl('COU_A_ENV_VEL', ampEnvVel);
+    mod.gateAt(true, 0.05);
+    mod.velocityAt(velGain, 0.05);
+    mod.outputTap('COU_AUDIO_OUT').connect((mod.ctx as OfflineAudioContext).destination);
+    return render();
+  };
+  const win = (buf: Float32Array) => rms(buf, Math.floor(0.3 * SR), Math.floor(0.9 * SR));
+  // A ENV VEL OFF: hot vs soft velocity must render the SAME level (velocity gated out).
+  const offHot = win(await render(velocityToGain(127), 'OFF'));
+  const offSoft = win(await render(velocityToGain(32), 'OFF'));
+  // A ENV VEL ON: hot must be louder than soft (velocity applies on the single velocityGain path).
+  const onHot = win(await render(velocityToGain(127), 'ON'));
+  const onSoft = win(await render(velocityToGain(32), 'ON'));
+  const offIndependent = Math.abs(offHot - offSoft) / Math.max(offHot, 1e-6) < 0.02;
+  const onScales = onHot > onSoft * 1.1;
+  return {
+    name: 'Courier A ENV VEL: OFF bypasses velocity (level independent), ON scales — no double-apply (U4)',
+    pass: offIndependent && onScales,
+    detail: `OFF hot=${offHot.toFixed(3)} soft=${offSoft.toFixed(3)} | ON hot=${onHot.toFixed(3)} soft=${onSoft.toFixed(3)}`,
+  };
+}
+
+async function courierFilterEnvVel(): Promise<AudioTestResult> {
+  // U4: COU_F_ENV_VEL ON makes the note-on velocity scale the FILTER EG peak (the filter envelope
+  // opens further for louder notes); OFF holds the filter EG at full peak regardless of velocity.
+  // The switch gates the velBus VALUE (ON = note velocity, OFF = full 5 vv), so it is deterministic.
+  // Two assertions: (1) the filter EG LEVEL itself scales with velocity when ON and not when OFF
+  // (tap the filterEg output directly); (2) the audible cutoff sweep is brighter for a hotter note.
+
+  // (1) direct filter-EG level: build, arm F ENV VEL, hold the EG up (SUSTAIN 1), tap filterEg output.
+  const egLevel = async (velGain: number, fEnvVel: 'ON' | 'OFF'): Promise<number> => {
+    const { mod, render } = await buildModule(0.4, CourierModule, courierDef);
+    mod.setControl('COU_F_ATTACK', 0.001);
+    mod.setControl('COU_F_SUSTAIN', 1); // hold the filter EG at its (velocity-scaled) peak
+    mod.setControl('COU_F_ENV_VEL', fEnvVel);
+    (mod as unknown as { filterEg: AudioNode }).filterEg.connect((mod.ctx as OfflineAudioContext).destination);
+    mod.velocityAt(velGain, 0.05);
+    mod.gateAt(true, 0.05);
+    const buf = await render();
+    return rms(buf, Math.floor(0.1 * SR), Math.floor(0.3 * SR)); // held EG level ≈ peakVv × velScale
+  };
+  const egOnHot = await egLevel(velocityToGain(127), 'ON'); // full peak (vel127 -> velVv pinned 5)
+  const egOnSoft = await egLevel(velocityToGain(32), 'ON'); // reduced peak (low velocity)
+  const egOffHot = await egLevel(velocityToGain(127), 'OFF');
+  const egOffSoft = await egLevel(velocityToGain(32), 'OFF');
+  const egScalesOn = egOnHot > egOnSoft * 1.3; // ON: a soft note is markedly lower than a hot one
+  const egFlatOff = Math.abs(egOffHot - egOffSoft) / Math.max(egOffHot, 1e-6) < 0.02; // OFF: identical
+
+  // (2) audible brightness: low base cutoff + EG sweep so the velocity-scaled filter peak controls
+  // brightness; A ENV VEL OFF isolates the FILTER (amp level stays velocity-independent).
+  const audio = async (velGain: number, fEnvVel: 'ON' | 'OFF'): Promise<Float32Array> => {
+    const { mod, render } = await buildModule(0.6, CourierModule, courierDef);
+    mod.setControl('COU_F_ATTACK', 0.001);
+    mod.setControl('COU_F_SUSTAIN', 1);
+    mod.setControl('COU_A_ATTACK', 0.005);
+    mod.setControl('COU_A_SUSTAIN', 1);
+    mod.setControl('COU_A_ENV_VEL', 'OFF'); // amp level velocity-independent: isolate the filter
+    mod.setControl('COU_MIX_OSC1', 0.9);
+    mod.setControl('COU_MIX_OSC2', 0);
+    mod.setControl('COU_MIX_SUB', 0);
+    mod.setControl('COU_MIX_NOISE', 0);
+    mod.setControl('COU_CUTOFF', 300); // low base so the filter-EG sweep dominates brightness
+    mod.setControl('COU_EG_AMOUNT', 0.5); // bipolar -1..1; +0.5 = a few octaves of EG sweep
+    mod.setControl('COU_KB_TRACKING', 'OFF'); // pin the base cutoff so only velocity moves it
+    mod.setControl('COU_VOLUME', 0.8);
+    mod.setControl('COU_F_ENV_VEL', fEnvVel);
+    mod.velocityAt(velGain, 0.05);
+    mod.gateAt(true, 0.05);
+    mod.outputTap('COU_AUDIO_OUT').connect((mod.ctx as OfflineAudioContext).destination);
+    return render();
+  };
+  const centroid = (buf: Float32Array) => spectralCentroidHz(fftMag(buf, SR, 8192, Math.floor(0.1 * SR)));
+  const cenOnHot = centroid(await audio(velocityToGain(127), 'ON'));
+  const cenOnSoft = centroid(await audio(velocityToGain(32), 'ON'));
+  const brighterOn = cenOnHot > cenOnSoft * 1.15; // hotter note opens the filter further
+
+  return {
+    name: 'Courier F ENV VEL: ON scales filter-EG peak/brightness with velocity, OFF full peak (U4)',
+    pass: egScalesOn && egFlatOff && brighterOn,
+    detail: `egON hot=${egOnHot.toFixed(2)} soft=${egOnSoft.toFixed(2)} | egOFF hot=${egOffHot.toFixed(2)} soft=${egOffSoft.toFixed(2)} | centroidON hot=${cenOnHot.toFixed(0)}Hz soft=${cenOnSoft.toFixed(0)}Hz`,
+  };
+}
+
 async function anvilKick(): Promise<AudioTestResult> {
   const { mod, render } = await buildModule(0.9, AnvilModule, anvilDef);
   mod.setControl('ANV_VCO1_FREQUENCY', -2);
@@ -786,6 +884,8 @@ export const BATTERY: { name: string; run: () => Promise<AudioTestResult> }[] = 
   { name: 'monarch-gate', run: monarchGateNoClick },
   { name: 'monarch-velocity', run: monarchVelocity },
   { name: 'courier-velocity', run: courierVelocity },
+  { name: 'courier-amp-env-vel', run: courierAmpEnvVel },
+  { name: 'courier-filter-env-vel', run: courierFilterEnvVel },
   { name: 'anvil-kick', run: anvilKick },
   { name: 'anvil-hat', run: anvilHat },
   { name: 'cascade-2v3', run: cascade2v3 },

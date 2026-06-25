@@ -217,12 +217,14 @@ function highHarmEnergy(buf: Float32Array, f0: number): number {
 }
 
 describe('osc.worklet core — waveshape morph + wavefolder (A2)', () => {
-  it('folding monotonically increases harmonic content as waveshape goes WS_TRI -> 0', () => {
-    // At WS_TRI the wave is a clean triangle (no fold); driving waveshape toward 0 deepens
-    // the sine-fold, which must add brightness monotonically. Measure BOTH spectral centroid
-    // and absolute high-harmonic energy — both should rise as we fold harder.
+  it('folding monotonically increases harmonic content across the wavefolder region', () => {
+    // The wavefolder is the region STRICTLY CCW of WS_TRI (U6: the detent itself is now a sharp
+    // 1/k² triangle, a different regime). Just inside the fold the drive is ~1, so the sine-fold
+    // ROUNDS the triangle toward a sine (fewer harmonics than the sharp detent); driving waveshape
+    // toward 0 then deepens the fold, which must add brightness monotonically. Sweep from the
+    // fold's own start (0.24) toward 0 and measure BOTH centroid and high-harmonic energy.
     const f0 = 220;
-    const steps = [WS_TRI, 0.24, 0.21, 0.18, 0.15, 0.12, 0.09, 0.06, 0.03, 0.0];
+    const steps = [0.24, 0.21, 0.18, 0.15, 0.12, 0.09, 0.06, 0.03, 0.0];
     let prevCentroid = -1;
     let prevEnergy = -1;
     for (const ws of steps) {
@@ -235,7 +237,7 @@ describe('osc.worklet core — waveshape morph + wavefolder (A2)', () => {
       prevCentroid = centroid;
       prevEnergy = energy;
     }
-    // sanity: the max-fold wave is meaningfully brighter than the plain triangle
+    // sanity: the max-fold wave is meaningfully brighter than the plain triangle detent
     const tri = render(new OscCore(FS), 1.5, { baseHz: f0, waveshape: WS_TRI });
     const fold = render(new OscCore(FS), 1.5, { baseHz: f0, waveshape: 0 });
     expect(highHarmEnergy(fold, f0)).toBeGreaterThan(highHarmEnergy(tri, f0) + 1000);
@@ -253,9 +255,8 @@ describe('osc.worklet core — waveshape morph + wavefolder (A2)', () => {
     // Triangle: odd harmonics only, even harmonics strongly suppressed.
     expect(db(harm(triS, f0, 2) / harm(triS, f0, 1))).toBeLessThan(-30);
     expect(db(harm(triS, f0, 4) / harm(triS, f0, 1))).toBeLessThan(-30);
-    // H3 is weak: at WS_TRI the detent is a ROUNDED near-sine (the base sine-fold rounds the
-    // triangle), so H3 is even weaker than a true triangle's 1/9 — see the dedicated Tier-A
-    // "WS_TRI waypoint is a rounded near-sine" test below, which characterizes this precisely.
+    // H3: the WS_TRI detent is now a sharp 1/k² triangle (H3 ≈ 1/9 ≈ 0.11) — see the dedicated
+    // Tier-A "WS_TRI waypoint is a sharp 1/k² triangle" test below. 1/9 stays under this 0.2 cap.
     expect(harm(triS, f0, 3) / harm(triS, f0, 1)).toBeLessThan(0.2);
 
     // Saw: all harmonics present, ~1/k roll-off (H2 is the strongest overtone, ~0.5).
@@ -466,19 +467,40 @@ describe('osc core — morph waypoint fingerprints (Tier A, Courier continuous w
     for (const evenIdx of [1, 3]) expect(a[evenIdx]!).toBeLessThan(SUPPRESS);
   });
 
-  it('WS_TRI waypoint is a rounded near-sine; the 1/k² triangle emerges just CW of it', () => {
-    // SURFACING CURRENT STATE (not a bug gate): at EXACTLY WS_TRI the fold branch runs with
-    // drive 1, i.e. sineFold(tri, 1) = sin((π/2)·tri), which rounds the naive triangle toward a
-    // pure sine — so H3 sits far below an ideal triangle's −19 dB. The textbook odd-1/k² triangle
-    // appears immediately ABOVE WS_TRI (the raw naive-triangle blend region). Flagged for the
-    // fidelity pass: the panel "triangle" detent is a rounded triangle, not a sharp 1/k² triangle.
-    const atTri = fp(WS_TRI);
-    expect(atTri[2]!).toBeLessThan(SUPPRESS); // H3 strongly suppressed → near-sine, NOT −19 dB
-    expect(atTri[1]!).toBeLessThan(SUPPRESS); // even H2 suppressed
-    const justAbove = fp(WS_TRI + 0.005); // raw naive triangle dominates (≈2% saw blend)
-    expect(justAbove[2]!).toBeGreaterThan(-24); // odd 1/k² H3 now present (~−19)
-    expect(justAbove[2]!).toBeLessThan(-14); // …but still triangle-ish, well below a square's −9.5
-    expect(justAbove[2]! - atTri[2]!).toBeGreaterThan(20); // dramatically brighter than the rounded detent
+  it('WS_TRI waypoint is a sharp 1/k² triangle (odd-only, H3 ≈ −19 dB)', () => {
+    // FIDELITY PASS (U6): the fold-region gate is `ws < WS_TRI` (strictly CCW), so at EXACTLY
+    // WS_TRI the triangle->saw branch runs with blend m=0 and returns the raw naive triangle — a
+    // textbook odd-harmonic 1/k² triangle. The panel "triangle" detent is now a sharp triangle,
+    // not the old rounded near-sine. The wavefolder lives strictly CCW of the detent.
+    const a = fp(WS_TRI);
+    expectHarm(a, 3, -19.08, 2.0); // 1/9 (−12 dB/oct); the discriminator vs a square's −9.5
+    expectHarm(a, 5, -27.96, 2.5); // 1/25; H5 of a true triangle
+    for (const evenIdx of [1, 3]) expect(a[evenIdx]!).toBeLessThan(SUPPRESS); // H2, H4 suppressed
+    expect(a[2]!).toBeLessThan(-14); // H3 clearly below a square's −9.5 (still triangle-ish)
+  });
+
+  it('fold->triangle boundary is smooth: no high-harmonic spike, fold deepens away from WS_TRI', () => {
+    // U6 handoff characterization. At EXACTLY WS_TRI the wave is a sharp 1/k² triangle (a regime
+    // with real high-harmonic energy). Just CCW of it the wavefolder runs at drive ~1, which
+    // ROUNDS the triangle toward a sine — so the just-below sample sits BELOW the sharp detent,
+    // not above it. The point of this gate is that the boundary does not SPIKE (no runaway burst
+    // of harmonics at the seam) and that the fold then deepens monotonically as ws -> 0.
+    const tri = (ws: number) =>
+      highHarmEnergy(render(new OscCore(FS), 1.5, { baseHz: ALIGNED_F0, waveshape: ws }), ALIGNED_F0);
+    const triE = tri(WS_TRI); // sharp triangle detent
+    const justBelowE = tri(WS_TRI - 0.005); // first step into the fold (drive ~1 -> near-sine)
+    const maxFoldE = tri(0); // deepest fold
+    // no spike at the seam: stepping just into the fold does NOT exceed the sharp triangle's energy
+    expect(justBelowE).toBeLessThan(triE);
+    // and it stays well clear of the deep-fold energy (the seam is a gentle handoff, not a burst)
+    expect(justBelowE).toBeLessThan(maxFoldE * 0.2);
+    // fold deepens monotonically away from the boundary: each step toward 0 is brighter
+    const e24 = tri(0.24);
+    const e18 = tri(0.18);
+    const e12 = tri(0.12);
+    expect(e18).toBeGreaterThan(e24);
+    expect(e12).toBeGreaterThan(e18);
+    expect(maxFoldE).toBeGreaterThan(e12);
   });
 });
 
