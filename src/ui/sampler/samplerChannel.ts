@@ -1,13 +1,13 @@
-/**
- * samplerChannel (G5 pop-out) — the typed message union + a tiny cross-window transport that
+﻿/**
+ * samplerChannel (G5 pop-out) â€” the typed message union + a tiny cross-window transport that
  * prefers `BroadcastChannel('synthstack-sampler')` and falls back to `window.postMessage` when
  * BroadcastChannel is unavailable (older / restricted contexts).
  *
- * It imports NO engine code (and no React) — it is a pure messaging seam, shared by the MAIN-
+ * It imports NO engine code (and no React) â€” it is a pure messaging seam, shared by the MAIN-
  * window host (`samplerHost`) and the POP-OUT app (`SamplerPopoutApp`). Everything that crosses
  * the boundary is structured-cloneable:
- *   - the MAIN→POP-OUT MIRROR carries the serializable sampler snapshot;
- *   - the POP-OUT→MAIN ACTIONS carry primitives (+ a raw ArrayBuffer for a sample load — the
+ *   - the MAINâ†’POP-OUT MIRROR carries the serializable sampler snapshot;
+ *   - the POP-OUTâ†’MAIN ACTIONS carry primitives (+ a raw ArrayBuffer for a sample load â€” the
  *     transferable bytes, NEVER a File: the host reconstructs the File).
  */
 
@@ -25,24 +25,24 @@ export interface SamplerMirror {
   drumNumSteps: number;
   drumSwingPct: number;
   drumRunning: boolean;
-  /** Monarch-master running flag — drives the pop-out's WAITING-FOR-MASTER drum hint. */
+  /** Monarch-master running flag â€” drives the pop-out's WAITING-FOR-MASTER drum hint. */
   monarchRunning: boolean;
 }
 
 // ---- message union ----------------------------------------------------------------------
-// MAIN → POP-OUT
+// MAIN â†’ POP-OUT
 interface MirrorMsg {
   t: 'mirror';
   mirror: SamplerMirror;
 }
-// POP-OUT → MAIN (lifecycle)
+// POP-OUT â†’ MAIN (lifecycle)
 interface HelloMsg {
   t: 'hello';
 }
 interface ByeMsg {
   t: 'bye';
 }
-// POP-OUT → MAIN (actions)
+// POP-OUT â†’ MAIN (actions)
 interface AuditionMsg {
   t: 'audition';
   pad: number;
@@ -69,7 +69,7 @@ interface LoadMsg {
   pad: number;
   name: string;
   mime: string;
-  bytes: ArrayBuffer; // transferable raw bytes — the host reconstructs new File([bytes], name, {type:mime})
+  bytes: ArrayBuffer; // transferable raw bytes â€” the host reconstructs new File([bytes], name, {type:mime})
 }
 interface AssignFactoryMsg {
   t: 'assignFactoryToPad';
@@ -127,7 +127,7 @@ export type Msg =
   | SetDrumNumStepsMsg
   | SetDrumSwingMsg;
 
-/** The set of valid `t` discriminants — the runtime guard's allow-list. */
+/** The set of valid `t` discriminants â€” the runtime guard's allow-list. */
 const MSG_TYPES = new Set<Msg['t']>([
   'mirror',
   'hello',
@@ -151,7 +151,7 @@ const MSG_TYPES = new Set<Msg['t']>([
 /**
  * Runtime narrow: is `data` one of our messages? A malformed / unknown payload (a stray
  * postMessage from another script, a future message type, a non-object) returns false so the
- * receiver ignores it rather than throwing. Only the discriminant is validated here — the
+ * receiver ignores it rather than throwing. Only the discriminant is validated here â€” the
  * sender is our own code, so per-field validation would be redundant; the receiver still
  * coalesces/clamps any value it forwards into the store via the engine bridge.
  */
@@ -175,12 +175,28 @@ export interface SamplerChannel {
  * filtering by origin + the wrapper tag so unrelated postMessages are ignored.
  *
  * `other` (the counterpart Window) is only consulted by the fallback. With BroadcastChannel
- * available it is unused — both windows just open the same named channel.
+ * available it is unused â€” both windows just open the same named channel.
  */
 const WRAP_TAG = '__synthstackSampler';
 
+/**
+ * The MAIN-window host opens its channel with NO `other` (it starts before any pop-out exists)
+ * and its own `window.opener` is null â€” so in a BroadcastChannel-ABSENT context the fallback had
+ * no window to post to and could never deliver the mirror/hello-reply to the pop-out. The pop-out
+ * (which DOES open the second window) registers that child handle here; the fallback consults it
+ * so the host can reach the pop-out. Cleared on pop-in / 'bye' / close. A getter (not the Window
+ * itself) keeps the seam late-bound: the host resolves the CURRENT child at post time, so a child
+ * opened after the channel still gets messages.
+ */
+let childWindowGetter: (() => Window | null) | null = null;
+
+/** Register the live pop-out window handle the fallback should post to (MAIN-window only). */
+export function registerSamplerChildWindow(getter: (() => Window | null) | null): void {
+  childWindowGetter = getter;
+}
+
 export function createSamplerChannel(other?: Window | null): SamplerChannel {
-  // Prefer BroadcastChannel — same-origin, multi-listener, no need to hold a Window ref.
+  // Prefer BroadcastChannel â€” same-origin, multi-listener, no need to hold a Window ref.
   if (typeof BroadcastChannel !== 'undefined') {
     const bc = new BroadcastChannel(SAMPLER_CHANNEL);
     return {
@@ -200,7 +216,15 @@ export function createSamplerChannel(other?: Window | null): SamplerChannel {
   const origin = typeof window !== 'undefined' ? window.location.origin : '*';
   return {
     post: (msg, transfer) => {
-      const target = other ?? (typeof window !== 'undefined' ? window.opener : null) ?? null;
+      // Resolve the counterpart at post time: an explicit `other` (the pop-out side passes
+      // window.opener) wins; otherwise the host consults the registered live child window; last,
+      // fall back to window.opener. The registered-child lookup is what lets the MAIN-window host
+      // (which has no `other` and a null opener) reach the pop-out in this branch.
+      const target =
+        other ??
+        (childWindowGetter?.() ?? null) ??
+        (typeof window !== 'undefined' ? window.opener : null) ??
+        null;
       target?.postMessage({ [WRAP_TAG]: true, msg }, origin, transfer ?? []);
     },
     subscribe: (handler) => {
@@ -220,3 +244,4 @@ export function createSamplerChannel(other?: Window | null): SamplerChannel {
     },
   };
 }
+

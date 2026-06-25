@@ -32,6 +32,7 @@ import { COLORS, FONT_CONDENSED } from '../theme';
 import { Knob } from '../controls/Knob';
 import { Switch } from '../controls/Switch';
 import type { SamplerBridge } from '../sampler/samplerBridge';
+import { registerSamplerChildWindow } from '../sampler/samplerChannel';
 import { SampleTooLargeError } from '../../engine/sampleStore';
 import { KIT_LIBRARY, kitById } from '../../engine/factorySamples';
 import type { PadState, QuantizeDivision } from '../../state/studioState';
@@ -570,6 +571,18 @@ export function SamplerPanel({ bridge, mainWindow = true }: SamplerPanelProps) {
   const popoutRef = useRef<Window | null>(null);
   const [popoutOpen, setPopoutOpen] = useState(false);
   const [popoutBlocked, setPopoutBlocked] = useState(false);
+
+  // Give the MAIN-window host a live handle to the pop-out so its channel can reach the child in
+  // a BroadcastChannel-ABSENT fallback context (the host opens its channel with no `other` and a
+  // null window.opener). The getter resolves the CURRENT non-closed handle at post time; cleared
+  // on unmount. (With BroadcastChannel present this is unused — both windows share the channel.)
+  useEffect(() => {
+    registerSamplerChildWindow(() => {
+      const w = popoutRef.current;
+      return w && !w.closed ? w : null;
+    });
+    return () => registerSamplerChildWindow(null);
+  }, []);
 
   // Poll the handle so the button reflects a pop-out the user closed via its own window chrome
   // (there is no cross-window 'closed' event we can rely on without coupling to the channel).
