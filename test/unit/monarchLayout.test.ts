@@ -38,16 +38,21 @@ describe('monarchLayout', () => {
     expect(monarchLayout.width).toBeGreaterThan(monarchLayout.height); // landscape
   });
 
-  // Setup-mode parameters that intentionally have NO front-panel control — true to the hardware,
-  // where the real Monarch sets these in Setup mode, not via a panel knob (engine + state + preset
-  // settable). MON_ASSIGN_SOURCE selects the ASSIGN out source (Setup-mode page 1).
-  const SETUP_ONLY = new Set(['MON_ASSIGN_SOURCE']);
-
-  it('places every panel control id from data/monarch.json (Setup-only params excluded)', () => {
+  it('places every control id from data/monarch.json', () => {
     for (const c of def.controls) {
-      if (SETUP_ONLY.has(c.id)) continue;
       expect(monarchLayout.controls[c.id], `missing control position for ${c.id}`).toBeDefined();
     }
+  });
+
+  // U5: the ASSIGN out source (Setup-mode page 1) selector is now a real front-panel control —
+  // a 9-position selector so a running patch can pick the ASSIGN source from the app (the 9
+  // analog sources are engine/state/preset-wired; previously NO UI wrote the control).
+  it('places the MON_ASSIGN_SOURCE selector (the 9 analog ASSIGN sources are now pickable)', () => {
+    const pos = monarchLayout.controls['MON_ASSIGN_SOURCE'];
+    expect(pos, 'MON_ASSIGN_SOURCE must have a layout position').toBeDefined();
+    // sits inside the canvas, and its tall (~142u) 9-position body stays in bounds (center ± 71u)
+    expect(pos!.y - 71).toBeGreaterThanOrEqual(0);
+    expect(pos!.y + 71).toBeLessThanOrEqual(monarchLayout.height);
   });
 
   it('owns no jacks (all 32 moved to the consolidated jack field)', () => {

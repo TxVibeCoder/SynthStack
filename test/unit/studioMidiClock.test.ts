@@ -14,6 +14,8 @@ import { Studio } from '../../src/engine/studio';
 interface StudioPrivates {
   built: boolean;
   midiClockMaster: boolean;
+  monarchTempoPatched: boolean;
+  routeMidiEdge(t: number): void;
   bindCascadeEvent(e: unknown): void;
   bindMonarchEvent(e: unknown): void;
 }
@@ -75,6 +77,49 @@ describe('Studio — external MIDI clock master', () => {
     expect(studio.isMidiClockMaster()).toBe(false);
     expect(studio.cascadeClock.externalClock).toBe(false);
     expect(studio.monarchSeq.externalClock).toBe(false);
+  });
+});
+
+describe('Studio — analog MON_TEMPO IN priority over MIDI master (U5 hardening)', () => {
+  // Pins the one untested branch in routeMidiEdge: when an analog cable is in MON_TEMPO_IN, the
+  // Monarch follows the ANALOG edge (analog > MIDI > internal), so a MIDI master edge must NOT also
+  // advance it (double-clocking). Both clocks can be "active" at once — externalClock stays true
+  // (it is OR'd from analog|MIDI) but only the analog edge steps the Monarch.
+  it('with MON_TEMPO_IN patched under a MIDI master, the Monarch is externally clocked but routeMidiEdge does NOT advance it', () => {
+    const studio = armedStudio();
+    const priv = studio as unknown as StudioPrivates;
+
+    // Monarch running so an edge WOULD advance it if it consumed the MIDI tick.
+    studio.monarchSeq.running = true;
+    studio.onMidiClockStart(); // become MIDI master
+    expect(studio.isMidiClockMaster()).toBe(true);
+
+    // Simulate rebuildRouting's outcome with a cable in MON_TEMPO_IN: analog patched, and the
+    // Monarch's externalClock is the OR of analog|MIDI (here both) — still externally clocked.
+    priv.monarchTempoPatched = true;
+    studio.monarchSeq.externalClock = true;
+    expect(studio.monarchSeq.externalClock).toBe(true);
+
+    const before = studio.monarchSeq.currentStep;
+    const cascadeBefore = studio.cascadeClock.currentTick;
+    priv.routeMidiEdge(0.05);
+
+    // MIDI drives the Cascade as usual...
+    expect(studio.cascadeClock.currentTick).toBe(cascadeBefore + 1);
+    // ...but the analog-patched Monarch is left for its own analog edge — no double-clock.
+    expect(studio.monarchSeq.currentStep).toBe(before);
+  });
+
+  it('without the analog cable, the MIDI master edge DOES advance the Monarch (control case)', () => {
+    const studio = armedStudio();
+    const priv = studio as unknown as StudioPrivates;
+    studio.monarchSeq.running = true;
+    studio.onMidiClockStart();
+    priv.monarchTempoPatched = false; // no analog cable -> Monarch follows MIDI
+
+    const before = studio.monarchSeq.currentStep;
+    priv.routeMidiEdge(0.05);
+    expect(studio.monarchSeq.currentStep).not.toBe(before);
   });
 });
 

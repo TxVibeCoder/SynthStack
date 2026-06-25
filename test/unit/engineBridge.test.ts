@@ -995,4 +995,50 @@ describe('engineBridge module routing (applyControlInput -> the right module.set
     expect(spies['cascade']).toHaveBeenCalledWith('CAS_CUTOFF', 0.7);
     expect(spies['courier']).not.toHaveBeenCalled();
   });
+
+  it('U5: an ASSIGN-source commit reaches MonarchModule.setControl (the write that sets _assignSource)', () => {
+    // The new Monarch panel selector commits MON_ASSIGN_SOURCE as a string position. The engine-side
+    // write goes through MonarchModule.setControl, whose MON_ASSIGN_SOURCE case assigns _assignSource
+    // (the binder reads it to realize the 9 analog sources). A 9-pos switch is a 'module'-routed
+    // control, so applyControlCommit lands BOTH the engine write AND the store commit (asserted below).
+    engineBridge.applyControlCommit('monarch', 'MON_ASSIGN_SOURCE', 'STEP_RAMP');
+    expect(spies['monarch']).toHaveBeenCalledWith('MON_ASSIGN_SOURCE', 'STEP_RAMP');
+    expect(spies['cascade']).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * U5 — MON_ASSIGN_SOURCE store round-trip (PURE / store-level, unpowered so the engine write is a
+ * no-op; only the coalesced store commit is observable). Proves the new Monarch panel selector
+ * persists the chosen ASSIGN source into state.controls.monarch — the seam that makes a
+ * preset-loaded value display correctly on mount (useControl reads the resolved store value, not
+ * the JSON default). The engine-side write that sets monarch._assignSource is proven by the
+ * mock-module spy case above (the real MonarchModule constructor needs an AudioContext).
+ */
+describe('engineBridge MON_ASSIGN_SOURCE selector surface (U5)', () => {
+  it('applyControlCommit persists the position into state.controls.monarch.MON_ASSIGN_SOURCE', () => {
+    engineBridge.applyControlCommit('monarch', 'MON_ASSIGN_SOURCE', 'STEP_TRI');
+    expect(engineBridge.store.getControl('monarch', 'MON_ASSIGN_SOURCE')).toBe('STEP_TRI');
+    expect(engineBridge.store.getState().controls['monarch']!['MON_ASSIGN_SOURCE']).toBe('STEP_TRI');
+    // restore the JSON default so the singleton bridge is left as later readers expect
+    const def = monarch.controls.find((c) => c.id === 'MON_ASSIGN_SOURCE')!;
+    engineBridge.applyControlCommit('monarch', 'MON_ASSIGN_SOURCE', def.default as string);
+    expect(engineBridge.store.getControl('monarch', 'MON_ASSIGN_SOURCE')).toBe(def.default);
+  });
+
+  it('MON_ASSIGN_SOURCE is a switch with the 9 analog ASSIGN positions (data contract)', () => {
+    const def = monarch.controls.find((c) => c.id === 'MON_ASSIGN_SOURCE')!;
+    expect(def.type).toBe('switch');
+    expect(def.positions).toEqual([
+      'ACCENT',
+      'CLOCK',
+      'CLOCK_2',
+      'CLOCK_4',
+      'STEP_RAMP',
+      'STEP_SAW',
+      'STEP_TRI',
+      'STEP_RANDOM',
+      'STEP1_TRIG',
+    ]);
+  });
 });
