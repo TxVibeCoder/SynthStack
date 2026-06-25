@@ -22,13 +22,12 @@
  * re-read only when a JSON dirty-key changes — the MonarchStepEditor.readSeq idiom.
  */
 
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { ControlDef } from '../../../data/schema';
 import { COLORS, FONT_CONDENSED } from '../theme';
 import { Button } from '../controls/Button';
 import { Knob } from '../controls/Knob';
-import { engineBridge } from '../engineBridge';
-import { useStepPosition, useTransportFlags } from '../useStudio';
+import type { SamplerBridge } from '../sampler/samplerBridge';
 import {
   DRUM_BEATROW_Y,
   DRUM_GRID,
@@ -95,20 +94,22 @@ interface DrumSnapshot {
   swingPct: number;
 }
 
-function readSnapshot(): DrumSnapshot {
-  const pattern = engineBridge.getPattern();
-  const labels = Array.from({ length: TRACKS }, (_, t) => engineBridge.getPadState(t).sampleName);
+function readSnapshot(bridge: SamplerBridge): DrumSnapshot {
+  const pattern = bridge.getPattern();
+  const labels = Array.from({ length: TRACKS }, (_, t) => bridge.getPadState(t).sampleName);
   return {
     pattern,
     labels,
-    numSteps: engineBridge.getDrumNumSteps(),
-    swingPct: engineBridge.getDrumSwing(),
+    numSteps: bridge.getDrumNumSteps(),
+    swingPct: bridge.getDrumSwing(),
   };
 }
 
 // ---- single cell -----------------------------------------------------------------------
 
 interface DrumCellProps {
+  /** Injected action surface (real engineBridge in-console, proxy in the pop-out). */
+  bridge: SamplerBridge;
   track: number;
   step: number;
   on: boolean;
@@ -124,7 +125,7 @@ interface DrumCellProps {
  * beyondLength cells stay TOGGLEABLE (mirror monarch endStep: cells past the wrap are retained,
  * not deleted) — they just render dimmed to signal they will not play at the current length.
  */
-const DrumCell = memo(function DrumCell({ track, step, on, beyondLength }: DrumCellProps) {
+const DrumCell = memo(function DrumCell({ bridge, track, step, on, beyondLength }: DrumCellProps) {
   const r = cellRect(track, step);
   const beat = BEAT_COLS.has(step);
   return (
@@ -143,11 +144,11 @@ const DrumCell = memo(function DrumCell({ track, step, on, beyondLength }: DrumC
       strokeWidth={beat ? 1.4 : 1}
       opacity={beyondLength ? 0.32 : 1}
       style={{ cursor: 'pointer' }}
-      onPointerDown={() => engineBridge.toggleStep(track, step)}
+      onPointerDown={() => bridge.toggleStep(track, step)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          engineBridge.toggleStep(track, step);
+          bridge.toggleStep(track, step);
         }
       }}
     />
@@ -156,33 +157,54 @@ const DrumCell = memo(function DrumCell({ track, step, on, beyondLength }: DrumC
 
 // ---- panel -----------------------------------------------------------------------------
 
-export function DrumMachinePanel() {
-  const [snap, setSnap] = useState<DrumSnapshot>(readSnapshot);
-  const pos = useStepPosition('drum');
-  const { drumRunning, monarchRunning } = useTransportFlags();
+/**
+ * DrumMachinePanel props. `bridge` is the DI seam (G5) and is REQUIRED so this module imports
+ * NEITHER `realSamplerBridge` NOR engineBridge (keeping the engine out of the pop-out graph):
+ * the MAIN window (App.tsx) passes `realSamplerBridge`, the POP-OUT passes the proxy. Every engine
+ * call + the snapshot/transport reads route through `bridge`.
+ */
+export interface DrumMachinePanelProps {
+  bridge: SamplerBridge;
+}
+
+export function DrumMachinePanel({ bridge }: DrumMachinePanelProps) {
+  const [snap, setSnap] = useState<DrumSnapshot>(() => readSnapshot(bridge));
+
+  // Drum step-chase position via the bridge: in-console this is the rAF chase, in the pop-out it
+  // is −1 (control-only v1). Subscribed through the bridge so the source matches the window.
+  const subscribeStep = useCallback((cb: () => void) => bridge.subscribeDrumStep(cb), [bridge]);
+  const getStepPos = useCallback(() => bridge.getDrumStepPosition(), [bridge]);
+  const pos = useSyncExternalStore(subscribeStep, getStepPos);
+
+  // RUN/STOP + master flags via the bridge (in-console: live engine flags; pop-out: the mirror).
+  // Polled like useTransportFlags so the in-console latch still reflects RUN ALL etc.; the pop-out
+  // reads the mirror, which rebroadcasts on each drum RUN/STOP store write.
+  const subscribeStore = useCallback((cb: () => void) => bridge.subscribe(cb), [bridge]);
+  const drumRunning = useSyncExternalStore(subscribeStore, () => bridge.getDrumRunning());
+  const monarchRunning = useSyncExternalStore(subscribeStore, () => bridge.getMonarchRunning());
 
   // Whole-pattern + label subscription with a JSON dirty-key (MonarchStepEditor.readSeq idiom).
   // A fresh-array useSyncExternalStore getSnapshot would loop; this re-renders only when a
   // cell toggles or a sample loads.
   useEffect(() => {
-    let last = JSON.stringify(readSnapshot());
-    return engineBridge.store.subscribe(() => {
-      const next = readSnapshot();
+    let last = JSON.stringify(readSnapshot(bridge));
+    return bridge.subscribe(() => {
+      const next = readSnapshot(bridge);
       const key = JSON.stringify(next);
       if (key !== last) {
         last = key;
         setSnap(next);
       }
     });
-  }, []);
+  }, [bridge]);
 
   const chaseActive = drumRunning && pos >= 0;
 
   // Commit-only handlers: onInput is a no-op (no mid-gesture engine write), onCommit pushes once
   // through the bridge (engine write when powered + a single coalesced store commit). No
   // liveDrumSwingPct guard is needed because syncTransportConfig only reads the committed value.
-  const onLength = useCallback((v: number) => engineBridge.setDrumNumSteps(v), []);
-  const onSwing = useCallback((v: number) => engineBridge.setDrumSwing(v), []);
+  const onLength = useCallback((v: number) => bridge.setDrumNumSteps(v), [bridge]);
+  const onSwing = useCallback((v: number) => bridge.setDrumSwing(v), [bridge]);
   const noop = useCallback(() => undefined, []); // commit-only: onInput must not write the engine
 
   return (
@@ -282,6 +304,7 @@ export function DrumMachinePanel() {
         Array.from({ length: STEPS }, (_, s) => (
           <DrumCell
             key={`${t}-${s}`}
+            bridge={bridge}
             track={t}
             step={s}
             on={snap.pattern[t]?.[s] ?? false}
@@ -296,7 +319,7 @@ export function DrumMachinePanel() {
           def={RUNSTOP_DEF}
           value={drumRunning ? 'RUN' : 'STOP'}
           lit={drumRunning}
-          onChange={() => (drumRunning ? engineBridge.drumStop() : engineBridge.drumRun())}
+          onChange={() => (drumRunning ? bridge.drumStop() : bridge.drumRun())}
           x={DRUM_TRANSPORT.runStopX}
           y={DRUM_TRANSPORT.y}
         />
@@ -309,7 +332,7 @@ export function DrumMachinePanel() {
           value={CLEAR_IDLE}
           momentary
           onChange={(pos) => {
-            if (pos === CLEAR_FIRE) engineBridge.clearDrumPattern();
+            if (pos === CLEAR_FIRE) bridge.clearDrumPattern();
           }}
           x={DRUM_TRANSPORT.clearX}
           y={DRUM_TRANSPORT.y}
