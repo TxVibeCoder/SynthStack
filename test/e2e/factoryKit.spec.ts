@@ -166,10 +166,13 @@ test('G6 kit-select: choosing a kit re-points all 8 pads; INIT restores the defa
   await page.getByTestId('kit-select').click();
   const menu = page.getByTestId('kit-select-menu');
   await expect(menu).toBeVisible();
-  // pick the first option whose kit id differs from the default
-  const otherOption = menu.locator('[data-testid^="kit-select-option-"]', {
-    hasNot: page.locator(`[data-testid="kit-select-option-${defaultKitId}"]`),
-  });
+  // pick the first option whose kit id differs from the default. NOTE: a `hasNot`
+  // filter does NOT work here — an option element is not its own descendant, so it
+  // would never exclude the default option (it would pick the default = a no-op).
+  // A CSS :not() on the testid excludes the default option element itself.
+  const otherOption = menu.locator(
+    `[data-testid^="kit-select-option-"]:not([data-testid="kit-select-option-${defaultKitId}"])`,
+  );
   const chosenTestId = await otherOption.first().getAttribute('data-testid');
   const chosenKitId = chosenTestId!.replace('kit-select-option-', '');
   await otherOption.first().click();
