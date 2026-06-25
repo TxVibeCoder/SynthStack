@@ -133,6 +133,65 @@ test('external CLOCK IN drives the Courier sequencer 1:1 with the source', async
 });
 
 /**
+ * U2: the two deferred CV-rate jacks — ANV_TEMPO_IN (CV over Anvil step rate) and CAS_RHYTHM_n_IN
+ * (CV over the Cascade RG dividers) — through the REAL production wiring path (bridge cables build
+ * the cvTaps in Studio.rebuildFollowers; the synthstack-cv-sample worklet samples a live bus; the
+ * per-pump sampleCvTaps folds it in). The constant CV SOURCE is ANV_PITCH_OUT: a ConstantSourceNode
+ * holding the current Anvil step's pitch. We set step 1's pitch and fire a manual trigger to pin a
+ * steady positive vv onto that bus, then verify the sampled value reaches rateHz / divisionCvVv and
+ * that UNPLUGGING restores knob-only (no stranded CV offset).
+ */
+test('U2: CV into ANV_TEMPO_IN raises the Anvil step rate; unplugging restores knob-only', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('/');
+  await page.getByTestId('power').click();
+  await page.waitForFunction(() => (window.__synthstackStudio as any)?.powered === true);
+
+  const bridge = (fn: string, ...args: unknown[]) =>
+    page.evaluate(([f, a]) => (window.__synthstackStudio as any)[f as string](...(a as unknown[])), [fn, args] as const);
+  const rateHz = () =>
+    page.evaluate(() => (window.__synthstackStudio as any).studioInstance.anvilSeq.rateHz as number);
+
+  // Anvil knob TEMPO = 8 Hz (default). Pin a steady +2 vv onto ANV_PITCH_OUT (step 1's pitch, held
+  // by the constant-source bus) and patch it into ANV_TEMPO_IN. +2 vv = ×4 the step rate → ~32 Hz.
+  await bridge('applyControlCommit', 'anvil', 'ANV_TEMPO', 8);
+  await bridge('applyControlCommit', 'anvil', 'ANV_SEQ_PITCH_1', 2);
+  await bridge('anvilTrigger'); // pushes step-1 pitch onto the constant ANV_PITCH_OUT bus
+  await bridge('commitCables', [{ id: 'cv1', from: 'ANV_PITCH_OUT', to: 'ANV_TEMPO_IN', color: '#fff' }]);
+
+  // The per-pump sampler folds the sampled +2 vv into anvilStepRateHz(knob, cv) → ≈ 8 × 2^2 = 32.
+  await expect.poll(rateHz, { timeout: 5000 }).toBeGreaterThan(20); // measurably above the 8 Hz knob-only rate
+
+  // Unplug: the cvTap is torn down and the rate restores to the 8 Hz knob-only value (no strand).
+  await bridge('commitCables', []);
+  await expect.poll(rateHz, { timeout: 5000 }).toBeLessThan(12); // back to ~8 Hz knob-only
+});
+
+test('U2: CV into CAS_RHYTHM_1_IN shifts the RG divider; unplugging restores knob-only', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('/');
+  await page.getByTestId('power').click();
+  await page.waitForFunction(() => (window.__synthstackStudio as any)?.powered === true);
+
+  const bridge = (fn: string, ...args: unknown[]) =>
+    page.evaluate(([f, a]) => (window.__synthstackStudio as any)[f as string](...(a as unknown[])), [fn, args] as const);
+  const divCv0 = () =>
+    page.evaluate(() => (window.__synthstackStudio as any).studioInstance.cascadeClock.divisionCvVv[0] as number);
+
+  // Pin a steady +2 vv onto ANV_PITCH_OUT and patch it into CAS_RHYTHM_1_IN. The sampled CV rides
+  // divisionCvVv[0] (which feeds effectiveDivision via cascadeRhythmDivision, clamped 1..16).
+  await bridge('applyControlCommit', 'anvil', 'ANV_SEQ_PITCH_1', 2);
+  await bridge('anvilTrigger');
+  await bridge('commitCables', [{ id: 'cv2', from: 'ANV_PITCH_OUT', to: 'CAS_RHYTHM_1_IN', color: '#fff' }]);
+
+  await expect.poll(divCv0, { timeout: 5000 }).toBeGreaterThan(1); // the sampled +2 vv reached the divider CV
+
+  // Unplug: the offset is restored to 0 (knob-only divider; no stranded CV).
+  await bridge('commitCables', []);
+  await expect.poll(divCv0, { timeout: 5000 }).toBe(0);
+});
+
+/**
  * TASK 2: the external-clock measured-edge timestamp must PERSIST across an unrelated patch edit.
  * rebuildFollowers runs on every cable add/remove; before the fix it re-declared `let lastEdge = -1`
  * fresh each rebuild, so an unrelated edit while externally clocked reset the measured tick interval

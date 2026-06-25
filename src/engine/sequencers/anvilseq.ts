@@ -28,6 +28,11 @@ export class AnvilSequencer implements Transport {
   steps: AnvilStep[] = Array.from({ length: 8 }, () => ({ pitchVv: 0, velocityVv: 4 }));
   /** Step rate in Hz (TEMPO knob + CV via units.anvilStepRateHz). */
   rateHz = 8;
+  /** CV offset over the step rate in vv (from ANV_TEMPO_IN), sampled per pump and folded into
+   *  rateHz by the studio binding via units.anvilStepRateHz. Mirrors cascadeClock.divisionCvVv:
+   *  the rate DERIVATION stays in the studio (units) so this pure engine never touches AudioParams.
+   *  0 = no CV (knob-only rate). */
+  rateCvVv = 0;
   /** True while something is patched into ADV/CLOCK — internal clock ignored. */
   externalClock = false;
 

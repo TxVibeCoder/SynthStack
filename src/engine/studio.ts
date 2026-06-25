@@ -133,6 +133,17 @@ export class Studio {
   private followers: ((e: TransportEvent) => void)[] = [];
   /** live edge-detector taps for arbitrary-signal followers (stage 3) */
   private edgeFollowers: { tap: AudioNode; node: AudioWorkletNode }[] = [];
+  /** Live CV sample-and-hold taps (U2): a synthstack-cv-sample sink on a resolved source bus that
+   *  posts its latest value to `latest`, read every pump by sampleCvTaps. Distinct lifecycle from
+   *  edgeFollowers (value-sampling, not edge-detection) — rebuilt fresh each rebuildFollowers so
+   *  taps never leak across rebuilds. `apply` folds the sampled vv into the target (Anvil rate /
+   *  Cascade divider CV). */
+  private cvTaps: {
+    tap: AudioNode;
+    node: AudioWorkletNode;
+    latest: { v: number };
+    apply: (v: number) => void;
+  }[] = [];
   /** Was a cable in MON_HOLD_IN last rebuild? Used to RELEASE hold when it is unplugged
    *  (the edge follower that would deliver the gate-low is torn down with the cable). */
   private monarchHoldPatched = false;
@@ -252,7 +263,10 @@ export class Studio {
     this.scheduler.add(this.courierSeq, (e) => this.bindCourierEvent(e));
     // External-MIDI-clock watchdog rides the one lookahead pump (no setInterval/setTimeout): if a
     // stalled/unplugged upstream clock leaves us master with no fresh ticks, auto-release master.
-    this.scheduler.beforePump = (now) => this.checkMidiClockWatchdog(now);
+    this.scheduler.beforePump = (now) => {
+      this.checkMidiClockWatchdog(now); // MUST keep running (auto-releases a stalled MIDI master)
+      this.sampleCvTaps(); // U2: fold sampled CV (ANV_TEMPO_IN / CAS_RHYTHM_n_IN) into rate/divider
+    };
     this.scheduler.start();
 
     this.store.subscribe(() => this.syncTransportConfig());
@@ -419,6 +433,14 @@ export class Studio {
     return typeof v === 'number' ? v : courierJsonDefault(id);
   }
 
+  /** The live ANV_TEMPO knob value in Hz (store, coalesced to the data/anvil.json default 8). The
+   *  CV-rate base for ANV_TEMPO_IN: rate = anvilStepRateHz(expKnob01(thisHz), cvVv). Re-read per
+   *  pump so a knob turn while the CV cable is patched is honored ("the knob is the base"). */
+  private anvilTempoKnobHz(): number {
+    const v = this.store.getState().controls.anvil?.['ANV_TEMPO'];
+    return typeof v === 'number' ? v : 8;
+  }
+
   /**
    * STOP / PANIC flush — restore every active lock to its captured base, then clear both shell
    * structures. Without this a stopped sequence would freeze the last locked value onto the live
@@ -522,10 +544,61 @@ export class Studio {
     this.edgeFollowers = [];
   }
 
+  /**
+   * CV sample-and-hold tap (U2): attach a synthstack-cv-sample sink to a resolved source bus and
+   * register a per-pump `apply` that folds the latest sampled vv into a control-rate target (Anvil
+   * step rate / Cascade RG divider CV). DISTINCT from addEdgeFollower (edge-only) — this samples a
+   * value, it does not detect edges. The worklet posts at most one message per render quantum into
+   * a reused `latest.v`; sampleCvTaps reads it every scheduler pump (control-rate sample-and-hold).
+   *
+   * Control-rate limit: data/anvil.json describes ANV_TEMPO_IN as "up to audio rate", but this v1
+   * is a per-pump sample-and-hold (control-rate, ≈ one value per lookahead pump). Documented +
+   * flagged as an ears/fidelity checkpoint for the operator (stair-stepping feel vs a future
+   * worklet-rate path) — see the U2 spec.
+   */
+  private addCvTap(fromJack: string, apply: (v: number) => void): void {
+    const tap = this.registry?.sourceNode({ kind: 'jack', jackId: fromJack });
+    if (!tap) return;
+    const ctx = this.context.audioContext;
+    const node = new AudioWorkletNode(ctx, 'synthstack-cv-sample', {
+      numberOfInputs: 1,
+      numberOfOutputs: 0,
+    });
+    (tap as unknown as AudioNode).connect(node);
+    const latest = { v: 0 };
+    node.port.onmessage = (e: MessageEvent) => {
+      const d = e.data as { value: number };
+      latest.v = d.value;
+    };
+    this.cvTaps.push({ tap: tap as unknown as AudioNode, node, latest, apply });
+  }
+
+  private clearCvTaps(): void {
+    for (const { tap, node } of this.cvTaps) {
+      try {
+        tap.disconnect(node);
+      } catch {
+        // already disconnected
+      }
+      node.port.onmessage = null;
+    }
+    this.cvTaps = [];
+  }
+
+  /**
+   * Per-pump CV sample read (U2). Rides the lookahead scheduler via beforePump (NO
+   * setInterval/setTimeout): fold each tap's latest sampled value into its control-rate target.
+   * Cheap + allocation-free; runs after the MIDI-clock watchdog so the watchdog keeps its place.
+   */
+  private sampleCvTaps(): void {
+    for (const { latest, apply } of this.cvTaps) apply(latest.v);
+  }
+
   /** Recompute external-clock flags + follower hooks from the cable list. */
   private rebuildFollowers(patch: PatchState): void {
     this.followers = [];
     this.clearEdgeFollowers();
+    this.clearCvTaps();
     const findCable = (to: string): Cable | undefined => patch.cables.find((c) => c.to === to);
 
     const anvilClock = findCable('ANV_ADV_CLOCK_IN');
@@ -765,6 +838,46 @@ export class Studio {
     for (let n = 1; n <= 8; n++) {
       const c = findCable(`SAMP_PAD${n}_TRIG_IN`);
       if (c) this.addEdgeFollower(c.from, (t) => this.sampler.triggerPad(n - 1, t));
+    }
+
+    // ---- U2 CV-rate inputs: ANV_TEMPO_IN + CAS_RHYTHM_1..4_IN (control-rate sample-and-hold) ----
+    // A cable here attaches a synthstack-cv-sample tap to the resolved source bus; sampleCvTaps
+    // (chained after the MIDI-clock watchdog in beforePump) folds the latest value in every pump.
+    // On UNPLUG (no cable this rebuild) the tap is gone (clearCvTaps) AND we restore the knob-only
+    // target so no CV offset strands — mirroring the edge-follower release-on-teardown.
+
+    // ANV_TEMPO_IN: CV over the Anvil step rate. The knob value (store ANV_TEMPO, Hz) is the base;
+    // rate = anvilStepRateHz(knob01, cvVv). Re-reading the store each pump honors a live knob turn
+    // while patched. TEMPO LINK also writes rateHz from the master BPM — when LINKED, ANV_TEMPO_IN
+    // would fight the link, so the CV path defers to LINK (the operator's documented ears checkpoint
+    // is the CV→rate feel, not the link arbitration; LINK wins as it does for the knob).
+    const anvilTempoCv = findCable('ANV_TEMPO_IN');
+    if (anvilTempoCv) {
+      this.addCvTap(anvilTempoCv.from, (v) => {
+        if (this.tempoLink) return; // LINK owns rateHz; CV defers (knob behaves the same way)
+        this.anvilSeq.rateCvVv = v;
+        this.anvilSeq.rateHz = anvilStepRateHz(expKnob01(this.anvilTempoKnobHz(), 0.7, 700), v);
+      });
+    } else if (this.anvilSeq.rateCvVv !== 0) {
+      // UNPLUG: a CV offset was stranding the rate above knob-only. Zero it and restore the
+      // knob-only rate (unless LINK owns rateHz — then leave it to applyTempoLink). Mirrors the
+      // edge-follower release-on-teardown; no tap runs after teardown, so this must be active here.
+      this.anvilSeq.rateCvVv = 0;
+      if (!this.tempoLink) {
+        this.anvilSeq.rateHz = anvilStepRateHz(expKnob01(this.anvilTempoKnobHz(), 0.7, 700), 0);
+      }
+    }
+
+    // CAS_RHYTHM_1..4_IN: CV over each RG divider integer. cascadeClock.divisionCvVv[n] already
+    // feeds effectiveDivision (clamped 1..16 — no divide-by-zero). Zero the offset on unplug.
+    for (let n = 0; n < 4; n++) {
+      const rcable = findCable(`CAS_RHYTHM_${n + 1}_IN`);
+      this.cascadeClock.divisionCvVv[n] = 0; // default; restored per pump while patched
+      if (rcable) {
+        this.addCvTap(rcable.from, (v) => {
+          this.cascadeClock.divisionCvVv[n as 0 | 1 | 2 | 3] = v;
+        });
+      }
     }
   }
 

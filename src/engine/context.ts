@@ -13,6 +13,7 @@ import oscWorkletUrl from './worklets/osc.worklet.ts?worker&url';
 import ladderWorkletUrl from './worklets/ladder.worklet.ts?worker&url';
 import egWorkletUrl from './worklets/eg.worklet.ts?worker&url';
 import edgeWorkletUrl from './worklets/edge.worklet.ts?worker&url';
+import cvSampleWorkletUrl from './worklets/cvSample.worklet.ts?worker&url';
 import pcmTapWorkletUrl from './worklets/pcmTap.worklet.ts?worker&url';
 import { MasterRecorder } from './recorder';
 import type { RecordFormat } from './recordHelpers';
@@ -24,6 +25,7 @@ export const WORKLET_URLS = [
   ladderWorkletUrl,
   egWorkletUrl,
   edgeWorkletUrl,
+  cvSampleWorkletUrl,
   pcmTapWorkletUrl,
 ];
 
