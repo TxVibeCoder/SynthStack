@@ -186,7 +186,9 @@ export class Studio {
       if ((VOICE_FX_IDS as string[]).includes(m.id)) {
         // Per-voice insert FX: voice out → [flanger→delay→reverb] → mixer channel. The
         // patchbay VCA-OUT jack is a SEPARATE fan-out off `tap`, so cables stay dry (pre-FX).
-        const fx = new MasterFxChain(ctx);
+        // 'voice' target: `tap` is the raw ±5 vv voice out (pre-mixer), so the FOLD shaper
+        // uses ioScale 0.2 (±5vv→±1). The master chain instead uses ~1.0 (post-mixer signal).
+        const fx = new MasterFxChain(ctx, 'voice');
         tap.connect(fx.input);
         this.mixer.connectInput(fx.output, m.mixerChannel!);
         this.voiceFx.set(m.id as VoiceFxId, fx);

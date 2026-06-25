@@ -74,7 +74,9 @@ export class StudioContext {
       // Master FX chain occupies the reserved insertSlot:
       //   masterIn → insertSlot → [flanger→delay→reverb→fold] → masterVolume → softClip → dest.
       // Built once (effects are dry-only when off), captured by the softClip recorder tap.
-      this.masterFx = new MasterFxChain(this.ctx);
+      // 'master' target: the signal here is already ~±1 (mixer applied vvScale ×0.2 + level),
+      // so the FOLD shaper uses ioScale ~1.0 (a per-voice 0.2 would fold ~5× too weakly).
+      this.masterFx = new MasterFxChain(this.ctx, 'master');
       this._masterIn.connect(this.insertSlot);
       this.insertSlot.connect(this.masterFx.input);
       this.masterFx.output.connect(this.masterVolume);

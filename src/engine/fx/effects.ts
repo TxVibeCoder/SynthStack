@@ -133,29 +133,48 @@ export function buildDelay(ctx: BaseAudioContext): FxUnit {
   };
 }
 
+/** Options for buildFold (and, via MasterFxChain, the whole chain). */
+export interface FoldOptions {
+  /**
+   * Pre-shaper gain that brings the incoming signal into the WaveShaper's [-1, 1] domain;
+   * the post-shaper gain is its reciprocal (1/ioScale) to restore the original amplitude.
+   * Pick this to match the operating point at THIS target:
+   *  - per-voice insert: the signal is the raw ±5 vv voice tap (pre-mixer) → 0.2.
+   *  - master chain: mixer.ts has already applied vvScale ×0.2 + level, so the signal is
+   *    already ~±1 → ~1.0 (a fixed 0.2 here would fold ~5× too weakly).
+   */
+  readonly ioScale: number;
+}
+
+const DEFAULT_FOLD_IO_SCALE = 0.2;
+
 /**
  * FOLD — a wavefolder (pure foldCore curve → WaveShaperNode), mixed against dry.
  *  params: drive (1..8), symmetry (-1..1) REBUILD the static fold curve (commit-only in the
  *  panel to avoid per-frame Float32Array GC thrash); mix (0..1) is a live wet-gain write.
  *
- * The insert-FX signal is ±5 vv (FX sits BEFORE the mixer's ×0.2 vvScale — see studio.ts /
- * mixer.ts), but a WaveShaperNode's curve domain is [-1, 1]. So the wet branch pre-gains
- * ±5vv→±1 (×0.2) IN and post-gains ±1→±5vv (×5) OUT around the shaper, or the fold would
- * collapse to a hard square. This is a within-shell graph detail mirroring mixer.ts's own
- * vvScale (NOT a units.ts conversion — it does not violate the conversion-only rule).
+ * A WaveShaperNode's curve domain is [-1, 1], so the wet branch pre-gains the incoming signal
+ * into that range (×ioScale) IN and post-gains it back (×1/ioScale) OUT around the shaper, or
+ * the fold would collapse to a hard square. The right ioScale depends on WHERE the unit sits:
+ * the per-voice insert sees the raw ±5 vv voice tap (ioScale 0.2 → ±5vv→±1), but the master
+ * chain sits AFTER the mixer's own ×0.2 vvScale so its signal is already ~±1 (ioScale ~1.0).
+ * MasterFxChain threads the per-target scale through. This is a within-shell graph detail
+ * mirroring mixer.ts's own vvScale (NOT a units.ts conversion — it does not violate the
+ * conversion-only rule).
  */
-export function buildFold(ctx: BaseAudioContext): FxUnit {
+export function buildFold(ctx: BaseAudioContext, opts?: FoldOptions): FxUnit {
+  const ioScale = opts?.ioScale ?? DEFAULT_FOLD_IO_SCALE;
   const input = ctx.createGain();
   const output = ctx.createGain();
   const dry = ctx.createGain();
   const wet = ctx.createGain();
   wet.gain.value = 0;
 
-  // ±5vv → ±1 into the shaper, then ±1 → ±5vv back out.
+  // ×ioScale into the shaper's [-1,1] domain, then ×1/ioScale back out.
   const preGain = ctx.createGain();
-  preGain.gain.value = 0.2;
+  preGain.gain.value = ioScale;
   const postGain = ctx.createGain();
-  postGain.gain.value = 5;
+  postGain.gain.value = 1 / ioScale;
 
   let drive = 2;
   let symmetry = 0;

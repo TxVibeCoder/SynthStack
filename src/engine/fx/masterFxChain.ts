@@ -21,16 +21,30 @@ import type { MasterEffectsState } from '../../state/studioState';
 /** The master effects, in signal order. */
 export type MasterFxId = 'flanger' | 'delay' | 'reverb' | 'fold';
 
+/**
+ * Where this chain sits in the signal path — sets the FOLD WaveShaper's operating point.
+ *  - 'voice': per-voice insert, fed the raw ±5 vv voice tap (pre-mixer) → fold ioScale 0.2.
+ *  - 'master': the master chain, fed the post-mixer signal (already ~±1 after vvScale) → ~1.0.
+ * The single generic chain class serves both targets, so the FOLD io scale must vary per target
+ * or the master fold would see a ~5× too-small signal and barely fold.
+ */
+export type FxChainTarget = 'voice' | 'master';
+
+const FOLD_IO_SCALE: Record<FxChainTarget, number> = {
+  voice: 0.2, // ±5vv → ±1
+  master: 1.0, // already ~±1 post-mixer
+};
+
 export class MasterFxChain {
   private readonly units: Record<MasterFxId, FxUnit>;
   readonly input: GainNode;
   readonly output: GainNode;
 
-  constructor(ctx: BaseAudioContext) {
+  constructor(ctx: BaseAudioContext, target: FxChainTarget = 'voice') {
     const flanger = buildFlanger(ctx);
     const delay = buildDelay(ctx);
     const reverb = buildReverb(ctx);
-    const fold = buildFold(ctx);
+    const fold = buildFold(ctx, { ioScale: FOLD_IO_SCALE[target] });
     this.units = { flanger, delay, reverb, fold };
     // series: flanger → delay → reverb → fold
     flanger.output.connect(delay.input);
