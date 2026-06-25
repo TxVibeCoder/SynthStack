@@ -150,11 +150,21 @@ test('keyboard: renders 25 keys, a press plays the Monarch, octave shifts, MIDI 
   // Web MIDI calls of its own. Its aria-label encodes the same state, so the two never disagree.
   const utilityLed = page.getByTestId('utility-midi-led');
   await expect(utilityLed).toBeVisible();
-  const ledState = await utilityLed.getAttribute('aria-label');
-  const bridgeState = await page.evaluate(
-    () => window.__synthstackStudio!.getMidiStatus().state as string,
-  );
-  expect(ledState, 'utility MIDI LED mirrors the bridge MidiStatus state').toBe(`MIDI input ${bridgeState}`);
+  // The utility lamp is a passive mirror that re-reads getMidiStatus() on its own ~600ms poll,
+  // so it is EVENTUALLY consistent with the bridge — a single synchronous compare can catch it
+  // one poll tick behind. Poll until the lamp's aria-label matches the current bridge state.
+  await expect
+    .poll(
+      async () => {
+        const led = await utilityLed.getAttribute('aria-label');
+        const bridgeState = await page.evaluate(
+          () => window.__synthstackStudio!.getMidiStatus().state as string,
+        );
+        return led === `MIDI input ${bridgeState}`;
+      },
+      { message: 'utility MIDI LED mirrors the bridge MidiStatus state' },
+    )
+    .toBe(true);
 
   // ---- zero console errors across the whole session ---------------------------------
   expect(errors, `console/page errors during the keyboard run:\n${errors.join('\n')}`).toEqual([]);
