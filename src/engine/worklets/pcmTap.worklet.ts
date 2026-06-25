@@ -29,13 +29,20 @@ class PcmTapProcessor extends AudioWorkletProcessor {
     channelCount: 0,
     channels: [],
   };
+  // Preallocated, reused-across-blocks scratch arrays for the per-block postMessage: `out` holds
+  // the channel slots to ship, `transfer` their backing buffers. Their LENGTH is reset to 0 at the
+  // top of every process() and repopulated by push — no fresh array literal per render quantum.
+  private readonly out: Float32Array[] = [];
+  private readonly transfer: Transferable[] = [];
 
   process(inputs: Float32Array[][]): boolean {
     const input = inputs[0];
     if (!input || input.length === 0) return true;
     const nCh = input.length < MAX_TAP_CHANNELS ? input.length : MAX_TAP_CHANNELS;
-    const transfer: Transferable[] = [];
-    const out: Float32Array[] = [];
+    const transfer = this.transfer;
+    const out = this.out;
+    transfer.length = 0;
+    out.length = 0;
     for (let c = 0; c < nCh; c++) {
       const src = input[c];
       const slot = this.slots[c]!;
