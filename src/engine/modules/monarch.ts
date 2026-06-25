@@ -17,7 +17,6 @@ import {
   ACCENT_CUTOFF_BOOST_VV,
   PITCH_REF_HZ,
   clamp,
-  velocityToVv,
 } from '../units';
 
 /**
@@ -32,14 +31,6 @@ import {
  * them against a bench reference (or a vendor spec) before adjusting.
  */
 const LIN_FM_DEPTH_HZ_PER_VV = 150;
-
-/**
- * Reference note-on velocity in vv (G1): velocityAt re-centers every note-on velocity on this value
- * so the on-screen keyboard's constant velocity 100 contributes ZERO to vcaCtl = today's level (no
- * regression for presets / recipes / the audio battery). velocityToVv(100) ≈ 5.91 vv. EARS: this
- * "vel 100 = unity" anchor + the linear curve are flagged for the operator (see units.velocityToVv).
- */
-const MON_VELOCITY_REF_VV = velocityToVv(100);
 
 export class MonarchModule extends ModuleBase {
   // sources
@@ -74,7 +65,7 @@ export class MonarchModule extends ModuleBase {
   private readonly vcfModAmount: GainNode;
   private readonly egToVca: GainNode;
   private readonly onToVca: GainNode;
-  private readonly velocityCv: ConstantSourceNode; // INTERNAL note-on velocity CV (vv), summed into vcaCtl
+  private readonly velocityGain: GainNode; // G1: per-note velocity SCALE on the EG->vcaCtl path (default unity)
   private readonly vcaGainNode: GainNode;
   private readonly volume: GainNode;
   private readonly vcoModBus: GainNode; // pattern-2 bus: EG by default, jack replaces
@@ -239,18 +230,17 @@ export class MonarchModule extends ModuleBase {
     constant(ctx, 1).connect(this.onToVca);
     const vcaCvNorm = gain(ctx, 1 / 7.5);
     this.inputBus('MON_VCA_CV_IN').connect(vcaCvNorm);
-    // INTERNAL note-on velocity CV: a ConstantSource carrying the RE-CENTERED velocity (vv) — see
-    // velocityAt: vel=100 writes 0 (today's level = no regression), vel=127 a touch positive, vel=1
-    // negative (quieter). Normalized 1/7.5 and summed into the SAME vcaCtl as EG + VCA_CV (the
-    // documented default = a parallel velocity CV, modest scale; flagged for the operator).
-    this.velocityCv = constant(ctx, 0);
-    const velocityNorm = gain(ctx, 1 / 7.5);
-    this.velocityCv.connect(velocityNorm);
+    // G1 (velocity -> VCA): velocity SCALES the EG contribution rather than summing a parallel DC
+    // offset. A per-note velocity GAIN (default UNITY — the sequencer never calls velocityAt, so its
+    // behavior is unchanged) sits on the EG->vcaCtl path; velocityAt sets it at note-on. Because it
+    // only multiplies the already-decaying envelope, once the EG reaches 0 the velocity term is 0 too
+    // (no residual oscillator bleed after note-off) and there is no note-off click. EARS: vel 100 =
+    // unity (today's level); the curve/range is a by-ear knob (see units.velocityToGain).
+    this.velocityGain = gain(ctx, 1);
     const vcaCtl = gain(ctx, 0.5); // into shaper domain (0..~2 -> 0..1)
-    this.egToVca.connect(vcaCtl);
+    this.egToVca.connect(this.velocityGain).connect(vcaCtl);
     this.onToVca.connect(vcaCtl);
     vcaCvNorm.connect(vcaCtl);
-    velocityNorm.connect(vcaCtl);
     const vcaClip = shaper(ctx, (x) => {
       const g = clamp(x, 0, 1) * 2;
       return g <= 1 ? g : 1 + 0.2 * Math.tanh((g - 1) / 0.2);
@@ -422,14 +412,15 @@ export class MonarchModule extends ModuleBase {
   }
 
   /**
-   * Set the note-on VELOCITY at an exact time (mirrors gateAt). `velVv` is the velocity already
-   * mapped to vv by units.velocityToVv (1..127 -> 0..7.5). The value is RE-CENTERED on the
-   * reference velocity (100) before it enters vcaCtl, so vel=100 contributes 0 (today's level, no
-   * regression), louder velocities push the soft knee up and quieter ones pull it down. Only the
-   * keyboard/MIDI live path drives this; the sequencer leaves it at 0 (unchanged behavior).
+   * Set the note-on VELOCITY at an exact time (mirrors gateAt). `velGain` is the velocity already
+   * mapped to a GAIN by units.velocityToGain (1..127 -> ~0.25..~1.3, unity at 100). It SCALES the
+   * EG->vcaCtl contribution, so vel=100 = unity (today's level, no regression), louder = hotter,
+   * quieter = softer — and since it only scales the (decaying) envelope, NO velocity reset is needed
+   * on note-off (the EG returns the VCA to silence; no residual bleed, no click). Only the
+   * keyboard/MIDI live path drives this; the sequencer leaves the gain at unity (unchanged behavior).
    */
-  velocityAt(velVv: number, time: number): void {
-    this.velocityCv.offset.setValueAtTime(velVv - MON_VELOCITY_REF_VV, time);
+  velocityAt(velGain: number, time: number): void {
+    this.velocityGain.gain.setValueAtTime(velGain, time);
   }
 
   accentAt(on: boolean, time: number): void {

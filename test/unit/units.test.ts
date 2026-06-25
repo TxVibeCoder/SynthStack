@@ -19,8 +19,9 @@ import {
   cascadeVcoKnobHz,
   swingOffsetS,
   vcaGain,
-  velocityToVv,
-  VELOCITY_VV_MAX,
+  velocityToGain,
+  VELOCITY_GAIN_MAX,
+  VELOCITY_GAIN_MIN,
 } from '../../src/engine/units';
 
 describe('param adapters (work order §7.5, D8)', () => {
@@ -115,37 +116,39 @@ describe('param adapters (work order §7.5, D8)', () => {
   });
 });
 
-describe('velocityToVv (G1 — note-on velocity -> VCA-CV vv)', () => {
+describe('velocityToGain (G1 — note-on velocity -> EG->VCA scale gain)', () => {
   it('maps the full 1..127 range monotonically increasing', () => {
     let prev = -Infinity;
     for (let v = 1; v <= 127; v++) {
-      const out = velocityToVv(v);
+      const out = velocityToGain(v);
       expect(out).toBeGreaterThan(prev); // strictly increasing — monotonic
       prev = out;
     }
   });
 
-  it('vel 127 -> the VELOCITY_VV_MAX ceiling; vel 1 -> a small floor; both in the 0..7.5 domain', () => {
-    expect(velocityToVv(127)).toBeCloseTo(VELOCITY_VV_MAX, 6); // 7.5 vv max
-    const floor = velocityToVv(1);
-    expect(floor).toBeGreaterThan(0); // small but non-zero
-    expect(floor).toBeLessThan(0.1);
-    // every velocity lands inside the VCA-CV domain ~0..7.5
+  it('vel 100 (the on-screen reference) is UNITY gain — no level regression', () => {
+    expect(velocityToGain(100)).toBeCloseTo(1, 6);
+  });
+
+  it('vel 127 -> VELOCITY_GAIN_MAX, vel 1 -> VELOCITY_GAIN_MIN; bounded across the range', () => {
+    expect(velocityToGain(127)).toBeCloseTo(VELOCITY_GAIN_MAX, 6);
+    expect(velocityToGain(1)).toBeCloseTo(VELOCITY_GAIN_MIN, 6);
+    // every velocity lands within [MIN, MAX]
     for (const v of [1, 32, 64, 100, 127]) {
-      const out = velocityToVv(v);
-      expect(out).toBeGreaterThanOrEqual(0);
-      expect(out).toBeLessThanOrEqual(VELOCITY_VV_MAX);
+      const out = velocityToGain(v);
+      expect(out).toBeGreaterThanOrEqual(VELOCITY_GAIN_MIN);
+      expect(out).toBeLessThanOrEqual(VELOCITY_GAIN_MAX);
     }
   });
 
   it('vel 0 (running-status note-off) -> 0; out-of-range clamps to the rails', () => {
-    expect(velocityToVv(0)).toBe(0);
-    expect(velocityToVv(-5)).toBe(0); // below the floor -> 0
-    expect(velocityToVv(200)).toBeCloseTo(VELOCITY_VV_MAX, 6); // above 127 clamps to max
+    expect(velocityToGain(0)).toBe(0);
+    expect(velocityToGain(-5)).toBe(0); // below 1 -> 0
+    expect(velocityToGain(200)).toBeCloseTo(VELOCITY_GAIN_MAX, 6); // above 127 clamps to max
   });
 
   it('vel 100 (the on-screen reference) is hotter than vel 64 and cooler than vel 127', () => {
-    expect(velocityToVv(64)).toBeLessThan(velocityToVv(100));
-    expect(velocityToVv(100)).toBeLessThan(velocityToVv(127));
+    expect(velocityToGain(64)).toBeLessThan(velocityToGain(100));
+    expect(velocityToGain(100)).toBeLessThan(velocityToGain(127));
   });
 });

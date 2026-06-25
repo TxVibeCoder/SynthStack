@@ -866,14 +866,15 @@ export class Studio {
    *   retrigger=false (legato / held-note fall-back): pitch moves but the gate is already
    *               high, so do NOT re-raise it — no EG re-attack, matching classic SynthStack mono.
    */
-  monarchNoteOn(noteVv: number, retrigger: boolean, velVv?: number, glideS?: number): void {
+  monarchNoteOn(noteVv: number, retrigger: boolean, velGain?: number, glideS?: number): void {
     const t = this.context.audioContext.currentTime + 0.03;
     // Keyboard glide (G1): pass the SEPARATE keyboard glideS as the setPitchAt override (undefined =>
     // the module's own glideTimeS, the sequencer value — preserves current behavior).
     this.monarch.setPitchAt(noteVv, t, true, glideS);
-    // Velocity (G1): write velocity BEFORE raising the gate so the VCA sees it at attack. velVv is
-    // already in vv (units.velocityToVv); undefined => leave the velocity CV unchanged (no map).
-    if (velVv !== undefined) this.monarch.velocityAt(velVv, t);
+    // Velocity (G1): write velocity BEFORE raising the gate so the VCA sees it at attack. velGain is
+    // a GAIN that SCALES the EG->VCA path (units.velocityToGain, unity at 100); undefined => leave
+    // the velocity gain unchanged. No note-off reset needed — the EG returns the VCA to silence.
+    if (velGain !== undefined) this.monarch.velocityAt(velGain, t);
     if (retrigger) this.monarch.gateAt(true, t);
   }
 
@@ -889,10 +890,10 @@ export class Studio {
    *   glide=true: setPitchAt reads the module's glideTimeS and only glides when GLIDE is up.
    *   retrigger=false (legato / held-note fall-back): pitch moves, gate stays high (no re-attack).
    */
-  courierNoteOn(noteVv: number, retrigger: boolean, velVv?: number, glideS?: number): void {
+  courierNoteOn(noteVv: number, retrigger: boolean, velGain?: number, glideS?: number): void {
     const t = this.context.audioContext.currentTime + 0.03;
     this.courier.setPitchAt(noteVv, t, true, glideS); // glideS => keyboard glide override (G1)
-    if (velVv !== undefined) this.courier.velocityAt(velVv, t); // velocity BEFORE the gate (G1)
+    if (velGain !== undefined) this.courier.velocityAt(velGain, t); // velocity BEFORE the gate (G1)
     if (retrigger) {
       this.courier.gateAt(true, t);
     } else if (this.courier.multiTrig) {

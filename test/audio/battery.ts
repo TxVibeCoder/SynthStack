@@ -43,6 +43,7 @@ import {
   zeroCrossFreq,
 } from '../helpers/spectral';
 import { SR, buildModule, envelope, risingEdges, type AudioTestResult } from './harness';
+import { velocityToGain } from '../../src/engine/units';
 
 // AudioTests.tsx imports AudioTestResult from here — keep it on this module's public surface.
 export type { AudioTestResult } from './harness';
@@ -143,44 +144,58 @@ async function monarchGateNoClick(): Promise<AudioTestResult> {
 }
 
 async function monarchVelocity(): Promise<AudioTestResult> {
-  // G1: a higher note-on velocity yields a MEASURABLY louder VCA output, AND the on-screen
-  // constant velocity (100) reproduces today's level (no regression vs the pre-G1 gate-only path).
-  // velocityAt re-centers on vel=100, so a vel=100 note == a plain gate with NO velocity write.
-  const render = async (setVel: ((mod: MonarchModule) => void) | null): Promise<number> => {
-    const { mod, render } = await buildModule(1.4, MonarchModule, monarchDef);
+  // G1: a higher note-on velocity yields a MEASURABLY louder VCA output DURING the note, AND the
+  // on-screen constant velocity (100) reproduces today's level (no regression vs the pre-G1
+  // gate-only path). velocityToGain(100)=unity, so a vel=100 note == a plain gate (no velocity write).
+  // THE BUG-LOCK: at vel=127, after the gate releases and the EG decays, the VCA returns to
+  // ~silence. The old parallel-DC-offset code left vcaCtl partially open (continuous oscillator
+  // bleed) — this tail measurement FAILS on that code and passes on the velocity-SCALE fix.
+  const GATE_ON = 0.1;
+  const GATE_OFF = 1.3;
+  const render = async (setVel: ((mod: MonarchModule) => void) | null): Promise<Float32Array> => {
+    const { mod, render } = await buildModule(2.0, MonarchModule, monarchDef);
     mod.setControl('MON_VCA_MODE', 'EG');
     mod.setControl('MON_ATTACK', 0.02);
-    mod.setControl('MON_DECAY', 0.2);
+    mod.setControl('MON_DECAY', 0.2); // post-release fall to ~0 well before the 2.0 s tail window
     mod.setControl('MON_SUSTAIN', 'ON'); // gateHold sustains at peak while the gate is high
     mod.setControl('MON_VCF_CUTOFF', 8000);
     mod.setControl('MON_VOLUME', 0.8);
-    mod.gateAt(true, 0.1);
+    mod.gateAt(true, GATE_ON);
     if (setVel) setVel(mod);
+    mod.gateAt(false, GATE_OFF); // release so the EG decays to 0 (bug-lock tail)
     mod.outputTap('MON_VCA_OUT').connect((mod.ctx as OfflineAudioContext).destination);
-    const buf = await render();
-    // steady sustain window, well past the 20 ms attack
-    return rms(buf, Math.floor(0.4 * SR), Math.floor(1.2 * SR));
+    return render();
   };
-  const VELOCITY_VV_MAX = 7.5;
-  const hi = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX, 0.1)); // vel 127
-  const lo = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX * (32 / 127), 0.1)); // vel 32
-  const ref100 = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX * (100 / 127), 0.1)); // vel 100
-  const gateOnly = await render(null); // today's path: gate, no velocity write
-  const louder = hi > lo * 1.1; // a clearly audible step up
+  const sustainRms = (buf: Float32Array) => rms(buf, Math.floor(0.4 * SR), Math.floor(1.2 * SR));
+  const tailRms = (buf: Float32Array) => rms(buf, Math.floor(1.8 * SR), Math.floor(2.0 * SR));
+  const hiBuf = await render((mod) => mod.velocityAt(velocityToGain(127), GATE_ON));
+  const loBuf = await render((mod) => mod.velocityAt(velocityToGain(32), GATE_ON));
+  const ref100Buf = await render((mod) => mod.velocityAt(velocityToGain(100), GATE_ON));
+  const gateOnlyBuf = await render(null); // today's path: gate, no velocity write
+  const hi = sustainRms(hiBuf);
+  const lo = sustainRms(loBuf);
+  const ref100 = sustainRms(ref100Buf);
+  const gateOnly = sustainRms(gateOnlyBuf);
+  const hiTail = tailRms(hiBuf); // THE LOCK: post-release tail at vel 127
+  const louder = hi > lo * 1.1; // a clearly audible step up DURING the note
   const noRegression = Math.abs(ref100 - gateOnly) / Math.max(gateOnly, 1e-6) < 0.02; // vel100 == today
+  const tailSilent = hiTail < hi * 0.02; // returns to ~silence (no residual DC-offset bleed)
   return {
-    name: 'Monarch velocity: vel127 louder than vel32, vel100 == today (no regression)',
-    pass: louder && noRegression,
-    detail: `rms hi=${hi.toFixed(3)} lo=${lo.toFixed(3)} vel100=${ref100.toFixed(3)} gateOnly=${gateOnly.toFixed(3)}`,
+    name: 'Monarch velocity: vel127 louder than vel32, vel100 == today, vel127 tail silent (G1 lock)',
+    pass: louder && noRegression && tailSilent,
+    detail: `rms hi=${hi.toFixed(3)} lo=${lo.toFixed(3)} vel100=${ref100.toFixed(3)} gateOnly=${gateOnly.toFixed(3)} hiTail=${hiTail.toFixed(4)}`,
   };
 }
 
 async function courierVelocity(): Promise<AudioTestResult> {
-  // G1 (Courier): the exact parallel — a higher note-on velocity is measurably louder, and vel=100
-  // reproduces the plain-gate level (no regression). The amp EG defaults to gateHold (sustains at
-  // peak while the gate is high), so a held gate gives a steady window to measure.
-  const render = async (setVel: ((mod: CourierModule) => void) | null): Promise<number> => {
-    const { mod, render } = await buildModule(1.4, CourierModule, courierDef);
+  // G1 (Courier): the exact parallel — a higher note-on velocity is measurably louder DURING the
+  // note, vel=100 reproduces the plain-gate level (no regression), AND the bug-lock: at vel=127 the
+  // post-release tail returns to ~silence (FAILS on the old parallel-DC-offset code). The amp EG
+  // defaults to gateHold (sustains at peak while the gate is high), giving a steady window to measure.
+  const GATE_ON = 0.1;
+  const GATE_OFF = 1.3;
+  const render = async (setVel: ((mod: CourierModule) => void) | null): Promise<Float32Array> => {
+    const { mod, render } = await buildModule(2.0, CourierModule, courierDef);
     mod.setControl('COU_A_ATTACK', 0.02);
     mod.setControl('COU_A_DECAY', 0.2);
     mod.setControl('COU_MIX_OSC1', 0.9);
@@ -189,23 +204,30 @@ async function courierVelocity(): Promise<AudioTestResult> {
     mod.setControl('COU_MIX_NOISE', 0); // a random noise floor (which would jitter the no-regression cmp)
     mod.setControl('COU_CUTOFF', 8000);
     mod.setControl('COU_VOLUME', 0.8);
-    mod.gateAt(true, 0.1);
+    mod.gateAt(true, GATE_ON);
     if (setVel) setVel(mod);
+    mod.gateAt(false, GATE_OFF); // release so the amp EG decays to 0 (bug-lock tail)
     mod.outputTap('COU_AUDIO_OUT').connect((mod.ctx as OfflineAudioContext).destination);
-    const buf = await render();
-    return rms(buf, Math.floor(0.4 * SR), Math.floor(1.2 * SR));
+    return render();
   };
-  const VELOCITY_VV_MAX = 7.5;
-  const hi = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX, 0.1)); // vel 127
-  const lo = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX * (32 / 127), 0.1)); // vel 32
-  const ref100 = await render((mod) => mod.velocityAt(VELOCITY_VV_MAX * (100 / 127), 0.1)); // vel 100
-  const gateOnly = await render(null);
+  const sustainRms = (buf: Float32Array) => rms(buf, Math.floor(0.4 * SR), Math.floor(1.2 * SR));
+  const tailRms = (buf: Float32Array) => rms(buf, Math.floor(1.8 * SR), Math.floor(2.0 * SR));
+  const hiBuf = await render((mod) => mod.velocityAt(velocityToGain(127), GATE_ON));
+  const loBuf = await render((mod) => mod.velocityAt(velocityToGain(32), GATE_ON));
+  const ref100Buf = await render((mod) => mod.velocityAt(velocityToGain(100), GATE_ON));
+  const gateOnlyBuf = await render(null);
+  const hi = sustainRms(hiBuf);
+  const lo = sustainRms(loBuf);
+  const ref100 = sustainRms(ref100Buf);
+  const gateOnly = sustainRms(gateOnlyBuf);
+  const hiTail = tailRms(hiBuf);
   const louder = hi > lo * 1.1;
   const noRegression = Math.abs(ref100 - gateOnly) / Math.max(gateOnly, 1e-6) < 0.02;
+  const tailSilent = hiTail < hi * 0.02;
   return {
-    name: 'Courier velocity: vel127 louder than vel32, vel100 == today (no regression)',
-    pass: louder && noRegression,
-    detail: `rms hi=${hi.toFixed(3)} lo=${lo.toFixed(3)} vel100=${ref100.toFixed(3)} gateOnly=${gateOnly.toFixed(3)}`,
+    name: 'Courier velocity: vel127 louder than vel32, vel100 == today, vel127 tail silent (G1 lock)',
+    pass: louder && noRegression && tailSilent,
+    detail: `rms hi=${hi.toFixed(3)} lo=${lo.toFixed(3)} vel100=${ref100.toFixed(3)} gateOnly=${gateOnly.toFixed(3)} hiTail=${hiTail.toFixed(4)}`,
   };
 }
 

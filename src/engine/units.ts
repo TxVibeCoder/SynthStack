@@ -174,21 +174,30 @@ export function monarchStepDurS(bpm: number): number {
 }
 
 /**
- * MIDI / keyboard note-on velocity (1..127) -> a VCA-CV value in vv (the same 0..7.5 domain the
- * VCA_CV bus / EG peak live in). PURE + monotonic; vel 127 -> the ~7.5 vv max, vel 1 -> a small
- * floor (~0.06 vv), vel 0 -> 0 (a vel-0 note-on is a running-status note-off, never sounded).
+ * MIDI / keyboard note-on velocity (1..127) -> a GAIN that SCALES the amp-EG contribution into the
+ * VCA (NOT a parallel DC offset). PURE + monotonic; UNITY at the on-screen reference velocity 100 so
+ * today's level is byte-unchanged, ~VELOCITY_GAIN_MAX at vel 127 (a touch louder) and ~VELOCITY_GAIN_MIN
+ * near vel 1 (quieter). vel 0 -> 0 (a vel-0 note-on is a running-status note-off, never sounded).
  *
- * EARS / DECISION (G1 — flagged for the operator): the curve is a straightforward LINEAR map (no gamma /
- * audio taper) so the relationship is predictable and the reference velocity 100 lands exactly at
- * today's full-open level once the engine re-centers it (see MonarchModule.velocityAt / the velocity
- * ConstantSource: the contribution is summed into the SAME vcaCtl as EG + VCA_CV *offset by
- * velocityToVv(100)*, so vel=100 adds 0 = no regression, vel=127 a touch hotter, vel=1 quiet). The
- * curve SHAPE (linear vs ^1.5 perceptual) + the 7.5 max are the by-ear knobs the operator may want to turn.
+ * G1 FIX: velocity now SCALES the (already-decaying) EG term rather than summing a held offset, so once
+ * the EG decays to 0 the velocity-scaled term is 0 too — no residual VCA bleed after note-off, and the
+ * gain only multiplies the envelope so there is no note-off click. A linear ramp anchored at 100=unity:
+ * 1..100 -> MIN..1, 100..127 -> 1..MAX.
+ *
+ * EARS / DECISION (G1 — flagged for the operator): the curve is a straightforward piecewise-LINEAR map
+ * anchored so vel 100 = unity (no preset/recipe/battery regression). The curve SHAPE (linear vs ^1.5
+ * perceptual) and the MIN/MAX range are the by-ear knobs the operator may want to turn.
  */
-export const VELOCITY_VV_MAX = 7.5;
-export function velocityToVv(velocity127: number): number {
+export const VELOCITY_GAIN_MAX = 1.3; // vel 127
+export const VELOCITY_GAIN_MIN = 0.25; // vel 1
+const VELOCITY_REF = 100; // on-screen / default velocity -> unity gain
+export function velocityToGain(velocity127: number): number {
   const v = clamp(velocity127, 0, 127);
   if (v <= 0) return 0;
-  // 1..127 -> a small floor..VELOCITY_VV_MAX, linearly.
-  return (v / 127) * VELOCITY_VV_MAX;
+  if (v <= VELOCITY_REF) {
+    // 1..100 -> MIN..1 linearly (note: v=1 lands just above MIN, v=100 = 1)
+    return VELOCITY_GAIN_MIN + ((v - 1) / (VELOCITY_REF - 1)) * (1 - VELOCITY_GAIN_MIN);
+  }
+  // 100..127 -> 1..MAX linearly
+  return 1 + ((v - VELOCITY_REF) / (127 - VELOCITY_REF)) * (VELOCITY_GAIN_MAX - 1);
 }

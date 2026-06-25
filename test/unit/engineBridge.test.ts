@@ -9,14 +9,14 @@ import { classifyControl, engineBridge, parseControlRoute, type ControlRoute } f
 import { defaultFactoryPad } from '../../src/state/studioState';
 import { FACTORY_KIT, KIT_LIBRARY, DEFAULT_KIT_ID } from '../../src/engine/factorySamples';
 import { noteToVv } from '../../src/engine/voice/monoVoice';
-import { velocityToVv } from '../../src/engine/units';
+import { velocityToGain } from '../../src/engine/units';
 import monarch from '../../data/monarch.json';
 
-/** G1: the bridge threads velocity (vv) + the separate keyboard glide (s) into {monarch,courier}NoteOn.
+/** G1: the bridge threads a velocity GAIN + the separate keyboard glide (s) into {monarch,courier}NoteOn.
  *  The on-screen / test default velocity is 100 and the default keyboard glide is 0, so a plain
- *  noteOn(note, 100) calls NoteOn(vv, retrigger, velocityToVv(100), 0). expect.closeTo keeps the
- *  float velVv match robust. */
-const VEL100 = expect.closeTo(velocityToVv(100), 5);
+ *  noteOn(note, 100) calls NoteOn(vv, retrigger, velocityToGain(100)=1, 0). expect.closeTo keeps the
+ *  float velGain match robust. */
+const VEL100 = expect.closeTo(velocityToGain(100), 5);
 const GLIDE0 = 0;
 import anvil from '../../data/anvil.json';
 import cascade from '../../data/cascade.json';
@@ -728,7 +728,7 @@ describe('engineBridge G1 — velocity, keyboard glide, MIDI channel', () => {
     engineBridge.setMidiChannel(-1);
   });
 
-  it('threads the note-on velocity (vv) into monarchNoteOn (a higher velocity -> a higher velVv)', () => {
+  it('threads the note-on velocity GAIN into monarchNoteOn (a higher velocity -> a higher gain)', () => {
     engineBridge.noteOn(60, 127);
     const hi = monarchNoteOn.mock.calls.at(-1)![2] as number;
     engineBridge.releaseAllNotes();
@@ -736,8 +736,8 @@ describe('engineBridge G1 — velocity, keyboard glide, MIDI channel', () => {
     engineBridge.noteOn(60, 32);
     const lo = monarchNoteOn.mock.calls.at(-1)![2] as number;
     expect(hi).toBeGreaterThan(lo);
-    expect(hi).toBeCloseTo(velocityToVv(127), 5);
-    expect(lo).toBeCloseTo(velocityToVv(32), 5);
+    expect(hi).toBeCloseTo(velocityToGain(127), 5);
+    expect(lo).toBeCloseTo(velocityToGain(32), 5);
   });
 
   it('a legato fall-back reuses the most-recent note-on velocity (the side-store)', () => {
@@ -747,7 +747,7 @@ describe('engineBridge G1 — velocity, keyboard glide, MIDI channel', () => {
     engineBridge.noteOff(64); // fall back to 60 — gate stays 'on', no fresh velocity to read
     // the fall-back reuses lastNoteVelocity (40, the most recent note-on), NOT 120
     expect(monarchNoteOn).toHaveBeenCalledTimes(1);
-    expect(monarchNoteOn.mock.calls.at(-1)![2]).toBeCloseTo(velocityToVv(40), 5);
+    expect(monarchNoteOn.mock.calls.at(-1)![2]).toBeCloseTo(velocityToGain(40), 5);
   });
 
   it('keyboard glide is threaded as the setPitchAt override (NOT MON_GLIDE) and persists', () => {

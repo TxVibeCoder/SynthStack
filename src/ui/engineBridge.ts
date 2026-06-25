@@ -72,7 +72,7 @@ import {
   type StudioStore,
 } from '../state/studioState';
 import { MonoVoice, noteToVv, type VoiceAction } from '../engine/voice/monoVoice';
-import { velocityToVv } from '../engine/units';
+import { velocityToGain } from '../engine/units';
 import { reportError } from './errorLog';
 import { WebMidiInput, type MidiStatus } from './midi/webMidiInput';
 import type { EgMode } from '../engine/sequencers/cascadeClock';
@@ -1006,13 +1006,14 @@ class EngineBridge {
     if (!this._powered) return;
     if (a.gate === 'on' && a.note != null) {
       const vv = noteToVv(a.note) + this.keyboardOctave;
-      // Velocity -> VCA-CV (G1): map the raw 1..127 to vv ONCE here, and pass the SEPARATE keyboard
-      // glide so the live path glides on KB GLIDE, not the seq's MON_GLIDE. A legato fall-back
-      // (noteOff -> next held note, gate 'on') reuses lastNoteVelocity via the default arg.
-      const velVv = velocityToVv(velocity);
+      // Velocity -> VCA gain (G1): map the raw 1..127 to a velocity GAIN ONCE here (unity at 100),
+      // and pass the SEPARATE keyboard glide so the live path glides on KB GLIDE, not the seq's
+      // MON_GLIDE. A legato fall-back (noteOff -> next held note, gate 'on') reuses lastNoteVelocity
+      // via the default arg.
+      const velGain = velocityToGain(velocity);
       const glideS = this.keyboardGlideS;
-      if (this.keyboardTarget === 'courier') this.studio.courierNoteOn(vv, a.retrigger, velVv, glideS);
-      else this.studio.monarchNoteOn(vv, a.retrigger, velVv, glideS);
+      if (this.keyboardTarget === 'courier') this.studio.courierNoteOn(vv, a.retrigger, velGain, glideS);
+      else this.studio.monarchNoteOn(vv, a.retrigger, velGain, glideS);
     } else if (a.gate === 'off') {
       if (this.keyboardTarget === 'courier') this.studio.courierNoteOff();
       else this.studio.monarchNoteOff();
