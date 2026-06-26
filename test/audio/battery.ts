@@ -40,6 +40,7 @@ import {
   spectralCentroidHz,
   spectralCentroidSeries,
   fftMag,
+  peakFreqHz,
   zeroCrossFreq,
 } from '../helpers/spectral';
 import { SR, buildModule, envelope, risingEdges, type AudioTestResult } from './harness';
@@ -437,9 +438,14 @@ async function cascade2v3(): Promise<AudioTestResult> {
 async function cascadeSeq2DrivesVco2(): Promise<AudioTestResult> {
   // regression: SEQ 2 edits were inaudible because VCO 2
   // defaulted to level 0. Isolate VCO 2 and prove seq-2 step values move its pitch.
+  // The SUB1/SUB2 dividers now default audible (low-end fidelity change), so mute them
+  // too — this test reads VCO 2's FUNDAMENTAL pitch via zero crossings, which the
+  // divided-down subs (f/2, f/3) would otherwise dominate.
   const { mod, render } = await buildModule(2.4, CascadeModule, cascadeDef);
   mod.setControl('CAS_VCO1_LEVEL', 0);
   mod.setControl('CAS_VCO2_LEVEL', 0.8);
+  mod.setControl('CAS_VCO2_SUB1_LEVEL', 0);
+  mod.setControl('CAS_VCO2_SUB2_LEVEL', 0);
   mod.setControl('CAS_CUTOFF', 12000);
   mod.setControl('CAS_VCA_ATTACK', 0.002);
   mod.setControl('CAS_VCA_DECAY', 10); // hold the VCA open across the render
@@ -452,8 +458,10 @@ async function cascadeSeq2DrivesVco2(): Promise<AudioTestResult> {
   mod.applySeqStep(1, 1, 1.2);
   mod.outputTap('CAS_VCA_OUT').connect((mod.ctx as OfflineAudioContext).destination);
   const buf = await render();
-  const f1 = zeroCrossFreq(buf, SR, Math.floor(0.4 * SR), Math.floor(1.0 * SR));
-  const f2 = zeroCrossFreq(buf, SR, Math.floor(1.5 * SR), Math.floor(2.1 * SR));
+  // FFT-peak fundamental in a band around each expected pitch — robust to the ladder
+  // drive's added harmonics (zero-crossing counting over-reads on a saturated saw).
+  const f1 = peakFreqHz(fftMag(buf, SR, 16384, Math.floor(0.4 * SR)), 180, 360);
+  const f2 = peakFreqHz(fftMag(buf, SR, 16384, Math.floor(1.5 * SR)), 380, 720);
   const level = rms(buf, Math.floor(0.4 * SR), Math.floor(1.0 * SR));
   const pass =
     level > 0.3 &&

@@ -16,6 +16,7 @@ import type { ModuleDef } from '../../../data/schema';
 import { ModuleBase } from './moduleBase';
 import { constant, gain, shaper } from './helpers';
 import { DriftSource } from '../drift';
+import { LADDER_DRIVE } from '../dsp/ladderDrive';
 import { clamp, cascadeSeqOctRange, cascadeSeqToSubOffset } from '../units';
 import { quantizeVv, type QuantizeMode } from '../quantize';
 
@@ -111,6 +112,10 @@ export class CascadeModule extends ModuleBase {
       processorOptions: { resScale: CASCADE_RES_SCALE }, // earlier self-oscillation onset
     });
     this.ladder.parameters.get('mode')!.value = 0; // locked LP
+    this.ladder.parameters.get('drive')!.value = LADDER_DRIVE.cascade.drive;
+    // post-ladder makeup (≈1/drive): drive adds harmonic density without raising level
+    const ladderOut = gain(ctx, LADDER_DRIVE.cascade.makeup);
+    this.ladder.connect(ladderOut);
     mixSum.connect(this.ladder, 0, 0);
     const cutoffCvSum = gain(ctx, 1);
     this.inputBus('CAS_CUTOFF_IN').connect(cutoffCvSum);
@@ -166,7 +171,7 @@ export class CascadeModule extends ModuleBase {
     // the six VCO/SUB LEVEL knobs use a linear taper (real audio pots are usually log). Endpoints
     // are correct; the curve between them is an assumption held pending a bench reference.
     this.volume = gain(ctx, 0.7);
-    this.ladder.connect(this.vcaGainNode).connect(this.volume);
+    ladderOut.connect(this.vcaGainNode).connect(this.volume);
     this.volume.connect(this.outputTap('CAS_VCA_OUT'));
 
     // ---- transport-facing outs ------------------------------------------------------
@@ -251,8 +256,10 @@ export class CascadeModule extends ModuleBase {
     // levels into the mixer + patchbay taps
     const tapNames = [`CAS_VCO${n}_OUT`, `CAS_VCO${n}_SUB1_OUT`, `CAS_VCO${n}_SUB2_OUT`];
     [vco, sub1, sub2].forEach((osc, i) => {
-      // both VCOs audible by default (data JSON defaults); subs start at 0
-      const level = gain(ctx, i === 0 ? 0.8 : 0);
+      // VCO + SUB1 + SUB2 all audible by default (mirror data/cascade.json — keep in sync).
+      // Stacked subharmonics are this voice's signature low end, so they must sound out of the
+      // box; muted subs (the old `: 0`) shipped it as a bare 2-saw. i: 0=VCO, 1=SUB1, 2=SUB2.
+      const level = gain(ctx, i === 0 ? 0.8 : i === 1 ? 0.6 : 0.4);
       osc.connect(level, 0).connect(mixSum);
       osc.connect(this.outputTap(tapNames[i]!), 0);
       this.levels.push(level);

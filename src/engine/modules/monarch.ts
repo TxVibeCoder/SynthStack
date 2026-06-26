@@ -12,6 +12,7 @@ import { ModuleBase } from './moduleBase';
 import { constant, equalPowerCrossfade, gain, shaper, type Crossfade } from './helpers';
 import { createNoiseSource } from '../noise';
 import { DriftSource } from '../drift';
+import { LADDER_DRIVE } from '../dsp/ladderDrive';
 import type { AssignSource } from '../assign';
 import {
   ACCENT_CUTOFF_BOOST_VV,
@@ -179,6 +180,10 @@ export class MonarchModule extends ModuleBase {
       numberOfOutputs: 1,
       outputChannelCount: [1],
     });
+    this.ladder.parameters.get('drive')!.value = LADDER_DRIVE.monarch.drive;
+    // post-ladder makeup (≈1/drive): drive adds harmonic density without raising level
+    const ladderOut = gain(ctx, LADDER_DRIVE.monarch.makeup);
+    this.ladder.connect(ladderOut);
     this.mix.out.connect(this.ladder, 0, 0);
     // cutoff CV bus: jack + VCF MOD path + accent boost, all in vv
     const cutoffCvSum = gain(ctx, 1);
@@ -190,7 +195,7 @@ export class MonarchModule extends ModuleBase {
     const resCvScale = gain(ctx, 0.1);
     this.inputBus('MON_VCF_RES_IN').connect(resCvScale);
     resCvScale.connect(this.ladder.parameters.get('resonance')!);
-    this.ladder.connect(this.outputTap('MON_VCF_OUT'));
+    ladderOut.connect(this.outputTap('MON_VCF_OUT'));
 
     // ---- VCF MOD path ----------------------------------------------------------
     this.lfoToVcfMod = gain(ctx, 0);
@@ -250,7 +255,7 @@ export class MonarchModule extends ModuleBase {
     vcaClip.connect(this.vcaGainNode.gain);
     this.accentVcaGain = gain(ctx, 1); // seq binding ramps to 1.25 on accents
     this.volume = gain(ctx, 0.7);
-    this.ladder.connect(this.vcaGainNode).connect(this.accentVcaGain).connect(this.volume);
+    ladderOut.connect(this.vcaGainNode).connect(this.accentVcaGain).connect(this.volume);
     this.volume.connect(this.outputTap('MON_VCA_OUT'));
 
     // ---- VC MIX -------------------------------------------------------------------
