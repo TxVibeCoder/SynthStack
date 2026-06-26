@@ -26,6 +26,7 @@ import { ModuleBase } from './moduleBase';
 import { constant, gain, shaper } from './helpers';
 import { createNoiseSource } from '../noise';
 import { DriftSource } from '../drift';
+import { LADDER_DRIVE } from '../dsp/ladderDrive';
 import { PITCH_REF_HZ, clamp } from '../units';
 import { MOD_TARGETS, modGain, type ModBus } from '../modRouter';
 import type { CourierModSource, ModAssignEntry } from '../../state/studioState';
@@ -267,6 +268,10 @@ export class CourierModule extends ModuleBase {
       processorOptions: { resScale: COURIER_RES_SCALE },
     });
     this.ladder.parameters.get('mode')!.value = 0; // LP4 default
+    this.ladder.parameters.get('drive')!.value = LADDER_DRIVE.courier.drive;
+    // post-ladder makeup (≈1/drive): drive adds harmonic density without raising level
+    const ladderOut = gain(ctx, LADDER_DRIVE.courier.makeup);
+    this.ladder.connect(ladderOut);
     mixSum.connect(this.ladder, 0, 0);
 
     this.cutoffCvSum = gain(ctx, 1);
@@ -438,7 +443,7 @@ export class CourierModule extends ModuleBase {
     const ampTremScale = gain(ctx, 1 / 5); // ±5 vv -> ±1 around unity
     this.lfo2ToAmp.connect(ampTremScale).connect(this.ampVca.gain);
     this.volume = gain(ctx, 0.7);
-    this.ladder.connect(this.vcaGainNode).connect(this.ampVca).connect(this.volume);
+    ladderOut.connect(this.vcaGainNode).connect(this.ampVca).connect(this.volume);
 
     // ---- outs ---------------------------------------------------------------
     this.volume.connect(this.outputTap('COU_AUDIO_OUT')); // main out to the mixer (A6 wires the channel)

@@ -8,6 +8,7 @@ import { ModuleBase } from './moduleBase';
 import { constant, gain, shaper } from './helpers';
 import { createNoiseSource } from '../noise';
 import { DriftSource } from '../drift';
+import { LADDER_DRIVE } from '../dsp/ladderDrive';
 import { PITCH_REF_HZ, clamp } from '../units';
 
 /**
@@ -144,6 +145,10 @@ export class AnvilModule extends ModuleBase {
       numberOfOutputs: 1,
       outputChannelCount: [1],
     });
+    this.ladder.parameters.get('drive')!.value = LADDER_DRIVE.anvil.drive;
+    // post-ladder makeup (≈1/drive): drive adds harmonic density without raising level
+    const ladderOut = gain(ctx, LADDER_DRIVE.anvil.makeup);
+    this.ladder.connect(ladderOut);
     mixSum.connect(this.ladder, 0, 0);
 
     // ---- cutoff modulation -----------------------------------------------------------
@@ -177,7 +182,7 @@ export class AnvilModule extends ModuleBase {
     this.vcaGainNode = gain(ctx, 0);
     vcaClip.connect(this.vcaGainNode.gain);
     this.volume = gain(ctx, 0.7);
-    this.ladder.connect(this.vcaGainNode).connect(this.volume);
+    ladderOut.connect(this.vcaGainNode).connect(this.volume);
     this.volume.connect(this.outputTap('ANV_VCA_OUT'));
 
     // ---- EG gate wiring: TRIGGER bus (normal = seq clock) + velocity bus ------------
