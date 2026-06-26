@@ -446,15 +446,22 @@ describe('factory presets', () => {
     MODULE_DEFS.flatMap((def) => def.controls.map((c) => c.id)),
   );
 
-  it('lists 5 presets with original names + descriptions', () => {
+  it('lists 12 presets with original names + descriptions', () => {
     const list = listFactoryPresets();
-    expect(list).toHaveLength(5);
+    expect(list).toHaveLength(12);
     expect(list.map((p) => p.id)).toEqual([
       'factory-preset-cellar-door',
       'factory-preset-iron-garden',
       'factory-preset-tide-engine',
       'factory-preset-corner-store',
       'factory-preset-furnace-room',
+      'factory-preset-baroque-as-a-joke',
+      'factory-preset-deep-bounce',
+      'factory-preset-lo-fi-low-end',
+      'factory-preset-aftermath',
+      'factory-preset-one-faux-one',
+      'factory-preset-3-squares-and-a-sine',
+      'factory-preset-sine-up-for-noise',
     ]);
     for (const p of list) {
       expect(p.name.length).toBeGreaterThan(0);
