@@ -132,7 +132,8 @@ export type ControlRoute =
   | 'cascadeTempo'
   | 'cascadeRhythmDiv'
   | 'cascadeRhythmAssign'
-  | 'cascadeEg';
+  | 'cascadeEg'
+  | 'courierTempo';
 
 interface ParsedRoute {
   route: ControlRoute;
@@ -155,6 +156,8 @@ export function parseControlRoute(controlId: string): ParsedRoute {
       return { route: 'cascadeTempo', index: 0, seq: 0 };
     case 'CAS_EG':
       return { route: 'cascadeEg', index: 0, seq: 0 };
+    case 'COU_TEMPO':
+      return { route: 'courierTempo', index: 0, seq: 0 };
     default:
       break;
   }
@@ -365,6 +368,16 @@ class EngineBridge {
       case 'cascadeTempo':
         // knob gives Hz tick rate directly (data/cascade.json: 0.333–50 Hz)
         studio.cascadeClock.tempoHz = num;
+        return;
+      case 'courierTempo':
+        // BPM knob; the Courier sequencer is scheduler-side (mirrors monarchTempo). applyTempoLink
+        // overwrites this with the Monarch BPM while TEMPO LINK is ON (early-returns when OFF, leaving
+        // the independent COU_TEMPO BPM), so LINK semantics match Monarch exactly. The COMMIT path
+        // additionally writes state.controls.courier.COU_TEMPO via the default branch (keeping the
+        // knob's displayed value in sync); applyState/preset-load already sets courierSeq.tempoBpm too.
+        studio.courierSeq.tempoBpm = num;
+        studio.applyTempoLink();
+        studio.syncCourierLfoTempo(); // keep LFO 1 SYNC tracking the new tempo (incl. the LINK-off path)
         return;
       case 'cascadeRhythmDiv':
         studio.cascadeClock.divisions[parsed.index] = num;

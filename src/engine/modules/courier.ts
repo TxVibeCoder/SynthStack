@@ -112,6 +112,8 @@ export class CourierModule extends ModuleBase {
   private readonly lfo1ToOsc2Freq: GainNode;
   private readonly lfo1ToOsc1Wave: GainNode;
   private readonly lfo1ToSubWave: GainNode;
+  private readonly lfo1Outs: GainNode[]; // the 4 vvScale out gains (osc -> out -> waveSel); KB RESET reconnects new oscs here
+  private readonly lfo1Types: OscillatorType[]; // osc type per core (the RAMP inversion lives in the lfo1Outs gain sign)
 
   // LFO 2 destination amount gains
   private readonly lfo2Depth: GainNode;
@@ -141,6 +143,10 @@ export class CourierModule extends ModuleBase {
   private osc2DetuneVv = 0;
   private lfo1DepthValue = 0;
   private lfo1Dest: Lfo1Dest = 'CUTOFF';
+  private lfo1RateHz = 2; // RATE knob in Hz (default matches the osc init freq); SYNC snaps it to tempo
+  private lfo1Sync = false; // SYNC: lock the LFO 1 rate to the (LINK-aware) Courier transport tempo
+  private lfo1Tempo = 120; // effective Courier BPM, pushed by the studio, used when SYNC is on
+  lfo1KbReset = false; // KB RESET: retrigger LFO 1 phase on each key press (PUBLIC — studio reads it on note-on)
   // LFO 2 has no panel DEPTH knob on the hardware — its depth IS the mod wheel (the wheel alone
   // determines LFO 2 depth). So the effective depth = base × wheel; wheel parked down (0) = no
   // LFO 2, like a physical wheel at rest. lfo2BaseDepth stays a forward-compat hook for a future
@@ -357,8 +363,11 @@ export class CourierModule extends ModuleBase {
     const lfo1Saw = mkLfo1('sawtooth', 5);
     const lfo1Ramp = mkLfo1('sawtooth', -5); // RAMP = falling saw (inverted)
     const lfo1Sq = mkLfo1('square', 5);
-    this.lfo1 = lfo1Tri.osc; // primary handle (the four share one RATE, written to all of lfo1Oscs)
+    this.lfo1 = lfo1Tri.osc; // construction-time handle only; NOT read at runtime and NOT updated by
+    // retriggerLfo1 (the live cores are always lfo1Oscs[]). RATE/SYNC writes go through lfo1Oscs.
     this.lfo1Oscs = [lfo1Tri.osc, lfo1Saw.osc, lfo1Ramp.osc, lfo1Sq.osc];
+    this.lfo1Outs = [lfo1Tri.out, lfo1Saw.out, lfo1Ramp.out, lfo1Sq.out]; // KB RESET reconnects fresh oscs here
+    this.lfo1Types = ['triangle', 'sawtooth', 'sawtooth', 'square']; // RAMP = inverted saw (sign lives in lfo1Outs)
     this.lfo1WaveSel = {
       tri: gain(ctx, 1),
       saw: gain(ctx, 0),
@@ -490,6 +499,59 @@ export class CourierModule extends ModuleBase {
     this.lfo1ToOsc1Wave.gain.value = this.lfo1Dest === 'OSC1_WAVE' ? 1 : 0;
     this.lfo1ToSubWave.gain.value = this.lfo1Dest === 'SUB_WAVE' ? 1 : 0;
   }
+
+  /** Effective LFO 1 frequency (Hz): the raw RATE knob value, or — when SYNC is on — snapped to the
+   *  nearest power-of-two multiple/division of the beat (lfo1Tempo bpm) so the LFO locks to the clock. */
+  private effectiveLfo1Freq(): number {
+    if (!this.lfo1Sync) return this.lfo1RateHz;
+    const beatHz = this.lfo1Tempo / 60;
+    if (!(beatHz > 0)) return this.lfo1RateHz;
+    const pow = clamp(Math.round(Math.log2(Math.max(this.lfo1RateHz, 1e-4) / beatHz)), -4, 4);
+    return beatHz * Math.pow(2, pow);
+  }
+
+  /** Apply the effective LFO 1 frequency to all four wave cores (immediate). */
+  private applyLfo1Rate(): void {
+    const f = this.effectiveLfo1Freq();
+    for (const o of this.lfo1Oscs) o.frequency.value = f;
+  }
+
+  /** SYNC tempo feed: the studio pushes the live (LINK-aware) Courier BPM here; re-snaps the rate
+   *  when SYNC is on, and is a cheap store otherwise. */
+  setLfo1Tempo(bpm: number): void {
+    this.lfo1Tempo = bpm;
+    if (this.lfo1Sync) this.applyLfo1Rate();
+  }
+
+  /** KB RESET: restart LFO 1 from phase 0 at `time`. Native OscillatorNodes have no phase param, so
+   *  each of the four wave cores is replaced by a fresh oscillator started at `time` (phase 0); the
+   *  vvScale out gains + the wave-select/depth/dest chain are reused, so only the four sources swap. */
+  retriggerLfo1(time: number): void {
+    const f = this.effectiveLfo1Freq();
+    for (let i = 0; i < this.lfo1Oscs.length; i++) {
+      const old = this.lfo1Oscs[i]!;
+      const osc = this.ctx.createOscillator();
+      osc.type = this.lfo1Types[i]!;
+      osc.frequency.value = f;
+      osc.connect(this.lfo1Outs[i]!);
+      osc.start(time);
+      try {
+        old.stop(time);
+      } catch {
+        /* already stopped — ignore */
+      }
+      // `time` is always in the future (courierNoteOn uses currentTime + 0.03/+0.001), so `ended`
+      // cannot have fired before this handler is attached — the old node is disconnected on stop.
+      old.onended = () => {
+        try {
+          old.disconnect();
+        } catch {
+          /* already gone */
+        }
+      };
+      this.lfo1Oscs[i] = osc;
+    }
+  }
   private applyLfo2Dest(): void {
     this.lfo2Depth.gain.value = this.lfo2BaseDepth * this.modWheel01; // mod wheel is the sole depth source
 
@@ -524,7 +586,8 @@ export class CourierModule extends ModuleBase {
     switch (id) {
       // ---- LFO 1 ----
       case 'COU_LFO1_RATE':
-        for (const o of this.lfo1Oscs) o.frequency.value = num;
+        this.lfo1RateHz = num;
+        this.applyLfo1Rate(); // SYNC may snap this to the tempo grid; else it is the raw knob Hz
         break;
       case 'COU_LFO1_WAVE':
         this.lfo1WaveSel.tri.gain.value = value === 'TRI' ? 1 : 0;
@@ -541,10 +604,14 @@ export class CourierModule extends ModuleBase {
         this.applyLfo1Dest();
         break;
       case 'COU_LFO1_SYNC':
-        // graph shell: clock-sync of the LFO rate is a transport binding (deferred).
+        // SYNC: lock the LFO 1 rate to the (LINK-aware) Courier tempo. The studio pushes the live BPM
+        // via setLfo1Tempo; applyLfo1Rate snaps the knob Hz to the nearest power-of-two of the beat.
+        this.lfo1Sync = value === 'ON';
+        this.applyLfo1Rate();
         break;
       case 'COU_LFO1_KB_RESET':
-        // graph shell: phase reset on key press is a binding hook (deferred).
+        // KB RESET: arm the per-key-press LFO 1 phase retrigger; the studio calls retriggerLfo1 on note-on.
+        this.lfo1KbReset = value === 'ON';
         break;
 
       // ---- OSC 1 / SUB ----
@@ -851,9 +918,12 @@ export class CourierModule extends ModuleBase {
       case 'COU_VOLUME':
         this.volume.gain.setValueAtTime(value, time);
         break;
-      case 'COU_LFO1_RATE':
-        for (const o of this.lfo1Oscs) o.frequency.setValueAtTime(value, time);
+      case 'COU_LFO1_RATE': {
+        this.lfo1RateHz = value;
+        const f = this.effectiveLfo1Freq(); // SYNC snaps to the tempo grid; else the raw value
+        for (const o of this.lfo1Oscs) o.frequency.setValueAtTime(f, time);
         break;
+      }
       case 'COU_LFO2_RATE':
         this.lfo2.frequency.setValueAtTime(value, time);
         break;

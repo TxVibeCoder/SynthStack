@@ -175,9 +175,6 @@ export const COURIER_SELECTORS = new Set<string>([
   'COU_FILTER_MODE',
 ]);
 
-/** Seq selectors rendered as faithful dropdown boxes. */
-export const COURIER_DROPDOWNS = new Set<string>(['COU_CLOCK_DIV', 'COU_ARP_MODE', 'COU_ARP_OCTAVE']);
-
 /** Top IO legend (jack names) — evenly spread silkscreen, purely cosmetic. */
 export const COURIER_IO_LABELS: { x: number; text: string }[] = [
   { x: 300, text: 'POWER' },
