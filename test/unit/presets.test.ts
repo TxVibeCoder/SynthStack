@@ -446,14 +446,15 @@ describe('factory presets', () => {
     MODULE_DEFS.flatMap((def) => def.controls.map((c) => c.id)),
   );
 
-  it('lists 4 presets with original names + descriptions', () => {
+  it('lists 5 presets with original names + descriptions', () => {
     const list = listFactoryPresets();
-    expect(list).toHaveLength(4);
+    expect(list).toHaveLength(5);
     expect(list.map((p) => p.id)).toEqual([
       'factory-preset-cellar-door',
       'factory-preset-iron-garden',
       'factory-preset-tide-engine',
       'factory-preset-corner-store',
+      'factory-preset-furnace-room',
     ]);
     for (const p of list) {
       expect(p.name.length).toBeGreaterThan(0);
@@ -531,6 +532,24 @@ describe('factory presets', () => {
     expect(s.transport.monarch.steps.some((st) => st.accent)).toBe(true);
     expect(s.transport.monarch.steps.some((st) => st.glide)).toBe(true);
     expect(s.transport.monarch.steps.some((st) => st.rest)).toBe(true);
+  });
+
+  it('Furnace Room voices the Courier deep + aggressive and authors a 16-step riff', () => {
+    const s = getFactoryPreset('factory-preset-furnace-room')!;
+    const cou = s.controls.courier!;
+    // deep stack: OSC 1 dropped an octave + a hot sub, fat 4-pole ladder with growl
+    expect(cou.COU_OSC1_OCTAVE).toBe('16');
+    expect(cou.COU_MIX_SUB).toBe(0.7);
+    expect(cou.COU_FILTER_MODE).toBe('LP4');
+    expect(cou.COU_RES_BASS).toBe('ON');
+    expect((cou.COU_RESONANCE as number)).toBeGreaterThan(0.5);
+    expect((cou.COU_EG_AMOUNT as number)).toBeGreaterThan(0.5);
+    // the demo bassline is authored (LENGTH 16, at least one octave pop + one glide step)
+    expect(s.courier.seq.endStep).toBe(16);
+    expect(s.courier.seq.steps.some((st) => st.glide)).toBe(true);
+    expect(s.courier.seq.steps.some((st) => st.rest)).toBe(true);
+    expect(s.courier.seq.steps.some((st) => Math.abs(st.noteVv - 1) < 1e-9)).toBe(true); // +12 semis
+    expect(s.courier.seq.running).toBe(false); // a load never spontaneously sounds
   });
 });
 
