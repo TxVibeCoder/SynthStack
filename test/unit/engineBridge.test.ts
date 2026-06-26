@@ -20,9 +20,10 @@ const VEL100 = expect.closeTo(velocityToGain(100), 5);
 const GLIDE0 = 0;
 import anvil from '../../data/anvil.json';
 import cascade from '../../data/cascade.json';
+import courier from '../../data/courier.json';
 import type { ModuleDef } from '../../data/schema';
 
-const defs = [monarch, anvil, cascade] as unknown as ModuleDef[];
+const defs = [monarch, anvil, cascade, courier] as unknown as ModuleDef[];
 
 /** The complete expected special-case map (everything absent here is 'module'). */
 const SPECIAL: Record<string, ControlRoute> = {
@@ -31,6 +32,7 @@ const SPECIAL: Record<string, ControlRoute> = {
   ANV_TEMPO: 'anvilTempo',
   CAS_TEMPO: 'cascadeTempo',
   CAS_EG: 'cascadeEg',
+  COU_TEMPO: 'courierTempo',
 };
 for (let n = 1; n <= 8; n++) {
   SPECIAL[`ANV_SEQ_PITCH_${n}`] = 'anvilStepPitch';
@@ -967,6 +969,9 @@ describe('engineBridge module routing (applyControlInput -> the right module.set
       spies[id] = vi.fn();
       studio[id] = { setControl: spies[id]! };
     }
+    // The COU_TEMPO route + applyTempoLink push the tempo to LFO 1 SYNC via courier.setLfo1Tempo;
+    // the mock module above only has setControl, so stub it so the tempo route doesn't throw.
+    (studio['courier'] as unknown as { setLfo1Tempo: () => void }).setLfo1Tempo = vi.fn();
     priv._powered = true;
   });
   afterEach(() => {
@@ -978,6 +983,34 @@ describe('engineBridge module routing (applyControlInput -> the right module.set
     engineBridge.applyControlInput('courier', 'COU_OSC1_WAVESHAPE', 0.3);
     expect(spies['courier']).toHaveBeenCalledWith('COU_OSC1_WAVESHAPE', 0.3);
     expect(spies['cascade']).not.toHaveBeenCalled();
+  });
+
+  it('routes COU_TEMPO to courierSeq.tempoBpm on the LIVE path (not the dead module no-op)', () => {
+    // Regression guard for the fixed bug: a live COU_TEMPO drag used to route to 'module' and hit
+    // CourierModule.setControl's default no-op, so the sequencer tempo never changed. It now has a
+    // dedicated 'courierTempo' route that writes the scheduler-side courierSeq.tempoBpm directly.
+    const real = priv.studioInstance as unknown as { courierSeq: { tempoBpm: number } };
+    engineBridge.applyControlInput('courier', 'COU_TEMPO', 142);
+    expect(real.courierSeq.tempoBpm).toBe(142); // TEMPO LINK defaults OFF -> independent BPM stands
+    expect(spies['courier']).not.toHaveBeenCalled(); // NOT forwarded to the module (the old dead path)
+  });
+
+  it('COU_TEMPO under TEMPO LINK follows Monarch (slave parity), not the knob value', () => {
+    // The load-bearing half of "matches MON_TEMPO exactly": the courierTempo case calls
+    // applyTempoLink, which (LINK ON) overwrites the just-written COU_TEMPO with the Monarch BPM.
+    const real = priv.studioInstance as unknown as {
+      courierSeq: { tempoBpm: number };
+      monarchSeq: { tempoBpm: number };
+      tempoLink: boolean;
+    };
+    real.monarchSeq.tempoBpm = 95;
+    real.tempoLink = true;
+    try {
+      engineBridge.applyControlInput('courier', 'COU_TEMPO', 142);
+      expect(real.courierSeq.tempoBpm).toBe(95); // Monarch BPM wins under LINK, NOT the 142 knob value
+    } finally {
+      real.tempoLink = false; // never leak LINK state to sibling tests
+    }
   });
 
   it('routes a Sampler control to SamplerModule.setControl (not Cascade)', () => {

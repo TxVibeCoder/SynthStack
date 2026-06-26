@@ -27,7 +27,7 @@ import courierJson from '../../../data/courier.json';
 import { COLORS, FONT_CONDENSED, GROUP_BORDER, KNOB_RADIUS } from '../theme';
 import type { KnobSize, PanelSection } from '../types';
 import { Knob } from '../controls/Knob';
-import { useControl, useCourierModAssign } from '../useStudio';
+import { useControl, useCourierModAssign, useCourierSeqSettings } from '../useStudio';
 import { engineBridge } from '../engineBridge';
 import { keyToNote } from '../../engine/voice/keyMap';
 import { COURIER_MOD_TARGETS, type CourierModSource } from '../../state/studioState';
@@ -35,7 +35,6 @@ import {
   courierLayout,
   COURIER_LAMP_BUTTONS,
   COURIER_SELECTORS,
-  COURIER_DROPDOWNS,
   COURIER_IO_LABELS,
   COURIER_IO_Y,
   COURIER_SILK,
@@ -75,6 +74,9 @@ import {
   courierStop,
   subscribeCourierStepPosition,
   subscribeStore,
+  setCourierSeqField,
+  ARP_POS_TO_VAL,
+  ARP_VAL_TO_POS,
 } from '../sequencer/courierSeqBridge';
 
 const moduleDef = courierJson as unknown as ModuleDef;
@@ -228,35 +230,79 @@ const WiredLampSelector = memo(function WiredLampSelector({ def, x, y }: { def: 
   return <LampSelectorH displays={positions.map((p) => disp(def.id, p))} idx={idx} onPick={(i) => onCommit(positions[i] ?? value)} x={x} y={y} />;
 });
 
-/** Seq dropdown — positions-based (CLOCK DIV / ARP MODE) or stepped-knob (ARP OCTAVE). */
-const WiredDropdown = memo(function WiredDropdown({ def, x, y, label, w }: { def: ControlDef; x: number; y: number; label: string; w?: number }) {
-  if (def.type === 'knob' || def.type === 'stepKnob') {
-    return <WiredStepDropdown def={def} x={x} y={y} label={label} w={w} />;
-  }
-  return <WiredPosDropdown def={def} x={x} y={y} label={label} w={w} />;
+// ---- seq-slice-backed controls (sequencer-band SETTINGS on the MAIN panel) -----------------
+// These SETTINGS live on state.courier.seq (NOT state.controls.courier): Studio.syncTransportConfig
+// reads the seq slice, so they MUST be written via setCourierSeqField — a plain useControl write to
+// state.controls.courier never reaches the sequencer (the bug this fixes). They share the one seq
+// slice with the step-editor settings row, so both surfaces stay in lockstep. Commit-only (onInput
+// = no-op), matching the step editor. (TEMPO is the lone exception — it rides the ordinary useControl
+// path; the engine now intercepts COU_TEMPO into courierSeq.tempoBpm on the LIVE path too.)
+
+const noop = (): void => {};
+
+/** SWING / GATE LENGTH — numeric seq-slice knobs. Clamp bounds come from the SAME ControlDef the
+ *  Knob drags against (def.min/def.max), so the commit clamp can't drift from the JSON range. */
+const SeqKnob = memo(function SeqKnob({
+  def, x, y, size, field,
+}: PlacedKnobProps & { field: 'swingPct' | 'gateLenScale' }) {
+  const settings = useCourierSeqSettings();
+  const lo = def.min ?? 0;
+  const hi = def.max ?? 1;
+  const onCommit = useCallback(
+    (v: number) => setCourierSeqField(field, Math.max(lo, Math.min(hi, v))),
+    [field, lo, hi],
+  );
+  return <Knob def={def} value={settings[field]} onInput={noop} onCommit={onCommit} size={size} accent={ACCENT} x={x} y={y} />;
 });
 
-const WiredPosDropdown = memo(function WiredPosDropdown({ def, x, y, label, w }: { def: ControlDef; x: number; y: number; label: string; w?: number }) {
-  const [value, , onCommit] = useControl<string>(MODULE_ID, def.id, positionFallback(def));
+/** CLOCK DIV — seq-slice dropdown; clockDivIdx is directly the index into def.positions. */
+const SeqClockDivDropdown = memo(function SeqClockDivDropdown({ def, x, y, label, w }: { def: ControlDef; x: number; y: number; label: string; w?: number }) {
+  const settings = useCourierSeqSettings();
   const positions = def.positions ?? [];
-  const idx = Math.max(0, positions.indexOf(value));
+  const idx = positions.length ? Math.min(Math.max(0, settings.clockDivIdx), positions.length - 1) : 0;
+  const onAdvance = (dir: 1 | -1) => {
+    if (!positions.length) return;
+    setCourierSeqField('clockDivIdx', (idx + dir + positions.length) % positions.length);
+  };
+  return <Dropdown label={label} value={positions[idx] ?? '1/16'} onAdvance={onAdvance} x={x} y={y} w={w} />;
+});
+
+/** ARP PATTERN — seq-slice dropdown; positions are display labels, stored as the arpMode union. */
+const SeqArpModeDropdown = memo(function SeqArpModeDropdown({ def, x, y, label, w }: { def: ControlDef; x: number; y: number; label: string; w?: number }) {
+  const settings = useCourierSeqSettings();
+  const positions = def.positions ?? [];
+  const curPos = ARP_VAL_TO_POS[settings.arpMode] ?? 'OFF';
+  const idx = Math.max(0, positions.indexOf(curPos));
   const onAdvance = (dir: 1 | -1) => {
     const next = positions[(idx + dir + positions.length) % positions.length];
-    if (next != null) onCommit(next);
+    if (next != null) setCourierSeqField('arpMode', ARP_POS_TO_VAL[next] ?? 'OFF');
   };
-  return <Dropdown label={label} value={value} onAdvance={onAdvance} x={x} y={y} w={w} />;
+  return <Dropdown label={label} value={curPos} onAdvance={onAdvance} x={x} y={y} w={w} />;
 });
 
-const WiredStepDropdown = memo(function WiredStepDropdown({ def, x, y, label, w }: { def: ControlDef; x: number; y: number; label: string; w?: number }) {
-  const [value, , onCommit] = useControl<number>(MODULE_ID, def.id, knobFallback(def));
+/** ARP OCTAVE — seq-slice stepped dropdown (1..4). */
+const SeqArpOctaveDropdown = memo(function SeqArpOctaveDropdown({ def, x, y, label, w }: { def: ControlDef; x: number; y: number; label: string; w?: number }) {
+  const settings = useCourierSeqSettings();
   const lo = def.min ?? 1;
   const hi = def.max ?? 4;
+  const v = Math.min(hi, Math.max(lo, Math.round(settings.arpOctave)));
   const onAdvance = (dir: 1 | -1) => {
     const span = hi - lo + 1;
-    const next = lo + ((Math.round(value) - lo + dir + span) % span);
-    onCommit(next);
+    setCourierSeqField('arpOctave', lo + ((v - lo + dir + span) % span));
   };
-  return <Dropdown label={label} value={`×${Math.round(value)}`} onAdvance={onAdvance} x={x} y={y} w={w} />;
+  return <Dropdown label={label} value={`×${v}`} onAdvance={onAdvance} x={x} y={y} w={w} />;
+});
+
+/** SEQ MODE — seq-slice compact selector (SEQ / ARP). */
+const SeqModeSelector = memo(function SeqModeSelector({ def, x, y }: { def: ControlDef; x: number; y: number }) {
+  const settings = useCourierSeqSettings();
+  const positions = def.positions ?? ['SEQ', 'ARP'];
+  const idx = Math.max(0, positions.indexOf(settings.mode));
+  const onStep = (dir: 1 | -1) => {
+    const next = positions[(idx + dir + positions.length) % positions.length];
+    if (next != null) setCourierSeqField('mode', next === 'ARP' ? 'ARP' : 'SEQ');
+  };
+  return <SelectorBox label={SHORT_LABEL[def.id] ?? def.panelLabel} display={disp(def.id, settings.mode)} count={positions.length} idx={idx} onStep={onStep} x={x} y={y} />;
 });
 
 // ---- control dispatch --------------------------------------------------------------------
@@ -266,12 +312,15 @@ function renderControl(id: string, placed: { x: number; y: number; size?: KnobSi
   if (!def) return null;
   const { x, y, size } = placed;
   if (id === 'COU_LFO2_DEST') return <WiredLampSelector key={id} def={def} x={x} y={y} />;
-  if (id === 'COU_SEQ_MODE') return <WiredSelectorBox key={id} def={def} x={x} y={y} />;
-  if (id === 'COU_CLOCK_DIV') return <WiredDropdown key={id} def={def} x={x} y={y} label="CLOCK DIV" w={70} />;
-  if (id === 'COU_ARP_MODE') return <WiredDropdown key={id} def={def} x={x} y={y} label="ARP PATTERN" w={84} />;
-  if (id === 'COU_ARP_OCTAVE') return <WiredDropdown key={id} def={def} x={x} y={y} label="ARP OCTAVE" w={70} />;
+  // Sequencer-band SETTINGS write the seq slice (state.courier.seq) so they actually drive the
+  // live sequencer — a plain useControl write to state.controls.courier never reaches it.
+  if (id === 'COU_SEQ_MODE') return <SeqModeSelector key={id} def={def} x={x} y={y} />;
+  if (id === 'COU_CLOCK_DIV') return <SeqClockDivDropdown key={id} def={def} x={x} y={y} label="CLOCK DIV" w={70} />;
+  if (id === 'COU_ARP_MODE') return <SeqArpModeDropdown key={id} def={def} x={x} y={y} label="ARP PATTERN" w={84} />;
+  if (id === 'COU_ARP_OCTAVE') return <SeqArpOctaveDropdown key={id} def={def} x={x} y={y} label="ARP OCTAVE" w={70} />;
+  if (id === 'COU_SWING') return <SeqKnob key={id} def={def} x={x} y={y} size={size} field="swingPct" />;
+  if (id === 'COU_GATE_LENGTH') return <SeqKnob key={id} def={def} x={x} y={y} size={size} field="gateLenScale" />;
   if (COURIER_LAMP_BUTTONS.has(id)) return <WiredLamp key={id} def={def} x={x} y={y} />;
-  if (COURIER_DROPDOWNS.has(id)) return <WiredDropdown key={id} def={def} x={x} y={y} label={def.panelLabel} />;
   if (COURIER_SELECTORS.has(id)) {
     if (id === 'COU_MOD_DEST' || id === 'COU_FILTER_MODE') return <WiredSelectorList key={id} def={def} x={x} y={y} />;
     return <WiredSelectorBox key={id} def={def} x={x} y={y} />;

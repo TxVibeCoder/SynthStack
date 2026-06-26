@@ -40,6 +40,27 @@ function cornerStorePattern(): boolean[][] {
   );
 }
 
+/** Furnace Room bomber-bass riff — a driving, menacing 16-step Courier figure. `semi` = semitones
+ *  from the root (noteVv = semi/12, since 1 vv = 1 octave); OSC 1 at 16' + the sub put it on the floor. */
+const FURNACE_ROOM_RIFF: { semi: number; gate: number; rest?: boolean; glide?: boolean }[] = [
+  { semi: 0, gate: 0.6 },
+  { semi: 0, gate: 0.5, rest: true },
+  { semi: 0, gate: 0.5 },
+  { semi: 12, gate: 0.4 }, // octave pop
+  { semi: 0, gate: 0.6 },
+  { semi: 0, gate: 0.5, rest: true },
+  { semi: 0, gate: 0.5 },
+  { semi: 3, gate: 0.4 }, // minor third for menace
+  { semi: 0, gate: 0.6 },
+  { semi: 0, gate: 0.5, rest: true },
+  { semi: 0, gate: 0.5 },
+  { semi: 7, gate: 0.45, glide: true }, // slide up to the fifth
+  { semi: 0, gate: 0.6 },
+  { semi: -2, gate: 0.4 }, // dip below the root
+  { semi: 10, gate: 0.4 }, // flat-seven stab
+  { semi: 0, gate: 0.5, rest: true },
+];
+
 export const FACTORY_PRESETS: FactoryPreset[] = [
   {
     id: 'factory-preset-cellar-door',
@@ -204,6 +225,67 @@ export const FACTORY_PRESETS: FactoryPreset[] = [
           quantize: '1 BAR',
           pattern: cornerStorePattern(),
           seqRunning: false,
+        },
+      }),
+  },
+  {
+    id: 'factory-preset-furnace-room',
+    name: 'Furnace Room',
+    description: 'Bomber deep bass on the Courier',
+    build: () =>
+      coalesceStudioState({
+        controls: {
+          courier: {
+            // DEEP STACK: OSC 1 an octave down (16' = -1 vv) + a hot sub one octave below that
+            // (-2 vv floor), OSC 2 an octave up (8') for presence/bite.
+            COU_OSC1_OCTAVE: '16',
+            COU_OSC2_OCTAVE: '8',
+            COU_OSC2_FREQ: 0.2, // a hair of detune = width without mud
+            COU_OSC1_WAVESHAPE: 0.5, // wavefold grit
+            COU_OSC2_WAVESHAPE: 0.62,
+            COU_SUB_WAVE: 0.15, // keep the sub mostly pure for weight
+            // DYNAMIC GRIT: the filter EG drives OSC 2's wavefold on every hit (aggressive attack).
+            COU_MOD_DEST: 'FENV_OSC2_WAVE',
+            COU_MOD_AMOUNT: 0.3,
+            // HOT MIXER = warm drive into the ladder.
+            COU_MIX_OSC1: 0.95,
+            COU_MIX_OSC2: 0.85,
+            COU_MIX_SUB: 0.7,
+            // FAT 4-POLE LADDER, resonant growl, bass-compensated so the low end survives resonance.
+            COU_FILTER_MODE: 'LP4',
+            COU_CUTOFF: 240,
+            COU_RESONANCE: 0.62,
+            COU_RES_BASS: 'ON',
+            COU_EG_AMOUNT: 0.7, // strong filter-EG punch per note
+            COU_F_ENV_VEL: 'ON', // play harder = more bite
+            COU_F_ATTACK: 0.003,
+            COU_F_DECAY: 0.22,
+            COU_F_SUSTAIN: 0.25,
+            COU_F_RELEASE: 0.12,
+            // TIGHT, SUSTAINED amp env; retrigger the EGs on every note so each hit re-punches.
+            COU_A_ATTACK: 0.003,
+            COU_A_DECAY: 0.18,
+            COU_A_SUSTAIN: 0.9,
+            COU_A_RELEASE: 0.1,
+            COU_MULTI_TRIG: 'ON',
+            COU_VOLUME: 0.85,
+            COU_GLIDE: 0.02, // a touch of swagger on the glide steps
+            COU_TEMPO: 112,
+          },
+        },
+        courier: {
+          seq: {
+            endStep: 16,
+            swingPct: 54,
+            clockDivIdx: 3, // '1/16'
+            mode: 'SEQ',
+            steps: FURNACE_ROOM_RIFF.map((n) => ({
+              noteVv: n.semi / 12,
+              gateLength: n.gate,
+              rest: n.rest ?? false,
+              glide: n.glide ?? false,
+            })),
+          },
         },
       }),
   },

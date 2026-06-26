@@ -27,13 +27,13 @@ import { useSyncExternalStore } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { ControlDef, ModuleDef } from '../../../data/schema';
 import courierJson from '../../../data/courier.json';
-import type { CourierArpModeState, CourierStepState } from '../../state/studioState';
+import type { CourierStepState } from '../../state/studioState';
 import { COLORS, FONT_CONDENSED, GROUP_BORDER } from '../theme';
 import { Knob } from '../controls/Knob';
 import { Switch } from '../controls/Switch';
 import { Button } from '../controls/Button';
 import { StepLed } from '../controls/StepLed';
-import { useControl } from '../useStudio';
+import { useControl, useCourierSeqSettings } from '../useStudio';
 import { COURIER_CLOCK_DIVS } from '../../engine/sequencers/courierSeq';
 import { COURIER_LOCKABLE } from '../../engine/modRouter';
 import { clampSemis, keyToCourierAction, nextNoteSemis, nextSelection } from './courierKeyNav';
@@ -44,13 +44,14 @@ import {
   courierStepPosition,
   courierStop,
   readCourierSeq,
-  readCourierSeqSettings,
   setCourierEndStep,
   setCourierRecordHandler,
   setCourierSeqField,
   subscribeCourierStepPosition,
   subscribeStore,
   updateCourierStep,
+  ARP_POS_TO_VAL,
+  ARP_VAL_TO_POS,
   type CourierSeqView,
 } from './courierSeqBridge';
 
@@ -62,31 +63,8 @@ function seqDef(id: string): ControlDef {
   return d;
 }
 
-/**
- * ARP MODE display<->state maps. The JSON `positions` carry human labels (with spaces);
- * the seq slice stores the underscored union values. The Switch shows the position label, so
- * the handler maps label->state on change and state->label for the rendered value. Anything
- * unrecognized falls back to OFF.
- */
-const ARP_POS_TO_VAL: Record<string, CourierArpModeState> = {
-  OFF: 'OFF',
-  UP: 'UP',
-  DOWN: 'DOWN',
-  'UP-DN INC': 'UPDOWN_INC',
-  'UP-DN EXC': 'UPDOWN_EXC',
-  'DN-UP INC': 'DOWNUP_INC',
-  'DN-UP EXC': 'DOWNUP_EXC',
-  CONVERGE: 'CONVERGE',
-  DIVERGE: 'DIVERGE',
-  PENDULUM: 'PENDULUM',
-  'AS PLAYED': 'AS_PLAYED',
-  RANDOM: 'RANDOM',
-  'RND WALK': 'RANDOM_WALK',
-  CHORD: 'CHORD',
-};
-const ARP_VAL_TO_POS: Record<CourierArpModeState, string> = Object.fromEntries(
-  Object.entries(ARP_POS_TO_VAL).map(([pos, val]) => [val, pos]),
-) as Record<CourierArpModeState, string>;
+// ARP MODE display<->state maps (ARP_POS_TO_VAL / ARP_VAL_TO_POS) now live in courierSeqBridge,
+// shared with the main Courier panel's ARP PATTERN dropdown so the two surfaces can't drift.
 
 /**
  * Courier-local strip canvas — App.tsx reads this aspect to frame the seq region.
@@ -270,28 +248,8 @@ function useCourierStepPosition(): number {
 // exception is TEMPO, which the engine intercepts off state.controls.courier into
 // courierSeq.tempoBpm — so it uses the ordinary useControl store path.
 
-/**
- * Snapshot of the seq-settings scalars, re-read on store change (JSON-diffed so a settings
- * write re-renders the row but unrelated store traffic doesn't). Same pattern as the per-step
- * seq mirror below.
- */
-function useCourierSeqSettings(): ReturnType<typeof readCourierSeqSettings> {
-  const [snap, setSnap] = useState(readCourierSeqSettings);
-  useEffect(() => {
-    let last = JSON.stringify(readCourierSeqSettings());
-    return subscribeStore(() => {
-      const next = readCourierSeqSettings();
-      const key = JSON.stringify(next);
-      if (key !== last) {
-        last = key;
-        setSnap(next);
-      }
-    });
-  }, []);
-  return snap;
-}
-
-/** TEMPO — ordinary control store knob (engine maps COU_TEMPO -> courierSeq.tempoBpm). */
+/** TEMPO — ordinary control store knob; the engine now maps COU_TEMPO -> courierSeq.tempoBpm on
+ *  the LIVE path (engineBridge 'courierTempo' route) as well as on preset-load. */
 const TempoKnob = memo(function TempoKnob({ x, y }: { x: number; y: number }) {
   const def = seqDef('COU_TEMPO');
   const fallback = typeof def.default === 'number' ? def.default : 120;

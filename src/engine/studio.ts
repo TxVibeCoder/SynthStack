@@ -942,6 +942,20 @@ export class Studio {
     this.anvilSeq.rateHz = (bpm / 60) * 4; // 16th steps
     this.cascadeClock.tempoHz = bpm / 60; // 1 PPQ
     this.courierSeq.tempoBpm = bpm; // both are BPM — Courier follows Monarch exactly under LINK
+    this.syncCourierLfoTempo(); // LFO 1 SYNC tracks the linked tempo too
+  }
+
+  /** Push the effective (LINK-aware) Courier BPM to the voice for LFO 1 SYNC. courierSeq.tempoBpm is
+   *  the live effective tempo (Monarch's under LINK, else the independent COU_TEMPO). A no-op for the
+   *  audio graph unless LFO 1 SYNC is on (the module guards), so it is safe to call on every tempo edit.
+   *
+   *  DELIBERATELY sourced from courierSeq.tempoBpm, NOT the external MIDI clock: the Courier voice has
+   *  no MIDI-clock priority (only Monarch/Cascade follow the global MIDI clock — see onMidiClockTick /
+   *  routeMidiEdge; Courier follows its own internal clock, LINK, or a COU_CLOCK_IN cable). So the LFO
+   *  locks to the SAME tempo the Courier sequencer itself runs at — pushing the MIDI-master tempo here
+   *  would make the LFO disagree with its own sequencer under MIDI clock. */
+  syncCourierLfoTempo(): void {
+    this.courier.setLfo1Tempo(this.courierSeq.tempoBpm);
   }
 
   // ---- external MIDI transport clock (fed by the bridge from Web MIDI) -----------------------
@@ -1120,6 +1134,11 @@ export class Studio {
       // EGs restart their attack. The 1 ms gap spans render blocks so the worklet sees the edge.
       this.courier.gateAt(false, t);
       this.courier.gateAt(true, t + 0.001);
+    }
+    // KB RESET: restart LFO 1 from phase 0 on a fresh press (retrigger) or a MULTI-TRIG legato re-edge,
+    // aligned to the gate-on time so the LFO cycle begins with the note.
+    if (this.courier.lfo1KbReset && (retrigger || this.courier.multiTrig)) {
+      this.courier.retriggerLfo1(retrigger ? t : t + 0.001);
     }
   }
 
@@ -1548,6 +1567,7 @@ export class Studio {
     this.samplerSeq.setSwing(samp.swingPct);
     this.tempoLink = state.mixer.tempoLink;
     this.applyTempoLink();
+    this.syncCourierLfoTempo(); // push the (LINK-aware) Courier tempo into LFO 1 SYNC after the link resolves
     // FX: push the whole effects slice into the graph (coalesce fills an older tree's missing
     // `effects` / `effects.voices` -> all off). Effects are dry-only when off, so this is silent
     // for a default tree; INIT/preset restores the exact wet/param state for master + each voice.

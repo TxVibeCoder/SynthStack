@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { engineBridge, type TransportFlags } from './engineBridge';
 import type { CourierModAssignState } from '../state/studioState';
+import { readCourierSeqSettings, subscribeStore } from './sequencer/courierSeqBridge';
 
 export type { TransportFlags };
 
@@ -104,6 +105,30 @@ export function useCourierModAssign(): CourierModAssignState {
   const subscribe = useCallback((cb: () => void) => engineBridge.store.subscribe(cb), []);
   const getSnapshot = useCallback(() => engineBridge.getCourierModAssign(), []);
   return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/**
+ * Snapshot of the Courier sequencer SETTINGS scalars (`state.courier.seq.*`), re-read on store
+ * change and JSON-diffed so a settings write re-renders the row but unrelated store traffic
+ * doesn't. SHARED by the step-editor settings row and the main Courier panel's sequencer-band
+ * controls — both read/write the one seq slice (via setCourierSeqField) so they stay in lockstep.
+ * (readCourierSeqSettings returns a fresh object each call, so this can't be a plain
+ * useSyncExternalStore getSnapshot — it would loop; the JSON-diff + useState is the stable form.)
+ */
+export function useCourierSeqSettings(): ReturnType<typeof readCourierSeqSettings> {
+  const [snap, setSnap] = useState(readCourierSeqSettings);
+  useEffect(() => {
+    let last = JSON.stringify(readCourierSeqSettings());
+    return subscribeStore(() => {
+      const next = readCourierSeqSettings();
+      const key = JSON.stringify(next);
+      if (key !== last) {
+        last = key;
+        setSnap(next);
+      }
+    });
+  }, []);
+  return snap;
 }
 
 /** UI poll cadence for transport lamps — UI-only; audio events never use timers like this. */

@@ -26,7 +26,37 @@
  */
 
 import { engineBridge } from '../engineBridge';
-import type { CourierSequencerState, CourierStepState } from '../../state/studioState';
+import type {
+  CourierArpModeState,
+  CourierSequencerState,
+  CourierStepState,
+} from '../../state/studioState';
+
+/**
+ * ARP MODE display<->state maps — SHARED by the step editor's ARP MODE switch and the main
+ * Courier panel's ARP PATTERN dropdown (one source of truth, so the two surfaces can't drift).
+ * The JSON `positions` carry human labels (with spaces); the seq slice stores the underscored
+ * union values. Map label->state on write and state->label for display; unknown -> OFF.
+ */
+export const ARP_POS_TO_VAL: Record<string, CourierArpModeState> = {
+  OFF: 'OFF',
+  UP: 'UP',
+  DOWN: 'DOWN',
+  'UP-DN INC': 'UPDOWN_INC',
+  'UP-DN EXC': 'UPDOWN_EXC',
+  'DN-UP INC': 'DOWNUP_INC',
+  'DN-UP EXC': 'DOWNUP_EXC',
+  CONVERGE: 'CONVERGE',
+  DIVERGE: 'DIVERGE',
+  PENDULUM: 'PENDULUM',
+  'AS PLAYED': 'AS_PLAYED',
+  RANDOM: 'RANDOM',
+  'RND WALK': 'RANDOM_WALK',
+  CHORD: 'CHORD',
+};
+export const ARP_VAL_TO_POS: Record<CourierArpModeState, string> = Object.fromEntries(
+  Object.entries(ARP_POS_TO_VAL).map(([pos, val]) => [val, pos]),
+) as Record<CourierArpModeState, string>;
 
 /** The slice shape the editor reads. */
 export interface CourierSeqView {
