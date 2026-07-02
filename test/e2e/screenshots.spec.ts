@@ -24,6 +24,7 @@ const TAB_TEST_IDS: ReadonlyArray<{ tab: string; ids: readonly string[] }> = [
   { tab: 'tab-cascade', ids: ['tier-cascade'] },
   { tab: 'tab-anvil', ids: ['tier-anvil'] },
   { tab: 'tab-monarch', ids: ['tier-monarch', 'seq-strip', 'future-strip'] },
+  { tab: 'tab-courier', ids: ['tier-courier', 'courier-seq-strip'] },
   { tab: 'tab-patchbay', ids: ['jack-field'] },
 ];
 

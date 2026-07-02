@@ -1,13 +1,13 @@
 /**
- * Courier replica control SHAPES — the editor-faithful render primitives the CourierPanel
- * composes, in SynthStack's OWN palette (theme.ts COLORS): illuminated square LAMP buttons,
- * compact value-box + caption-list SELECTORS, dropdown boxes, a horizontal lamp selector, the
- * pitch/mod thumb-wheels, sequencer step lamps, and inert DECOR placeholders.
+ * Courier control SHAPES — the render primitives the CourierPanel composes, in SynthStack's
+ * OWN palette (theme.ts COLORS): illuminated square LAMP buttons, compact value-box +
+ * caption-list SELECTORS, dropdown boxes, a horizontal lamp selector, the pitch/mod
+ * thumb-wheels, and sequencer step lamps. (The inert DECOR placeholder shapes were removed
+ * in the 2026-07 declutter pass — every rendered control is live.)
  *
- * All presentational: wired variants take value + a change callback (the panel binds them to
- * the store via useControl); decor variants are static (visual-only, "accounted for in the
- * layout"). Pointer/keyboard idioms mirror controls/{Switch,Button}.tsx (click advances, Shift
- * back, Enter/Space, tabIndex, role=button). No store/engine access here.
+ * All presentational: variants take value + a change callback (the panel binds them to the
+ * store via useControl). Pointer/keyboard idioms mirror controls/{Switch,Button}.tsx (click
+ * advances, Shift back, Enter/Space, tabIndex, role=button). No store/engine access here.
  */
 
 import type {
@@ -332,90 +332,6 @@ export const StepLamp = memo(function StepLamp({ x, y, on, num }: { x: number; y
       <rect x={-15} y={-6} width={30} height={12} rx={3} fill={on ? LIT : COLORS.panelRaised} stroke={on ? LIT : COLORS.panelEdge} strokeWidth={1} />
       <text y={20} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={8} fill={COLORS.legendDim}>
         {num}
-      </text>
-    </g>
-  );
-});
-
-// ---- inert DECOR placeholders ------------------------------------------------------------
-
-export const DecorKnob = memo(function DecorKnob({ x, y, label, r = 13 }: { x: number; y: number; label: string; r?: number }) {
-  return (
-    <g transform={`translate(${x} ${y})`} pointerEvents="none" opacity={0.92}>
-      <circle r={r + 2} fill={COLORS.panelShadow} />
-      <circle r={r} fill={COLORS.knob} stroke={COLORS.knobLo} strokeWidth={1} />
-      <line y1={-(r - 2)} y2={-r * 0.3} stroke={COLORS.knobPointer} strokeWidth={2} strokeLinecap="round" transform="rotate(-30)" />
-      <text y={r + 12} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={8} letterSpacing={0.2} fill={COLORS.legendDim}>
-        {label.toUpperCase()}
-      </text>
-    </g>
-  );
-});
-
-export const DecorButton = memo(function DecorButton({
-  x,
-  y,
-  label,
-  w = 30,
-  h = 16,
-  lit = false,
-}: {
-  x: number;
-  y: number;
-  label?: string;
-  w?: number;
-  h?: number;
-  lit?: boolean;
-}) {
-  return (
-    <g transform={`translate(${x} ${y})`} pointerEvents="none" opacity={0.92}>
-      <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={3.5} fill={lit ? LIT : COLORS.panelRaised} stroke={lit ? LIT : COLORS.panelEdge} strokeWidth={1.1} />
-      {label != null && (
-        <text
-          y={h / 2 + 10}
-          textAnchor="middle"
-          fontFamily={FONT_CONDENSED}
-          fontSize={7.5}
-          letterSpacing={0.2}
-          fill={COLORS.legendDim}
-          {...(label.length * 4.4 > w + 22 ? { textLength: w + 22, lengthAdjust: 'spacingAndGlyphs' as const } : {})}
-        >
-          {label.toUpperCase()}
-        </text>
-      )}
-    </g>
-  );
-});
-
-export const DecorDropdown = memo(function DecorDropdown({ x, y, w, label, value }: { x: number; y: number; w: number; label: string; value: string }) {
-  return (
-    <g transform={`translate(${x} ${y})`} pointerEvents="none" opacity={0.92}>
-      <text y={-11} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={7} letterSpacing={0.3} fill={COLORS.legendDim}>
-        {label.toUpperCase()}
-      </text>
-      <rect x={-w / 2} y={-7} width={w} height={16} rx={3} fill={COLORS.panelShadow} stroke={COLORS.panelEdge} strokeWidth={1} />
-      <text x={-w / 2 + 5} y={4} fontFamily={FONT_CONDENSED} fontSize={8.5} fill={COLORS.legendDim}>
-        {value}
-      </text>
-      <path d={`M ${w / 2 - 10} -2 L ${w / 2 - 5} -2 L ${w / 2 - 7.5} 2 Z`} fill={COLORS.legendDim} />
-    </g>
-  );
-});
-
-export const DecorToggle = memo(function DecorToggle({ x, y, label, positions, idx = 0 }: { x: number; y: number; label: string; positions: string[]; idx?: number }) {
-  const lineH = 10;
-  const top = -((positions.length - 1) / 2) * lineH;
-  return (
-    <g transform={`translate(${x} ${y})`} pointerEvents="none" opacity={0.92}>
-      <rect x={-8} y={top - 3} width={10} height={positions.length * lineH} rx={2.5} fill={COLORS.panelShadow} stroke={COLORS.panelEdge} strokeWidth={1} />
-      <circle cx={-3} cy={top + idx * lineH + 1.5} r={2} fill={COLORS.focus} />
-      {positions.map((p, i) => (
-        <text key={p} x={7} y={top + i * lineH + 4} fontFamily={FONT_CONDENSED} fontSize={7} fill={i === idx ? COLORS.legend : COLORS.legendDim}>
-          {p}
-        </text>
-      ))}
-      <text x={0} y={top + positions.length * lineH + 8} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={7} letterSpacing={0.2} fill={COLORS.legendDim}>
-        {label.toUpperCase()}
       </text>
     </g>
   );

@@ -1,44 +1,40 @@
 /**
- * Courier panel layout — a faithful full-face replica of the source unit's COMPUTER-EDITOR
- * control surface (the on-screen preset editor, which is itself the hardware face laid out for
- * a screen). Mirrors the editor's arrangement band-for-band, in SynthStack's OWN styling (dark
- * panel / cream legend / gold knobs / burnt-orange Courier accent) — NO logos, wordmarks, gray
- * trade-dress, or brand color scheme. Generic functional labels only.
+ * Courier panel layout — the source unit's control surface arranged band-for-band, in
+ * SynthStack's OWN styling (dark panel / cream legend / gold knobs / burnt-orange Courier
+ * accent) — NO logos, wordmarks, gray trade-dress, or brand color scheme. Generic functional
+ * labels only.
  *
- * Bands, top → bottom (canvas coords; the editor's Y is shifted up EY=72 so the face starts near
- * the top with no app-chrome gap):
- *   1. IO label strip (silkscreen jack legend)
- *   2. CONTROL BAND — LFO 1 · OSCILLATORS · MIXER · FILTER · ENVELOPES · OUTPUT
+ * EVERY control on this panel is live. The earlier replica's inert placeholder chrome (fake
+ * PRESET SETTINGS / MOD ASSIGN blocks, cosmetic IO jack legend, decorative HOLD/DIR/PAGE
+ * buttons, empty patch-button row) was removed in the 2026-07 declutter pass; the 64-step
+ * editor mounts as its own strip BELOW the panel (App.tsx), mirroring the Monarch tab.
+ *
+ * Bands, top → bottom (canvas coords):
+ *   1. CONTROL BAND — LFO 1 · OSCILLATORS · MIXER · FILTER · ENVELOPES · OUTPUT
  *      (two knob rows + a hero CUTOFF/VOLUME centre line + a switch/lamp-button row)
- *   3. SEQUENCER BAND — TEMPO + transport, CLOCK DIV/ARP/OCTAVE selectors, the 16-step lamp
- *      row, SWING + GATE LENGTH
- *   4. PERFORMANCE cluster (lower-left) — KB OCTAVE/HOLD, GLIDE, LFO 2 RATE, LFO 2 DESTINATION
- *   5. PRESET SETTINGS + MOD ASSIGN (faithful VISUAL placeholders — accounted for in the layout
- *      per the replica brief; Courier's real mod system is the long-press gesture, not a matrix)
- *   6. Wordmark ("COURIER", replacing the brand mark) + pitch/mod WHEELS (visual) + patch button
- *      row (visual)
- *   7. KEYBED — 32 keys (low C..G), playable for the Courier voice
+ *   2. SEQUENCER BAND — TEMPO + transport, CLOCK DIV/ARP/OCTAVE selectors, the 16-step
+ *      position lamp row, SWING + GATE LENGTH
+ *   3. PERFORMANCE cluster (lower-left) — KB OCTAVE, GLIDE, LFO 2 RATE, LFO 2 DESTINATION
+ *   4. MOD ROUTES — the REAL mod-assign readout (one column per source: live target + depth
+ *      from state.courier.modAssign; click a column to arm, ✕ to clear)
+ *   5. Wordmark ("COURIER") + pitch/mod WHEELS (playable)
+ *   6. KEYBED — 32 keys (low C..G), playable for the Courier voice
  *
- * Geometry measured from the reference editor capture (1404×838) via PIL blob detection (knob
- * centres) + gridded crops (switches/buttons/labels); keybed key count from the reference photo.
- * Coordinates locate control CENTRES; sections give a top-left corner.
+ * Knob-centre geometry measured from the reference editor capture (1404×838) via PIL blob
+ * detection. Coordinates locate control CENTRES; sections give a top-left corner.
  *
  * Spacing invariant (test/unit/courierLayout.test.ts): knob centres ≥ 44 units apart, every
  * control centre ≥ 16 apart, all inside the viewBox.
  *
  * .ts extension: scripts/export-geometry.ts loads this layout straight in Node.
  */
-import type { PanelLayout, KnobSize } from '../types.ts';
+import type { PanelLayout } from '../types.ts';
 
 /** Landscape canvas — the panel's own viewBox (App.tsx frames the tab to this). */
 export const COURIER_W = 1360;
 export const COURIER_H = 690;
 
-/** Editor→canvas vertical shift (the editor reserves y0..~90 for app chrome we drop). */
-// (applied already in the literal Y values below; documented for re-measurement)
-
-// Row baselines (canvas Y; = editor Y − 72).
-const IO = 16; // IO label strip (kept clear of the section-frame labels at y≈41)
+// Row baselines (canvas Y).
 const SEC = 33; // section-frame top (label sits in the top-border gap at y≈41)
 const TOP = 112; // upper knob / switch row
 const HERO = 144; // hero-knob centre (CUTOFF, VOLUME)
@@ -47,11 +43,11 @@ const BTN = 243; // control-band switch / lamp-button row
 const STEP = 315; // 16-step sequencer lamp row
 const SWG = 305; // TEMPO / SWING / GATE LENGTH knobs (one row)
 const SEQ_DD = 368; // CLOCK DIV / ARP PATTERN / ARP OCTAVE selectors
-const DIRPG = 348; // DIRECTION / PAGE
 const TEMPO_Y = 305; // TEMPO knob
 const SEQARP = 286; // SEQ / ARP mode selector
 const GL = 418; // GLIDE / LFO 2 RATE
 const L2D = 467; // LFO 2 DESTINATION (PITCH/CUTOFF/AMP lamps)
+const MODR = 396; // MOD ROUTES frame top
 
 export const courierLayout: PanelLayout = {
   width: COURIER_W,
@@ -66,6 +62,8 @@ export const courierLayout: PanelLayout = {
     { label: 'FILTER', x: 728, y: SEC, w: 160, h: 244 },
     { label: 'ENVELOPES', x: 898, y: SEC, w: 330, h: 244 },
     { label: 'OUTPUT', x: 1234, y: SEC, w: 92, h: 244 },
+    // the live mod-assign readout band (columns rendered by CourierPanel's ModRouteColumn)
+    { label: 'MOD ROUTES', x: 460, y: MODR, w: 866, h: 118 },
   ],
 
   controls: {
@@ -147,11 +145,10 @@ export const courierLayout: PanelLayout = {
 };
 
 // ===========================================================================
-// Replica chrome (visual) — silkscreen, placeholders, wheels, steps, keybed.
-// These are NOT engine controls; they make the face read as an exact replica.
+// Panel chrome — silkscreen, mod-route readout geometry, wheels, steps, keybed.
 // ===========================================================================
 
-/** Control ids rendered as illuminated square LAMP buttons (the editor's OFF/ON toggles). */
+/** Control ids rendered as illuminated square LAMP buttons (OFF/ON toggles). */
 export const COURIER_LAMP_BUTTONS = new Set<string>([
   'COU_LFO1_SYNC',
   'COU_LFO1_KB_RESET',
@@ -165,7 +162,7 @@ export const COURIER_LAMP_BUTTONS = new Set<string>([
   'COU_A_ENV_LOOP',
 ]);
 
-/** Multi-position switches rendered as the editor's compact caption-list SELECTOR. */
+/** Multi-position switches rendered as compact caption-list SELECTORS. */
 export const COURIER_SELECTORS = new Set<string>([
   'COU_LFO1_WAVE',
   'COU_LFO1_DEST',
@@ -174,26 +171,6 @@ export const COURIER_SELECTORS = new Set<string>([
   'COU_MOD_DEST',
   'COU_FILTER_MODE',
 ]);
-
-/** Top IO legend (jack names) — evenly spread silkscreen, purely cosmetic. */
-export const COURIER_IO_LABELS: { x: number; text: string }[] = [
-  { x: 300, text: 'POWER' },
-  { x: 372, text: 'USB' },
-  { x: 432, text: 'MIDI OUT' },
-  { x: 512, text: 'MIDI IN' },
-  { x: 584, text: 'GATE OUT' },
-  { x: 660, text: 'CV OUT' },
-  { x: 726, text: 'GATE IN' },
-  { x: 786, text: 'CV IN' },
-  { x: 852, text: 'CLOCK OUT' },
-  { x: 936, text: 'CLOCK IN' },
-  { x: 1024, text: 'EXPR' },
-  { x: 1086, text: 'SUSTAIN' },
-  { x: 1156, text: 'EXT IN' },
-  { x: 1226, text: 'PHONES' },
-  { x: 1300, text: 'AUDIO OUT' },
-];
-export const COURIER_IO_Y = IO;
 
 /** Static silkscreen text (sub-captions, row labels, numerals, wordmark). */
 export interface SilkText {
@@ -218,15 +195,19 @@ export const COURIER_SILK: SilkText[] = [
   // sub-captions
   { x: 415, y: BTN + 30, text: 'MOD DESTINATION', size: 8, dim: true, anchor: 'middle' },
   { x: 770, y: BTN + 30, text: 'MODE', size: 8, dim: true, anchor: 'middle' },
-  // TEMPO caption (below the knob's own label)
-  { x: 138, y: TEMPO_Y + 47, text: '(SETTINGS VALUE)', size: 7.5, dim: true, anchor: 'middle' },
-  // seq band header
-  { x: 770, y: STEP - 22, text: 'STEP MUTE', size: 8, dim: true, anchor: 'middle' },
+  // seq band header — the lamp row shows the RUNNING STEP (edit steps in the strip below)
+  { x: 770, y: STEP - 22, text: 'STEP', size: 8, dim: true, anchor: 'middle' },
   // LFO 2 destination caption (below the PITCH/CUTOFF/AMP lamp labels)
   { x: 237, y: L2D + 38, text: 'DESTINATION', size: 7.5, dim: true, anchor: 'middle' },
-  // section headers for the placeholder blocks
-  { x: 430, y: 400, text: 'PRESET SETTINGS', size: 11, anchor: 'middle', spacing: 1.5 },
-  { x: 1010, y: 400, text: 'MOD ASSIGN', size: 11, anchor: 'middle', spacing: 1.5 },
+  // MOD ROUTES usage hint (under the frame)
+  {
+    x: 893,
+    y: MODR + 134,
+    text: 'CLICK A SOURCE TO ARM (OR LONG-PRESS ITS HOST KNOB) · DRAG A GOLD KNOB TO SET DEPTH · ✕ CLEARS · ESC CANCELS',
+    size: 8,
+    dim: true,
+    anchor: 'middle',
+  },
   // wordmark (replaces the brand mark) — our identity, plain type; sits above the keybed
   { x: 300, y: 614, text: 'COURIER', size: 26, bold: true, anchor: 'start', spacing: 4 },
   // wheel labels
@@ -250,92 +231,22 @@ export const COURIER_LINES: SilkLine[] = [
   { x1: 306, y1: L2D + 8, x2: 306, y2: L2D + 14 },
 ];
 
-/** Faithful inert placeholder controls (accounted for in the layout; no engine wiring). */
-export interface DecorKnob {
-  x: number;
-  y: number;
-  label: string;
-  size?: KnobSize;
-}
-export interface DecorButton {
-  x: number;
-  y: number;
-  w?: number;
-  h?: number;
-  label?: string;
-  lit?: boolean;
-}
-export interface DecorDropdown {
-  x: number;
-  y: number;
-  w: number;
-  label: string;
-  value: string;
-}
-export interface DecorToggle {
-  x: number;
-  y: number;
-  label: string;
-  positions: string[];
-  idx?: number;
-}
+// ===========================================================================
+// MOD ROUTES readout — geometry for the four live route columns (lfo1 / fEnv /
+// aEnv / kb). CourierPanel renders one interactive ModRouteColumn per entry;
+// the frame itself comes from the 'MOD ROUTES' section above.
+// ===========================================================================
 
-const PR = 428; // preset settings row 1
-const PR2 = 466; // row 2
-const PR3 = 502; // row 3
-const MR = 448; // mod-assign row 1 (knobs)
-const MR2 = 514; // mod-assign row 2 (knobs)
+/** The MOD ROUTES frame (same box as the section entry — kept here for the columns' math). */
+export const COURIER_MOD_ROUTES_FRAME = { x: 460, y: MODR, w: 866, h: 118 } as const;
 
-export const COURIER_DECOR_KNOBS: DecorKnob[] = [
-  { x: 499, y: 447, label: 'LFO FADE', size: 's' },
-  // MOD ASSIGN amount knobs (small) — each paired with a destination dropdown above it
-  { x: 758, y: MR, label: 'LFO 1 AMT', size: 's' },
-  { x: 872, y: MR, label: 'KB AMT', size: 's' },
-  { x: 986, y: MR, label: 'F ENV AMT', size: 's' },
-  { x: 1099, y: MR, label: 'A ENV AMT', size: 's' },
-  { x: 1212, y: MR, label: 'MOD WHL', size: 's' },
-  { x: 758, y: MR2, label: 'KB S+H', size: 's' },
-  { x: 872, y: MR2, label: 'VEL AMT', size: 's' },
-  { x: 986, y: MR2, label: 'AFTCH', size: 's' },
-  { x: 1099, y: MR2, label: 'EXPR AMT', size: 's' },
-];
+/** Column centres (4 sources spread across the frame). */
+export const COURIER_MOD_ROUTE_COLS: number[] = Array.from(
+  { length: 4 },
+  (_, i) => COURIER_MOD_ROUTES_FRAME.x + ((i + 0.5) * COURIER_MOD_ROUTES_FRAME.w) / 4,
+);
 
-export const COURIER_DECOR_BUTTONS: DecorButton[] = [
-  // PRESET SETTINGS buttons
-  { x: 345, y: PR, label: 'DUOPHONIC' },
-  { x: 432, y: PR, label: 'LEGATO GL' },
-  { x: 432, y: PR2, label: 'GATED GL' },
-  { x: 585, y: PR, label: 'F ENV RST' },
-  { x: 585, y: PR2, label: 'A ENV RST' },
-  { x: 605, y: PR3, label: 'A EG ADD' },
-  { x: 660, y: PR, label: 'ARP SKIP' },
-  { x: 660, y: PR3, label: 'SEQ PLAY' },
-  // DIRECTION / PAGE (seq band, left of the step row)
-  { x: 318, y: DIRPG, w: 30, h: 14, label: 'DIR' },
-  { x: 378, y: DIRPG, w: 30, h: 14, label: 'PAGE' },
-];
-
-export const COURIER_DECOR_DROPDOWNS: DecorDropdown[] = [
-  { x: 345, y: PR2, w: 70, label: 'PB UP', value: '+7 st' },
-  { x: 345, y: PR3, w: 70, label: 'PB DN', value: '-7 st' },
-  // MOD ASSIGN destination dropdowns — to the RIGHT of each amount knob (knob_x + 60), same row.
-  { x: 818, y: MR, w: 54, label: 'DEST', value: 'None' },
-  { x: 932, y: MR, w: 54, label: 'DEST', value: 'None' },
-  { x: 1046, y: MR, w: 54, label: 'DEST', value: 'None' },
-  { x: 1159, y: MR, w: 54, label: 'DEST', value: 'None' },
-  { x: 1272, y: MR, w: 54, label: 'DEST', value: 'None' },
-  { x: 818, y: MR2, w: 54, label: 'DEST', value: 'OSC2' },
-  { x: 932, y: MR2, w: 54, label: 'DEST', value: 'WAVE' },
-  { x: 1046, y: MR2, w: 54, label: 'DEST', value: 'LFO1' },
-  { x: 1159, y: MR2, w: 54, label: 'DEST', value: 'CUT' },
-];
-
-export const COURIER_DECOR_TOGGLES: DecorToggle[] = [
-  { x: 466, y: PR3, label: 'GLIDE TYPE', positions: ['EXP', 'LCT', 'LOG'] },
-  { x: 540, y: PR3, label: 'LFO RANGE', positions: ['LO', 'MID', 'HI'] },
-];
-
-/** Pitch / mod thumb-wheels (visual only). */
+/** Pitch / mod thumb-wheels (playable — CourierPanel wires them to the engine). */
 export interface Wheel {
   x: number;
   y: number;
@@ -348,17 +259,13 @@ export const COURIER_WHEELS: Wheel[] = [
   { x: 210, y: 588, w: 40, h: 78, kind: 'mod' },
 ];
 
-/** Bottom patch-button row — omitted (ambiguous preset-bank chrome; the keybed fills the base). */
-export const COURIER_PATCH_BTN_Y = 558;
-export const COURIER_PATCH_BTNS: number[] = [];
-
 /** 16-step sequencer lamp row positions (canvas X; Y = STEP). */
 export const COURIER_SEQ_STEPS: number[] = Array.from({ length: 16 }, (_, i) => 434 + i * 44.8);
 export const COURIER_SEQ_STEP_Y = STEP;
 
 // ===========================================================================
-// KEYBED — 32 keys (low C..G), 19 white + 13 black, rendered as the editor's
-// BUTTON keyboard: a lower row of light white-key buttons + an upper row of dark
+// KEYBED — 32 keys (low C..G), 19 white + 13 black, rendered as a BUTTON
+// keyboard: a lower row of light white-key buttons + an upper row of dark
 // black-key buttons (piano 2-3 grouping). Playable for the Courier voice.
 // ===========================================================================
 

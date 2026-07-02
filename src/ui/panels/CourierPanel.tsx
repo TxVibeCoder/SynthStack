@@ -1,20 +1,21 @@
 /**
- * Courier panel — a faithful FULL-FACE replica of the source unit's computer-editor control
- * surface (see courierLayout.ts for the band-by-band map + measurement provenance), rendered in
- * SynthStack's own palette. One SVG, viewBox = courierLayout.width × height, composing:
- *   IO legend · control band · sequencer band · performance cluster · PRESET SETTINGS / MOD
- *   ASSIGN placeholders · wordmark + pitch/mod wheels + patch row · the 32-key keybed.
+ * Courier panel — the full-face voice panel (see courierLayout.ts for the band-by-band map +
+ * measurement provenance), rendered in SynthStack's own palette. One SVG, viewBox =
+ * courierLayout.width × height, composing:
+ *   control band · sequencer band · performance cluster · MOD ROUTES readout · wordmark +
+ *   pitch/mod wheels · the 32-key keybed.
  *
- * Real Courier controls (data/courier.json) are wired to the store via useControl and rendered
- * with the editor's SHAPES (illuminated lamp buttons / compact + caption-list selectors / seq
- * dropdowns / gold knobs); the editor's software-only blocks (preset settings, the 9-row mod
- * matrix, the patch-button row, the IO legend, the wheels) are faithful VISUAL placeholders —
- * accounted for in the layout, no engine wiring (Courier's real mod system is the long-press
- * gesture below, not a matrix).
+ * EVERY rendered control is live (the replica's inert placeholder blocks were removed in the
+ * 2026-07 declutter pass). Controls (data/courier.json) are wired to the store via useControl
+ * and rendered with the panel SHAPES (illuminated lamp buttons / compact + caption-list
+ * selectors / seq dropdowns / gold knobs). The 64-step editor mounts as its own strip below
+ * this panel (App.tsx), mirroring the Monarch tab.
  *
- * MOD MATRIX (Phase B, preserved): long-press a source host knob (~450 ms) to ARM, then drag a
- * supported target knob to scrub the bipolar depth; the one route commits on release via
- * engineBridge.setCourierModAssign. Arm state is panel-local React, never the store.
+ * MOD ASSIGN (Phase B, preserved + surfaced): long-press a source host knob (~450 ms) — or
+ * click the source's MOD ROUTES column — to ARM, then drag a supported target knob to scrub
+ * the bipolar depth; the one route commits on release via engineBridge.setCourierModAssign.
+ * The MOD ROUTES band shows each source's LIVE route (target + depth) with an ✕ to clear.
+ * Arm state is panel-local React, never the store.
  *
  * The keybed plays the Courier voice: it forces engineBridge.keyboardTarget='courier' while
  * mounted (restored on unmount) so on-screen keys + MIDI sound Courier on this tab.
@@ -24,7 +25,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRe
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react';
 import type { ControlDef, ModuleDef } from '../../../data/schema';
 import courierJson from '../../../data/courier.json';
-import { COLORS, FONT_CONDENSED, GROUP_BORDER, KNOB_RADIUS } from '../theme';
+import { COLORS, FONT_CONDENSED, GROUP_BORDER } from '../theme';
 import type { KnobSize, PanelSection } from '../types';
 import { Knob } from '../controls/Knob';
 import { useControl, useCourierModAssign, useCourierSeqSettings } from '../useStudio';
@@ -35,17 +36,11 @@ import {
   courierLayout,
   COURIER_LAMP_BUTTONS,
   COURIER_SELECTORS,
-  COURIER_IO_LABELS,
-  COURIER_IO_Y,
   COURIER_SILK,
   COURIER_LINES,
-  COURIER_DECOR_KNOBS,
-  COURIER_DECOR_BUTTONS,
-  COURIER_DECOR_DROPDOWNS,
-  COURIER_DECOR_TOGGLES,
+  COURIER_MOD_ROUTES_FRAME,
+  COURIER_MOD_ROUTE_COLS,
   COURIER_WHEELS,
-  COURIER_PATCH_BTNS,
-  COURIER_PATCH_BTN_Y,
   COURIER_SEQ_STEPS,
   COURIER_SEQ_STEP_Y,
   COURIER_WHITE_KEYS,
@@ -60,10 +55,6 @@ import {
   Dropdown,
   LampSelectorH,
   StepLamp,
-  DecorKnob,
-  DecorButton,
-  DecorDropdown,
-  DecorToggle,
   Wheel,
 } from './courierControls';
 import {
@@ -107,7 +98,7 @@ const SHORT_LABEL: Record<string, string> = {
   COU_LFO1_DEST: 'DEST',
 };
 
-/** Which panel control hosts each mod source's long-press affordance (kb has its own handle). */
+/** Which panel control hosts each mod source's long-press affordance (kb arms via its MOD ROUTES column). */
 const SOURCE_HOST: Record<Exclude<CourierModSource, 'kb'>, string> = {
   lfo1: 'COU_LFO1_RATE',
   fEnv: 'COU_EG_AMOUNT',
@@ -328,70 +319,100 @@ function renderControl(id: string, placed: { x: number; y: number; size?: KnobSi
   return <PanelKnob key={id} def={def} x={x} y={y} size={size} />;
 }
 
-// ---- kb-source long-press handle (KB TRACKING is a switch, so kb has no host knob) --------
+// ---- MOD ROUTES readout (the four LIVE mod-assign routes) ----------------------------------
+// One interactive column per source inside the 'MOD ROUTES' section frame: source name, the
+// route's current target + depth (or UNASSIGNED), and an ✕ that clears the route. Clicking a
+// column ARMS that source (same panel-local assign mode as the long-press gesture) — this is
+// also how the kb source is armed (KB TRACKING is a switch, so kb has no host knob).
 
-function KbSourceHandle({ x, y }: { x: number; y: number }) {
-  const { armed, arm, disarm } = useContext(CourierAssignContext);
-  const isArmed = armed === 'kb';
-  const r = KNOB_RADIUS.s;
-  const holdTimer = useRef<number | null>(null);
-  const travel = useRef(0);
-  const lastY = useRef(0);
+const MOD_SOURCE_ORDER: CourierModSource[] = ['lfo1', 'fEnv', 'aEnv', 'kb'];
+const MOD_SOURCE_LABEL: Record<CourierModSource, string> = {
+  lfo1: 'LFO 1',
+  fEnv: 'FILTER ENV',
+  aEnv: 'AMP ENV',
+  kb: 'KB CV',
+};
 
-  useEffect(() => () => { if (holdTimer.current != null) clearTimeout(holdTimer.current); }, []);
-  const clear = () => {
-    if (holdTimer.current != null) {
-      clearTimeout(holdTimer.current);
-      holdTimer.current = null;
-    }
-  };
+function ModRouteColumn({ source, x }: { source: CourierModSource; x: number }) {
+  const { armed, arm } = useContext(CourierAssignContext);
+  const routes = useCourierModAssign().routes;
+  const route = routes[source];
+  const isArmed = armed === source;
+  const targetLabel = route ? (defById.get(route.controlId)?.panelLabel ?? route.controlId) : null;
+  const depthLabel = route ? `${route.depth > 0 ? '+' : ''}${Math.round(route.depth * 100)}%` : '';
+  const cy = COURIER_MOD_ROUTES_FRAME.y + COURIER_MOD_ROUTES_FRAME.h / 2 + 4;
+  const w = COURIER_MOD_ROUTES_FRAME.w / 4 - 22;
+
   return (
     <g
-      className="control control--knob"
-      transform={`translate(${x} ${y})`}
+      className="control"
+      transform={`translate(${x} ${cy})`}
       tabIndex={0}
       role="button"
-      aria-label="KB CV mod source — long-press to assign"
+      aria-pressed={isArmed}
+      aria-label={`Mod source ${MOD_SOURCE_LABEL[source]}${targetLabel ? ` — routed to ${targetLabel}, depth ${depthLabel}` : ' — unassigned'}. Activate to arm assign mode.`}
       style={{ cursor: 'pointer' }}
-      onPointerDown={(e) => {
-        if (e.pointerType === 'mouse' && e.button !== 0) return;
-        e.currentTarget.setPointerCapture(e.pointerId);
-        travel.current = 0;
-        lastY.current = e.clientY;
-        clear();
-        holdTimer.current = window.setTimeout(() => {
-          holdTimer.current = null;
-          arm('kb');
-        }, 450);
-        e.preventDefault();
-      }}
-      onPointerMove={(e) => {
-        travel.current += Math.abs(lastY.current - e.clientY);
-        lastY.current = e.clientY;
-        if (travel.current > 4) clear();
-      }}
-      onPointerUp={(e) => {
-        clear();
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-      }}
-      onPointerCancel={clear}
+      onClick={() => arm(source)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          isArmed ? disarm() : arm('kb');
+          arm(source);
         }
       }}
     >
-      <circle r={r + 4} fill="transparent" />
-      <circle r={r} fill={COLORS.panelRaised} stroke={isArmed ? COLORS.focus : COLORS.panelEdge} strokeWidth={isArmed ? 2 : 1.2} />
-      {isArmed && (
-        <circle r={r + 6} fill="none" stroke={COLORS.focus} strokeWidth={2} pointerEvents="none">
-          <animate attributeName="opacity" values="0.95;0.4;0.95" dur="1.1s" repeatCount="indefinite" />
-        </circle>
-      )}
-      <text y={r + 13} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={8.5} letterSpacing={0.4} fill={COLORS.legend}>
-        KB MOD
+      <rect
+        x={-w / 2}
+        y={-44}
+        width={w}
+        height={92}
+        rx={6}
+        fill={isArmed ? COLORS.panelRaised : COLORS.panelShadow}
+        stroke={isArmed ? COLORS.focus : COLORS.panelEdge}
+        strokeWidth={isArmed ? 2 : 1}
+      >
+        {isArmed && <animate attributeName="stroke-opacity" values="1;0.45;1" dur="1.1s" repeatCount="indefinite" />}
+      </rect>
+      <text y={-24} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={10} fontWeight={700} letterSpacing={0.8} fill={COLORS.legend}>
+        {MOD_SOURCE_LABEL[source]}
       </text>
+      {route ? (
+        <>
+          <text y={2} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={11} letterSpacing={0.4} fill={ACCENT}>
+            {`→ ${targetLabel}`}
+          </text>
+          <text y={22} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={0.4} fill={COLORS.legend}>
+            {depthLabel}
+          </text>
+          <g
+            className="control"
+            transform={`translate(${w / 2 - 14} -30)`}
+            tabIndex={0}
+            role="button"
+            aria-label={`Clear ${MOD_SOURCE_LABEL[source]} route`}
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              engineBridge.setCourierModAssign(source, null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                engineBridge.setCourierModAssign(source, null);
+              }
+            }}
+          >
+            <rect x={-8} y={-8} width={16} height={16} rx={3} fill={COLORS.panelRaised} stroke={COLORS.panelEdge} strokeWidth={1} />
+            <text y={3.5} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={9} fill={COLORS.legend}>
+              ✕
+            </text>
+          </g>
+        </>
+      ) : (
+        <text y={6} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={9.5} letterSpacing={0.6} fill={COLORS.legendDim}>
+          UNASSIGNED
+        </text>
+      )}
     </g>
   );
 }
@@ -575,8 +596,6 @@ export function CourierPanel() {
     return () => window.removeEventListener('keydown', onKey);
   }, [armed, disarm]);
 
-  const kbSwitch = courierLayout.controls.COU_KB_TRACKING;
-
   return (
     <CourierAssignContext.Provider value={ctx}>
       <svg
@@ -598,18 +617,6 @@ export function CourierPanel() {
             {`ASSIGN ${SOURCE_TAG[armed].toUpperCase()} — DRAG A TARGET (CENTER = CLEAR · ESC = CANCEL)`}
           </text>
         )}
-
-        {/* IO legend strip */}
-        <g pointerEvents="none">
-          {COURIER_IO_LABELS.map((l) => (
-            <g key={l.text}>
-              <circle cx={l.x} cy={COURIER_IO_Y - 6} r={2.2} fill={COLORS.legendDim} opacity={0.5} />
-              <text x={l.x} y={COURIER_IO_Y + 6} textAnchor="middle" fontFamily={FONT_CONDENSED} fontSize={7} letterSpacing={0.3} fill={COLORS.legendDim}>
-                {l.text}
-              </text>
-            </g>
-          ))}
-        </g>
 
         {/* section frames */}
         {courierLayout.sections.map((s) => (
@@ -641,28 +648,15 @@ export function CourierPanel() {
         {/* all wired controls */}
         <g>{Object.entries(courierLayout.controls).map(([id, p]) => renderControl(id, p))}</g>
 
-        {/* kb mod-source handle */}
-        {kbSwitch && <KbSourceHandle x={kbSwitch.x + 40} y={kbSwitch.y} />}
-
         {/* sequencer band extras */}
         <SeqStepRow />
         <Transport />
         <KbOctave x={158} y={358} />
-        <DecorButton x={235} y={358} label="HOLD" />
 
-        {/* PRESET SETTINGS + MOD ASSIGN placeholders */}
+        {/* MOD ROUTES — the four live mod-assign routes (click a column to arm, ✕ clears) */}
         <g>
-          {COURIER_DECOR_KNOBS.map((k, i) => (
-            <DecorKnob key={`dk${i}`} x={k.x} y={k.y} label={k.label} r={k.size === 's' ? 11 : 13} />
-          ))}
-          {COURIER_DECOR_BUTTONS.map((b, i) => (
-            <DecorButton key={`db${i}`} x={b.x} y={b.y} label={b.label} w={b.w} h={b.h} lit={b.lit} />
-          ))}
-          {COURIER_DECOR_DROPDOWNS.map((d, i) => (
-            <DecorDropdown key={`dd${i}`} x={d.x} y={d.y} w={d.w} label={d.label} value={d.value} />
-          ))}
-          {COURIER_DECOR_TOGGLES.map((t, i) => (
-            <DecorToggle key={`dt${i}`} x={t.x} y={t.y} label={t.label} positions={t.positions} idx={t.idx} />
+          {MOD_SOURCE_ORDER.map((s, i) => (
+            <ModRouteColumn key={s} source={s} x={COURIER_MOD_ROUTE_COLS[i]!} />
           ))}
         </g>
 
@@ -701,13 +695,6 @@ export function CourierPanel() {
             />
           ),
         )}
-
-        {/* patch-button row (visual) */}
-        <g pointerEvents="none">
-          {COURIER_PATCH_BTNS.map((x, i) => (
-            <rect key={i} x={x - 22} y={COURIER_PATCH_BTN_Y - 7} width={44} height={14} rx={3} fill={COLORS.panelRaised} stroke={COLORS.panelEdge} strokeWidth={1} opacity={0.85} />
-          ))}
-        </g>
 
         {/* keybed */}
         <CourierKeybed />
