@@ -73,7 +73,7 @@ function seqDef(id: string): ControlDef {
  * Grew (252 -> 330) for the Phase-C param-lock MATRIX band between the edit row and the
  * global SEQUENCER settings row; the stage frame reflows off this height automatically.
  */
-export const COURIER_SEQ_STRIP = { w: 1300, h: 362 } as const;
+export const COURIER_SEQ_STRIP = { w: 1300, h: 372 } as const;
 
 /** Strip geometry: one row of 16 cells per page across the wide canvas. */
 const BAND_Y = 6;
@@ -92,7 +92,10 @@ const MATRIX_Y = EDIT_Y + 76; // 198 (row-0 button centres)
 const MATRIX_HEADER_Y = MATRIX_Y - 30; // clear of the arm-LED row above the caps
 /** Global sequencer SETTINGS row, beneath the matrix band (its header + the SEQ MODE switch
  *  caption both sit ABOVE the row, so this must clear the matrix's lower caption row). */
-const SET_Y = 312;
+const SET_Y = 320;
+/** SEQUENCER header Y — a full 32 above the row so it clears the leftmost control's (TEMPO,
+ *  a size-'m' knob, tick arc ~23 above centre) top, not just a button cap. */
+const SET_HEADER_Y = SET_Y - 32;
 
 const PAGE_CELLS = 16;
 const ACCENT = GROUP_BORDER.courier;
@@ -641,7 +644,7 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
         {/* ===== GLOBAL SEQUENCER SETTINGS row (Phase C MVP) =====
             TEMPO (control store), CLOCK DIV / LENGTH / GATE LENGTH / SWING / SEQ MODE / ARP MODE
             (the seq slice). Rendered from the data/courier.json defs (single source of truth). */}
-        <text x={26} y={SET_Y - 22} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.5}
+        <text x={26} y={SET_HEADER_Y} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.5}
           fill={COLORS.legendDim}>
           SEQUENCER
         </text>
