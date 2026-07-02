@@ -8,10 +8,11 @@
  * (Courier has neither). TIE is DERIVED from gateLength >= 1 (no separate field), so the
  * wide cell row leaves room for the deferred C-FULL per-step param-lock knobs.
  *
- * Interaction mirrors the Monarch editor: click a cell to SELECT; click the already-
- * selected cell to toggle REST (non-destructive for plain selection); the selected step
- * is edited with the NOTE / GATE knobs + REST / GLIDE / TIE buttons in the bottom edit
- * row. Arrow keys edit/navigate (note ±1/±octave, select ∓1) via the pure courierKeyNav.
+ * Interaction mirrors the Monarch editor (stepCellEdit.ts direct-manipulation semantics):
+ * TAP a cell to toggle the step on/off; DRAG vertically on a cell to tune its pitch in
+ * semitones (a silent step switches on); every touch also SELECTS the cell, so the
+ * NOTE / GATE knobs + REST / GLIDE / TIE buttons in the bottom edit row follow. Arrow
+ * keys edit/navigate (note ±1/±octave, select ∓1) via the pure courierKeyNav.
  *
  * Courier owns NO panel transport today, so this strip carries its own PLAY/STOP + RESET +
  * REC, mirroring how MonarchPanel mounts its transport (momentary buttons → bridge
@@ -37,6 +38,7 @@ import { useControl, useCourierSeqSettings } from '../useStudio';
 import { COURIER_CLOCK_DIVS } from '../../engine/sequencers/courierSeq';
 import { COURIER_LOCKABLE } from '../../engine/modRouter';
 import { clampSemis, keyToCourierAction, nextNoteSemis, nextSelection } from './courierKeyNav';
+import { tapPatch, useStepCellGesture } from './stepCellEdit';
 import {
   courierIsRunning,
   courierReset,
@@ -172,23 +174,41 @@ function lockCount(step: CourierStepState): number {
 }
 
 function StepCell({
-  step, globalIndex, selected, active, beyondEnd, onClick,
+  step, globalIndex, selected, active, beyondEnd, onSelect, onTap, onDragSemis,
 }: {
   step: CourierStepState;
   globalIndex: number;
   selected: boolean;
   active: boolean;
   beyondEnd: boolean;
-  onClick: (index: number) => void;
+  onSelect: (index: number) => void;
+  onTap: (index: number) => void;
+  onDragSemis: (index: number, semis: number) => void;
 }) {
   const x = CELL_X0 + (globalIndex % PAGE_CELLS) * CELL_PITCH;
-  const handle = () => onClick(globalIndex);
   const tie = isTie(step);
   const locks = lockCount(step);
   // -1 noteVv == unauthored (rest-like blank). Show a dash; rests show the rest glyph.
   const blank = step.noteVv < 0 && !step.rest;
+  // Direct manipulation: tap = on/off, vertical drag = pitch. The drag origin is the
+  // step's REAL pitch even when negative (an unauthored −1 vv plays C4 in seq mode, and
+  // authored notes below the C5 anchor are negative — never rebase them to 0).
+  const gesture = useStepCellGesture({
+    onSelect: () => onSelect(globalIndex),
+    onTap: () => onTap(globalIndex),
+    onDragSemis: (semis) => onDragSemis(globalIndex, semis),
+    startSemis: () => Math.round(step.noteVv * 12),
+  });
   return (
-    <g className="control" data-testid={`courier-cell-${globalIndex}`} onClick={handle} opacity={beyondEnd ? 0.35 : 1}>
+    <g
+      className="control"
+      data-testid={`courier-cell-${globalIndex}`}
+      role="button"
+      aria-label={`Step ${globalIndex + 1} — tap toggles on/off, vertical drag tunes pitch`}
+      style={{ touchAction: 'none' }}
+      {...gesture}
+      opacity={beyondEnd ? 0.35 : 1}
+    >
       <StepLed x={x + CELL_W / 2} y={LED_Y} on={active} />
       {/* lock pip — burnt-orange dot in the top-right corner when the step locks any param. */}
       {locks > 0 && (
@@ -306,17 +326,21 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
     return () => setCourierRecordHandler(null);
   }, [armed]);
 
-  const onCellClick = useCallback(
-    (index: number) => {
-      const step = readCourierSeq().steps[index];
-      if (step && index === selected) {
-        updateCourierStep(index, { rest: !step.rest }); // click-to-rest
-      }
-      setSelected(index);
-      svgRef.current?.focus(); // focus the editor so arrows edit immediately
-    },
-    [selected],
-  );
+  // Direct cell manipulation (stepCellEdit.ts): pointer-down selects (and focuses the
+  // editor so arrows edit immediately); a tap toggles the step on/off; a vertical drag
+  // tunes the pitch live (and un-rests the step — you're dialing a note, you want to
+  // hear it).
+  const onCellSelect = useCallback((index: number) => {
+    setSelected(index);
+    svgRef.current?.focus();
+  }, []);
+  const onCellTap = useCallback((index: number) => {
+    const step = readCourierSeq().steps[index];
+    if (step) updateCourierStep(index, tapPatch(step));
+  }, []);
+  const onCellDragSemis = useCallback((index: number, semis: number) => {
+    updateCourierStep(index, { noteVv: semis / 12, rest: false });
+  }, []);
 
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<SVGSVGElement>) => {
@@ -497,10 +521,22 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
               selected={gi === selected}
               active={running && pos === gi}
               beyondEnd={gi >= seq.endStep}
-              onClick={onCellClick}
+              onSelect={onCellSelect}
+              onTap={onCellTap}
+              onDragSemis={onCellDragSemis}
             />
           );
         })}
+
+        {/* cell-gesture hint (the tap/drag semantics are otherwise invisible) */}
+        <text x={26} y={EDIT_Y + 20} fontFamily={FONT_CONDENSED} fontSize={8.5} letterSpacing={0.6}
+          fill={COLORS.legendDim} pointerEvents="none">
+          TAP STEP = ON/OFF
+        </text>
+        <text x={26} y={EDIT_Y + 32} fontFamily={FONT_CONDENSED} fontSize={8.5} letterSpacing={0.6}
+          fill={COLORS.legendDim} pointerEvents="none">
+          DRAG STEP = PITCH
+        </text>
 
         {/* selected-step caption doubles as the arrow-key live region (role=status + aria-live
             announces the new step + note on every arrow edit/navigation). */}
@@ -616,9 +652,11 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
           accent={ACCENT} x={370} y={SET_Y} />
         <Switch def={seqDef('COU_SEQ_MODE')} value={settings.mode} onChange={onSeqMode}
           x={460} y={SET_Y} />
-        {/* ARP MODE — display label <-> underscored state value via the ARP_*_TO_* tables. */}
-        <Switch def={seqDef('COU_ARP_MODE')} value={arpModePos} onChange={onArpMode}
-          x={560} y={SET_Y} />
+        {/* ARP MODE — display label <-> underscored state value via the ARP_*_TO_* tables.
+            A cycling Button (like CLOCK DIV / ARP RHYTHM): a 13-position Switch caption-list
+            towers over the matrix band above it. */}
+        <Button def={seqDef('COU_ARP_MODE')} value={arpModePos} lit={arpModePos !== 'OFF'}
+          onChange={onArpMode} x={560} y={SET_Y} />
         {/* ARP OCTAVE (stepped 1..4) + ARP RHYTHM (the arp's own clock division). */}
         <Knob def={seqDef('COU_ARP_OCTAVE')} value={settings.arpOctave} onInput={noop} onCommit={onArpOctave}
           accent={ACCENT} x={660} y={SET_Y} />

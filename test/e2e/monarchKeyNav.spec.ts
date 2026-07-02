@@ -14,8 +14,11 @@
  *   - ArrowLeft / ArrowRight    → move the selected step ∓/±1 (clamped [0, 31]) and
  *                                 auto-flip the page (page = floor(selected / 8)) so
  *                                 the selected cell stays visible
- * Clicking a step CELL focuses the editor SVG (svgRef.current?.focus()), so the plain
- * "select the step, then use arrows" path lands with e.target === e.currentTarget.
+ * Any pointer-down on a step CELL selects it AND focuses the editor SVG
+ * (svgRef.current?.focus()), so the "touch the step, then use arrows" path lands with
+ * e.target === e.currentTarget. (Since the 2026-07 direct-manipulation pass a plain
+ * click is also a TAP that toggles the step's REST on/off — irrelevant to the note-semis
+ * assertions below, which only read noteVv.)
  *
  * The note value round-trips through the SAME store slice the NOTE knob commits to:
  * window.__synthstackStudio.store.getState().transport.monarch.steps[i].noteVv (1 vv/oct), so a
@@ -118,9 +121,9 @@ test('monarch arrow keys: note ±semitone, Shift=octave, Left/Right nav + page-f
   expect(await semisOf(page, 31), 'low-rail ArrowLeft must not wrap to step 31').toBe(s31Before);
 
   // ---- e. DOUBLE-EDIT SENTINEL: a focused NOTE knob edits EXACTLY +1, never +2 -------
-  // Select step 0 so the NOTE slider edits it. Click cell 1 FIRST (selected is 0 from
-  // step d, and re-clicking the already-selected cell toggles REST — §9.3 click-to-rest)
-  // so the cell-0 click is an unambiguous SELECT, not a rest toggle. NOTE_DEF has
+  // Select step 0 so the NOTE slider edits it (each click is also a rest TAP-toggle
+  // under the direct-manipulation semantics — harmless here, rest never touches noteVv;
+  // the cell-1 hop keeps this step's shape from the pre-pass version). NOTE_DEF has
   // steps=49 over [-24, 24] (48-semi span), so one keyboard detent = exactly 1 semitone.
   // The knob commits on key UP (commitKeyboard), and its onKeyDown preventDefaults but
   // does NOT stopPropagation — so the arrow bubbles to the editor onKeyDown, where the

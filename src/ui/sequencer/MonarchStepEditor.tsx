@@ -4,18 +4,18 @@
  * 687.63 × 158.8 — shifted over to the left of the Monarch column), no longer a
  * band inside the Monarch panel SVG.
  *
- * Interaction: click a cell to SELECT it; click the
- * already-selected cell to toggle REST (click-to-rest, made non-destructive
- * for plain selection); Shift-click toggles ACCENT anywhere. The selected step is
- * edited with the NOTE/GATE knobs and ACCENT/GLIDE/RATCHET/REST buttons below —
- * a per-step popover, kept simple, rendered as a fixed strip.
+ * Interaction (stepCellEdit.ts direct-manipulation semantics, shared with the Courier
+ * editor): TAP a cell to toggle the step on/off; DRAG vertically on a cell to tune its
+ * pitch in semitones (a rest switches on); Shift-tap toggles ACCENT. Every touch also
+ * SELECTS the cell, so the NOTE/GATE knobs and ACCENT/GLIDE/RATCHET/REST buttons below
+ * follow — a per-step popover, kept simple, rendered as a fixed strip.
  *
  * All edits are single store commits via the bridge; Studio.syncTransportConfig
  * pushes the transport slice into the live sequencer.
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { ControlDef } from '../../../data/schema';
 import type { MonarchStepState } from '../../state/studioState';
 import { COLORS, FONT_CONDENSED } from '../theme';
@@ -26,6 +26,7 @@ import { StepLed } from '../controls/StepLed';
 import { engineBridge } from '../engineBridge';
 import { useStepPosition, useTransportFlags } from '../useStudio';
 import { clampSemis, keyToMonarchAction, nextNoteSemis, nextSelection } from './monarchKeyNav';
+import { tapPatch, useStepCellGesture } from './stepCellEdit';
 
 /** Strip-local origin (the old in-panel band offset is gone). */
 const BAND_Y = 6;
@@ -76,20 +77,36 @@ function readSeq(): { steps: MonarchStepState[]; endStep: number } {
 }
 
 function StepCell({
-  step, globalIndex, selected, active, beyondEnd, onClick,
+  step, globalIndex, selected, active, beyondEnd, onSelect, onTap, onDragSemis,
 }: {
   step: MonarchStepState;
   globalIndex: number;
   selected: boolean;
   active: boolean;
   beyondEnd: boolean;
-  onClick: (index: number, shift: boolean) => void;
+  onSelect: (index: number) => void;
+  onTap: (index: number, shift: boolean) => void;
+  onDragSemis: (index: number, semis: number) => void;
 }) {
   const x = CELL_X0 + (globalIndex % 8) * CELL_PITCH;
-  const handle = (e: ReactMouseEvent<SVGGElement>) => onClick(globalIndex, e.shiftKey);
   const tie = step.gateLength >= 1 && step.ratchet === 1;
+  // Direct manipulation: tap = on/off (Shift-tap = accent), vertical drag = pitch.
+  const gesture = useStepCellGesture({
+    onSelect: () => onSelect(globalIndex),
+    onTap: (shift) => onTap(globalIndex, shift),
+    onDragSemis: (semis) => onDragSemis(globalIndex, semis),
+    startSemis: () => Math.round(step.noteVv * 12),
+  });
   return (
-    <g className="control" data-testid={`monarch-cell-${globalIndex}`} onClick={handle} opacity={beyondEnd ? 0.35 : 1}>
+    <g
+      className="control"
+      data-testid={`monarch-cell-${globalIndex}`}
+      role="button"
+      aria-label={`Step ${globalIndex + 1} — tap toggles on/off, vertical drag tunes pitch, Shift-tap accents`}
+      style={{ touchAction: 'none' }}
+      {...gesture}
+      opacity={beyondEnd ? 0.35 : 1}
+    >
       <StepLed x={x + CELL_W / 2} y={LED_Y} on={active} />
       <rect
         x={x} y={CELL_Y} width={CELL_W} height={CELL_H} rx={4}
@@ -169,19 +186,22 @@ export const MonarchStepEditor = memo(function MonarchStepEditor() {
     return () => engineBridge.setMonarchRecordHandler(null);
   }, [armed]);
 
-  const onCellClick = useCallback(
-    (index: number, shift: boolean) => {
-      const step = readSeq().steps[index]!;
-      if (shift) {
-        engineBridge.updateMonarchStep(index, { accent: !step.accent });
-      } else if (index === selected) {
-        engineBridge.updateMonarchStep(index, { rest: !step.rest }); // click-to-rest
-      }
-      setSelected(index);
-      svgRef.current?.focus(); // focus the editor so arrows edit immediately
-    },
-    [selected],
-  );
+  // Direct cell manipulation (stepCellEdit.ts): pointer-down selects (and focuses the
+  // editor so arrows edit immediately); a tap toggles the step on/off (Shift-tap =
+  // accent); a vertical drag tunes the pitch live (and un-rests the step — you're
+  // dialing a note, you want to hear it).
+  const onCellSelect = useCallback((index: number) => {
+    setSelected(index);
+    svgRef.current?.focus();
+  }, []);
+  const onCellTap = useCallback((index: number, shift: boolean) => {
+    const step = readSeq().steps[index]!;
+    if (shift) engineBridge.updateMonarchStep(index, { accent: !step.accent });
+    else engineBridge.updateMonarchStep(index, tapPatch(step));
+  }, []);
+  const onCellDragSemis = useCallback((index: number, semis: number) => {
+    engineBridge.updateMonarchStep(index, { noteVv: semis / 12, rest: false });
+  }, []);
 
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<SVGSVGElement>) => {
@@ -281,10 +301,22 @@ export const MonarchStepEditor = memo(function MonarchStepEditor() {
             selected={gi === selected}
             active={monarchRunning && pos === gi}
             beyondEnd={gi >= seq.endStep}
-            onClick={onCellClick}
+            onSelect={onCellSelect}
+            onTap={onCellTap}
+            onDragSemis={onCellDragSemis}
           />
         );
       })}
+
+      {/* cell-gesture hint (the tap/drag semantics are otherwise invisible) */}
+      <text x={26} y={EDIT_Y + 20} fontFamily={FONT_CONDENSED} fontSize={8.5} letterSpacing={0.6}
+        fill={COLORS.legendDim} pointerEvents="none">
+        TAP STEP = ON/OFF
+      </text>
+      <text x={26} y={EDIT_Y + 32} fontFamily={FONT_CONDENSED} fontSize={8.5} letterSpacing={0.6}
+        fill={COLORS.legendDim} pointerEvents="none">
+        DRAG STEP = PITCH
+      </text>
 
       {/* selected-step strip */}
       {/* Selected-step caption doubles as the arrow-key live region: role=status +
