@@ -73,7 +73,7 @@ function seqDef(id: string): ControlDef {
  * Grew (252 -> 330) for the Phase-C param-lock MATRIX band between the edit row and the
  * global SEQUENCER settings row; the stage frame reflows off this height automatically.
  */
-export const COURIER_SEQ_STRIP = { w: 1300, h: 330 } as const;
+export const COURIER_SEQ_STRIP = { w: 1300, h: 362 } as const;
 
 /** Strip geometry: one row of 16 cells per page across the wide canvas. */
 const BAND_Y = 6;
@@ -84,10 +84,15 @@ const CELL_H = 60;
 const CELL_Y = BAND_Y + 18;
 const LED_Y = BAND_Y + 8;
 const EDIT_Y = BAND_Y + 116;
-/** Param-lock matrix band, between the per-step edit row and the global settings row. */
-const MATRIX_Y = EDIT_Y + 70; // ~192
-/** Global sequencer SETTINGS row, beneath the matrix band. */
-const SET_Y = BAND_Y + 274;
+/** Param-lock matrix band, between the per-step edit row and the global settings row. Each
+ *  matrix button's true vertical extent is ~52 units (arm LED ~19 above the cap + cap + caption
+ *  ~22 below), so MATRIX_PITCH_Y must exceed that or the lower row's LED lands on the upper row's
+ *  caption. Header sits clear ABOVE the LED row (−30, not in the lamp band). */
+const MATRIX_Y = EDIT_Y + 76; // 198 (row-0 button centres)
+const MATRIX_HEADER_Y = MATRIX_Y - 30; // clear of the arm-LED row above the caps
+/** Global sequencer SETTINGS row, beneath the matrix band (its header + the SEQ MODE switch
+ *  caption both sit ABOVE the row, so this must clear the matrix's lower caption row). */
+const SET_Y = 312;
 
 const PAGE_CELLS = 16;
 const ACCENT = GROUP_BORDER.courier;
@@ -101,7 +106,7 @@ const MATRIX_SLOTS = 18;
 const MATRIX_COLS = 9;
 const MATRIX_X0 = 60;
 const MATRIX_PITCH_X = 64;
-const MATRIX_PITCH_Y = 40;
+const MATRIX_PITCH_Y = 52;
 const matrixSlotX = (i: number) => MATRIX_X0 + (i % MATRIX_COLS) * MATRIX_PITCH_X;
 const matrixSlotY = (i: number) => MATRIX_Y + Math.floor(i / MATRIX_COLS) * MATRIX_PITCH_Y;
 
@@ -600,7 +605,7 @@ export const CourierStepEditor = memo(function CourierStepEditor() {
             controls (slots 6-17). The disabled-placeholder branch below is a no-op safety net for
             any future short list. A burnt-orange dot overlays any wired slot the SELECTED step
             locks. */}
-        <text x={26} y={MATRIX_Y - 16} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.5}
+        <text x={26} y={MATRIX_HEADER_Y} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.5}
           fill={COLORS.legendDim}>
           PARAM REC
         </text>
