@@ -78,10 +78,10 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
         y={-(slotH / 2 + 8)}
         textAnchor="middle"
         fontFamily={FONT_CONDENSED}
-        fontSize={10}
+        fontSize={12}
         letterSpacing={0.5}
         fill={COLORS.legend}
-        {...(def.panelLabel.length * 5.6 > 66
+        {...(def.panelLabel.length * 6.5 > 66
           ? { textLength: 66, lengthAdjust: 'spacingAndGlyphs' as const }
           : {})}
       >
@@ -121,10 +121,10 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
           x={13}
           y={yOf(i) + 3}
           fontFamily={FONT_CONDENSED}
-          fontSize={9.5}
+          fontSize={11}
           letterSpacing={0.3}
           fill={i === idx ? COLORS.legend : COLORS.legendDim}
-          {...(pos.length * 5 > 36 ? { textLength: 36, lengthAdjust: 'spacingAndGlyphs' as const } : {})}
+          {...(pos.length * 5.8 > 36 ? { textLength: 36, lengthAdjust: 'spacingAndGlyphs' as const } : {})}
         >
           {pos.toUpperCase()}
         </text>

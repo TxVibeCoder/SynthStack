@@ -2,13 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Desktop-targeted app; the standard viewport meta keeps 1:1 CSS pixels on every display. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- theme-color hex is coupled to --color-bg in src/ui/styles.css; keep in sync -->
     <meta name="theme-color" content="#101012" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Semi-Modular Studio" />
     <!-- %BASE_URL% = '/' (dev) / '/SynthStack/' (Pages build) — Vite HTML env replacement,
          so the icon resolves under the project subpath instead of 404ing at the domain root. -->
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />

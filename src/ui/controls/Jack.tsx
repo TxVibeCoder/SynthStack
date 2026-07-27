@@ -93,13 +93,13 @@ export const Jack = memo(function Jack({ def, x, y }: JackProps) {
       {/* label under — clamped to the patchbay cell pitch so long names
           (e.g. "VC MIX CTRL") compress instead of colliding with neighbors */}
       <text
-        y={JACK_RADIUS.ring + 13}
+        y={JACK_RADIUS.ring + 14}
         textAnchor="middle"
         fontFamily={FONT_CONDENSED}
-        fontSize={10.5}
+        fontSize={12}
         letterSpacing={0.5}
         fill={COLORS.legend}
-        {...(def.panelLabel.length * 5.6 > JACK_LABEL_MAX_W
+        {...(def.panelLabel.length * 6.4 > JACK_LABEL_MAX_W
           ? { textLength: JACK_LABEL_MAX_W, lengthAdjust: 'spacingAndGlyphs' as const }
           : {})}
       >

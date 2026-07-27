@@ -133,10 +133,10 @@ export function Button({ def, value, onChange, lit, momentary, x, y }: ButtonPro
             y={3}
             textAnchor="middle"
             fontFamily={FONT_CONDENSED}
-            fontSize={9.5}
+            fontSize={11}
             letterSpacing={0.5}
             fill={COLORS.legend}
-            {...(value.length * 6 > 28
+            {...(value.length * 7 > 28
               ? { textLength: 28, lengthAdjust: 'spacingAndGlyphs' as const }
               : {})}
           >
@@ -151,10 +151,10 @@ export function Button({ def, value, onChange, lit, momentary, x, y }: ButtonPro
         y={CAP_H / 2 + 13}
         textAnchor="middle"
         fontFamily={FONT_CONDENSED}
-        fontSize={10}
+        fontSize={12}
         letterSpacing={0.5}
         fill={COLORS.legend}
-        {...(def.panelLabel.length * 5.6 > 54
+        {...(def.panelLabel.length * 6.4 > 54
           ? { textLength: 54, lengthAdjust: 'spacingAndGlyphs' as const }
           : {})}
       >

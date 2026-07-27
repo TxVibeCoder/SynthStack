@@ -96,7 +96,6 @@ import { monarchLayout } from './panels/monarchLayout';
 import { FIELD_H } from './panels/jackFieldLayout';
 import { EffectsPanel, FX_W, FX_H } from './panels/EffectsPanel';
 import { PresetPicker } from './PresetPicker';
-import { OrientationHint } from './OrientationHint';
 import { TabBar } from './TabBar';
 import { MasterRibbon } from './MasterRibbon';
 import { ErrorOverlay } from './ErrorOverlay';
@@ -109,10 +108,15 @@ import type { ModuleTabId } from '../engine/modules/moduleConfig';
  * subtracted from the window height before the stage is scaled to fit. Fixed-height
  * chrome (see styles.css .master-ribbon / .tab-bar) so the budget is deterministic and
  * there is no first-paint layout-shift; keep this in lockstep with those CSS heights.
- *   RIBBON_H 85 + TABBAR_H 26 = CHROME_H 111.
+ *   RIBBON_H 98 + TABBAR_H 34 = CHROME_H 132.
+ *
+ * PC-only sizing pass (2026-07): RIBBON_H 85→98 gives the ribbon SVG a 90-unit-tall
+ * content box (98 − 8px flex padding), so its 90-tall viewBox renders at ~1.0 scale
+ * (was ~0.85) on desktop-width windows — the ribbon caps/labels stop rendering small.
+ * TABBAR_H 26→34 enlarges the primary nav (see .tab-bar font-size 13 in styles.css).
  */
-export const RIBBON_H = 85;
-export const TABBAR_H = 26;
+export const RIBBON_H = 98;
+export const TABBAR_H = 34;
 export const CHROME_H = RIBBON_H + TABBAR_H;
 
 /** Absolutely-positioned stage region (sizes in stage px — the stage scales). */
@@ -268,12 +272,32 @@ const BBOX: Record<ModuleTabId, RegionBox> = {
  */
 const MAX_SCALE = 1.8;
 const STAGE_MARGIN = 8;
-function computeScale(box: RegionBox): number {
-  const raw = Math.min(
-    (window.innerWidth - STAGE_MARGIN * 2) / box.w,
-    Math.max(0, window.innerHeight - CHROME_H) / box.h,
-  );
-  return Math.min(raw, MAX_SCALE);
+/**
+ * Legibility floor (PC-only pass). The old fit had a MAX cap but no minimum, so on short
+ * or laptop-scaled windows a tab could shrink well below its design size (measured 0.71 on
+ * the sampler tab at 1366×768) — squishing the 10–12-unit legends below readability. We now
+ * refuse to render a HEIGHT-bound tab below MIN_SCALE, letting .stage-viewport scroll
+ * vertically (overflow-y:auto) instead. The floor is HARD-capped by the width-fit scale so
+ * it can NEVER make the stage wider than the window (that would clip horizontally — there is
+ * no horizontal scroll); a genuinely too-narrow window still falls back to the width fit.
+ */
+const MIN_SCALE = 0.95;
+/**
+ * `availW`/`availH` are the .stage-viewport's client size — the real content box, which
+ * already EXCLUDES the chrome band (the viewport is inset by --chrome-h) AND the
+ * scrollbar-gutter reserved on both edges (scrollbar-gutter: stable both-edges). Feeding
+ * the true content width in is what lets the width-cap below guarantee no horizontal
+ * scrollbar: if we capped against window.innerWidth instead, the floor could size the
+ * console ~30 px (two scrollbar gutters) wider than the space it actually has.
+ */
+function computeScale(box: RegionBox, availW: number, availH: number): number {
+  const widthScale = (availW - STAGE_MARGIN * 2) / box.w;
+  const heightScale = Math.max(0, availH) / box.h;
+  const fit = Math.min(widthScale, heightScale);
+  // Raise a too-short (height-bound) fit up to MIN_SCALE, but never past the width fit
+  // (staying ≤ widthScale keeps the console within the window → vertical scroll, not clip).
+  const floored = Math.min(Math.max(fit, MIN_SCALE), widthScale);
+  return Math.min(floored, MAX_SCALE);
 }
 
 export function App() {
@@ -284,8 +308,22 @@ export function App() {
   // The active tab's content bbox + the scale that fills the window with it. `scale`
   // recomputes on resize AND on tab change (the bbox changes), so each tab fill-zooms.
   const box = BBOX[tab];
-  const [scale, setScale] = useState(() => computeScale(BBOX.cascade));
+  // First-paint estimate uses the window (the viewport ref isn't attached yet); the mount
+  // effect below immediately recomputes against the real viewport client box.
+  const [scale, setScale] = useState(() =>
+    computeScale(BBOX.cascade, window.innerWidth, window.innerHeight - CHROME_H),
+  );
   const stageRef = useRef<HTMLElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  // The true content box to fit into: the .stage-viewport's client size (excludes the
+  // chrome band + the reserved scrollbar gutters). Falls back to the window before the ref
+  // attaches. Reading clientWidth/Height is scroll-independent here — scrollbar-gutter:
+  // stable both-edges reserves the gutter whether or not the vertical scrollbar shows.
+  const availDims = useCallback((): [number, number] => {
+    const vp = viewportRef.current;
+    if (vp) return [vp.clientWidth, vp.clientHeight];
+    return [window.innerWidth, window.innerHeight - CHROME_H];
+  }, []);
   // Preset picker open-state: null = closed; 'browse' opens on the factory/slots
   // list (the PRESETS cap), 'save' opens with the name input focused (the SAVE cap).
   // The ribbon's two caps call onOpenPicker; the overlay is UNMOUNTED until opened.
@@ -302,15 +340,16 @@ export function App() {
   // dep so the closure always reads the current bbox; the effect re-subscribes on tab
   // change, which is also when the dedicated effect below fires the initial recompute.)
   useEffect(() => {
-    const onResize = () => setScale(computeScale(box));
+    const onResize = () => setScale(computeScale(box, ...availDims()));
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [box]);
+  }, [box, availDims]);
 
   // Refit when the active tab (hence its bbox) changes: each tab fill-zooms to its own
-  // content. No scrolling — the per-tab fill-zoom replaces the old below-the-fold scroll
-  // model entirely (the sampler panels are now zoomed to fill the window on their tab).
-  useEffect(() => setScale(computeScale(box)), [box]);
+  // content. Below the MIN_SCALE floor a tall tab may exceed the viewport height — then
+  // .stage-viewport scrolls vertically (overflow-y:auto); the width-cap keeps it from ever
+  // needing a horizontal scrollbar.
+  useEffect(() => setScale(computeScale(box, ...availDims())), [box, availDims]);
 
   // SAMPLER POP-OUT HOST (G5) — MAIN-window only. It bridges the ONE engineBridge to the pop-out
   // window over the sampler channel (broadcasts the live mirror; forwards pop-out actions). The
@@ -352,7 +391,7 @@ export function App() {
       />
       <TabBar tab={tab} onTab={setTab} />
 
-      <div className="stage-viewport">
+      <div className="stage-viewport" ref={viewportRef}>
         {/* .stage-sizer is the per-tab WINDOW: sized to the active bbox at scale
          * (box.w·scale × box.h·scale) and overflow:hidden, so it clips the always-
          * STAGE.w-wide <main> down to just the bbox content (e.g. the studio control
@@ -477,10 +516,6 @@ export function App() {
           </main>
         </div>
       </div>
-      {/* ORIENTATION HINT — a "rotate to landscape" steer, rendered as a SIBLING of
-       * .stage-viewport so the stylesheet can pin it at fixed/inset:0. Always mounted;
-       * revealed ONLY for portrait + coarse-pointer + narrow. */}
-      <OrientationHint />
       {/* GLOBAL ERROR SURFACE — a SIBLING of .stage-viewport, screen-pixel positioned. Renders
        * nothing until window.onerror / unhandledrejection / a caught rAF throw reports one. */}
       <ErrorOverlay />

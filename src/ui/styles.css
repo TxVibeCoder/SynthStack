@@ -37,9 +37,9 @@
   /* Out-of-stage chrome heights (Wave 1 tab/ribbon refactor). MUST stay in lockstep with
    * src/ui/App.tsx RIBBON_H / TABBAR_H / CHROME_H — App subtracts CHROME_H from the
    * window height before scaling the stage, and these vars size + offset the chrome. */
-  --ribbon-h: 85px;
-  --tabbar-h: 26px;
-  --chrome-h: calc(var(--ribbon-h) + var(--tabbar-h)); /* 85 + 26 = 111px */
+  --ribbon-h: 98px;
+  --tabbar-h: 34px;
+  --chrome-h: calc(var(--ribbon-h) + var(--tabbar-h)); /* 98 + 34 = 132px */
 }
 
 html,
@@ -81,24 +81,13 @@ body {
   overflow-y: auto; /* fallback only — per-tab fill-zoom normally fits; mobile pinch-pan keeps it */
   overflow-x: hidden;
   /* Reserve the scrollbar gutter on BOTH sides so the horizontally-centered console
-   * stays put whether or not the pad-section scrollbar is showing (pixel-stable 16:9). */
+   * stays put whether or not the vertical scrollbar is showing (pixel-stable 16:9). The
+   * MIN_SCALE floor (App.tsx) can make a short window's tab taller than the viewport, so
+   * a vertical scrollbar appears there — the gutter keeps the console from shifting. */
   scrollbar-gutter: stable both-edges;
-  /* iOS pull-to-refresh / rubber-band suppression (`overscroll-behavior: contain`) is
-   * applied for FINE pointers only — see the @media (pointer: fine) block below. On
-   * COARSE (touch) pointers it MUST stay off: per CSSWG issue #12919 (Mar 2026),
-   * `contain` on a pinch-zoomed scroller blocks visual-viewport panning, which is what
-   * snapped the zoom back to 1.0 when panning to the top edge on iOS. */
+  /* Suppress the browser pull-to-refresh / rubber-band overscroll on the scroller. */
+  overscroll-behavior: contain;
   background: var(--color-bg);
-}
-
-/* Desktop only: keep the original pull-to-refresh / rubber-band suppression. Coarse
- * pointers intentionally OMIT this so a pinch-zoomed top-edge pan moves the iOS visual
- * viewport instead of resetting the zoom (CSSWG #12919). A non-scrolling 1080p desktop
- * saw no visual effect from `contain` anyway, so desktop is byte-identical. */
-@media (pointer: fine) {
-  .stage-viewport {
-    overscroll-behavior: contain;
-  }
 }
 
 /*
@@ -129,8 +118,8 @@ body {
  * fixed, full-width, screen-pixel-sized bars pinned to the TOP of the window, ABOVE the
  * .stage-viewport (which starts at --chrome-h). They are NOT inside the transform:scale
  * <main>, so they never inherit the stage scale and never touch the stage16x9 geometry.
- * z-index sits above the stage overlays but below the rotate-hint (40) / preset overlay
- * (50) so those modals still win.
+ * z-index sits above the stage overlays but below the preset overlay (50) so that modal
+ * still wins.
  */
 .master-ribbon {
   position: fixed;
@@ -181,10 +170,10 @@ body {
 
 .tab-bar__tab {
   appearance: none;
-  margin: 2px 0 0 0;
-  padding: 0 14px;
+  margin: 3px 0 0 0;
+  padding: 0 18px;
   font-family: var(--font-condensed);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 1.5px;
   color: var(--color-legend-dim);
@@ -245,14 +234,6 @@ body {
  * that one element for a ~7.9:1 ring. Reuses existing tokens (no theme.ts mirror needed). */
 .tab-bar__tab--active:focus-visible {
   outline-color: var(--color-bg);
-}
-
-/* Narrow windows: tighten tab padding/tracking so the strip stays one row within TABBAR_H. */
-@media (max-width: 560px) {
-  .tab-bar__tab {
-    padding: 0 8px;
-    letter-spacing: 0.5px;
-  }
 }
 
 /* One absolutely-positioned stage region per stage region (stage16x9.REGIONS). */
@@ -342,18 +323,6 @@ body {
   cursor: pointer;
 }
 
-/* On TOUCH devices only, let a two-finger pinch-zoom start even ON a control.
- * `pinch-zoom` (not `manipulation`/`pan-*`) keeps single-finger drags going to the
- * app (no pan token => the browser won't scroll on one finger), so knob/jack/switch
- * drags still work while pinch-zoom stops being blocked. Pairs with the
- * `!e.isPrimary` guards in the pointer handlers so a 2nd finger never hijacks a
- * control. Desktop (fine pointer) keeps `touch-action: none` above — unchanged. */
-@media (pointer: coarse) {
-  .control {
-    touch-action: pinch-zoom;
-  }
-}
-
 .control--knob {
   cursor: ns-resize;
 }
@@ -362,6 +331,14 @@ body {
  * button, hinting that you drag jack-to-jack to patch. */
 .control[data-jack-id] {
   cursor: crosshair;
+}
+
+/* Hover affordance for jacks: the patchbay packs 113 sockets, so brightening the socket
+ * under the cursor gives immediate target feedback while aiming a cable (the crosshair
+ * cursor + the native <title> tooltip already name it). Desktop-only by nature (no hover
+ * on touch); cheap CSS, no per-jack state/re-render. */
+.control[data-jack-id]:hover {
+  filter: brightness(1.28);
 }
 
 /*
@@ -634,72 +611,6 @@ body {
   }
   .unpowered {
     transition: none;
-  }
-}
-
-/*
- * Rotate-hint overlay (OrientationHint.tsx — markup + dismiss state owned by the
- * component group; ALL visual rules live here). Asks portrait-phone users to rotate
- * to landscape so the fixed 16:9 console fits. z-index 40 sits strictly BETWEEN the
- * stage overlays (group-borders 4 / cable-layer 5 / cable-chip 6) and the preset
- * overlay (50). Hidden by default — desktop DOM may contain it, but it never paints.
- */
-.rotate-hint {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 40; /* above stage overlays (cable 5/chip 6), below preset overlay 50 */
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  text-align: center;
-  background: var(--color-bg);
-  color: var(--color-legend);
-  font-family: var(--font-stack);
-}
-
-/* Reveal ONLY on portrait coarse-pointer phones (the shared GATING CONTRACT query).
- * A 1080p desktop is fine-pointer + landscape + wide, so this never matches and the
- * overlay stays display:none — desktop paint is unchanged. */
-@media (orientation: portrait) and (pointer: coarse) and (max-width: 900px) {
-  .rotate-hint {
-    display: flex;
-  }
-}
-
-/* Dismiss override — placed AFTER the @media reveal so it wins even while the
- * portrait/coarse query still matches, letting an insistent user pinch-zoom and play.
- * The component toggles this class on the outer element when the close button is tapped. */
-.rotate-hint--dismissed {
-  display: none !important;
-}
-
-/* Close/dismiss button affordance (top-right, clears the notch via safe-area insets). */
-.rotate-hint__close {
-  position: absolute;
-  top: max(12px, env(safe-area-inset-top));
-  right: max(12px, env(safe-area-inset-right));
-  width: 40px;
-  height: 40px;
-  font-size: 22px;
-  line-height: 1;
-  color: var(--color-legend-dim);
-  background: var(--color-panel-raised);
-  border: 1px solid var(--color-panel-edge);
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-/* Safe-area padding for OVERLAY CHROME ONLY — gated behind (pointer: coarse) so it is a
- * desktop no-op (env(safe-area-inset-*) resolves to 0 on desktop anyway). Pads the
- * rotate-hint overlay so its content clears the notch/home-indicator. NOT applied to
- * .stage / .stage-sizer / .stage-viewport — that would interact with computeScale and
- * risk shifting the pinned REGIONS (deferred). */
-@media (pointer: coarse) {
-  .rotate-hint {
-    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
-      max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   }
 }
 

@@ -2,7 +2,7 @@
  * Cascade panel layout — WIDE landscape re-flow, three-column control field.
  * CONTROLS-ONLY: all 32 Cascade jacks live in the consolidated jack field
  * (jackFieldLayout.ts), on the Patchbay tab. This panel is its own landscape
- * canvas (1180 × 640), decoupled from the stage16x9 regions — App.tsx frames
+ * canvas (1110 × 580 — see CASCADE_W/H below), decoupled from the stage16x9 regions — App.tsx frames
  * the Cascade tab to these dims directly (no geometry move in stage16x9.ts).
  *
  * Three columns, left→right, following the unit's signal flow:

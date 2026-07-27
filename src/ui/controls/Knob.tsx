@@ -79,7 +79,7 @@ interface InteractionState {
 function KnobLabel({ label, r }: { label: string; r: number }) {
   const maxW = 2 * r + 26;
   const text = label.toUpperCase();
-  const estW = (s: string) => s.length * 5.6;
+  const estW = (s: string) => s.length * 6.6;
   const clamp = (s: string) =>
     estW(s) > maxW ? { textLength: maxW, lengthAdjust: 'spacingAndGlyphs' as const } : {};
 
@@ -98,12 +98,12 @@ function KnobLabel({ label, r }: { label: string; r: number }) {
       y={r + 16}
       textAnchor="middle"
       fontFamily={FONT_CONDENSED}
-      fontSize={10}
+      fontSize={12}
       letterSpacing={0.5}
       fill={COLORS.legend}
     >
       {lines.map((line, i) => (
-        <tspan key={i} x={0} dy={i === 0 ? 0 : 10} {...clamp(line)}>
+        <tspan key={i} x={0} dy={i === 0 ? 0 : 12} {...clamp(line)}>
           {line}
         </tspan>
       ))}
@@ -372,7 +372,7 @@ export function Knob({
   // Shown while interacting AND on hover / keyboard focus, so any knob's value is one
   // point-or-tab away (not only mid-drag). Sources `shown` (= live ?? value).
   const readout = live != null || hovered || focused ? formatValue(shown, def) : null;
-  const readoutW = readout != null ? readout.length * 6.4 + 14 : 0;
+  const readoutW = readout != null ? readout.length * 7 + 16 : 0;
 
   // ---- mod-assign overlays ---------------------------------------------------------------
   /** Active depth for the indicator: the live scrub when dragging, else this knob's stored route. */
@@ -478,7 +478,7 @@ export function Knob({
               y={r + 28}
               textAnchor="middle"
               fontFamily={FONT_CONDENSED}
-              fontSize={8}
+              fontSize={9}
               letterSpacing={0.3}
               fill={depthColor}
             >
@@ -506,7 +506,7 @@ export function Knob({
             y={-(r + 24)}
             textAnchor="middle"
             fontFamily={FONT_STACK}
-            fontSize={11}
+            fontSize={12}
             fill={depthColor}
           >
             {depthReadout}
@@ -537,7 +537,7 @@ export function Knob({
           y={r + 27}
           textAnchor="middle"
           fontFamily={FONT_CONDENSED}
-          fontSize={8.5}
+          fontSize={10}
           letterSpacing={0.3}
           fill={COLORS.legendDim}
           pointerEvents="none"
@@ -564,7 +564,7 @@ export function Knob({
             y={-(r + 24)}
             textAnchor="middle"
             fontFamily={FONT_STACK}
-            fontSize={11}
+            fontSize={12}
             fill={COLORS.focus}
           >
             {readout}

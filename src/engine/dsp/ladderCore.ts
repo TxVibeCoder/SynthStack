@@ -27,6 +27,17 @@ const VV_DENORM = 5;
 const INPUT_SCALE = 1e4;
 
 /**
+ * Internal oversampling factor for the nonlinear ladder (Huovilainen 2× minimum). The tanh
+ * stages generate harmonics above the audio band; the boxcar (averaging) decimation in the
+ * process loop is the anti-alias filter that keeps them from folding back as grit/crackle when
+ * driven. Kept at 2× because the empirical cutoff/resonance coefficients (fcr/acr) and the
+ * 0.5-sample phase comp are tuned for it — raising it shifts the self-oscillation frequency out
+ * of its ±4% gate (test-locked) and would require re-deriving those, so a higher factor is a
+ * deliberate retuning task, not a knob flip.
+ */
+const OVERSAMPLE = 2;
+
+/**
  * Filter response mode. `'LP'` is the 4-pole (24 dB/oct) ladder lowpass and is the
  * default; the multimode taps are derived from the same ladder stages via pole-mixing:
  *   - `'LP'`  — LP4, 24 dB/oct (stage 4 output, the classic ladder)
@@ -111,7 +122,7 @@ export class LadderCore {
     const fcMax = 0.45; // clamp [10 Hz, 0.45·fs]
     if (fc > fcMax) fc = fcMax;
     if (fc < 10 / fs) fc = 10 / fs;
-    const f = fc * 0.5; // oversampled rate
+    const f = fc / OVERSAMPLE; // per-oversample-step normalized rate
     const fc2 = fc * fc;
     const fc3 = fc2 * fc;
     const fcr = 1.873 * fc3 + 0.4955 * fc2 - 0.649 * fc + 0.9988;
@@ -157,15 +168,18 @@ export class LadderCore {
       const raw = (input[i] ?? 0) * VV_NORM * drive * INPUT_SCALE + this.denormFlip;
       this.denormFlip = -this.denormFlip;
 
-      // 2× oversampling: half-step (linear-interpolated input), then full step.
-      // Each response tap is a linear pole-mix of the same ladder stages, accumulated
-      // (×0.5) across both passes and selected once after the oversample loop.
+      // OVERSAMPLE× oversampling with linear-interpolated input and boxcar (averaging)
+      // decimation on every tap — the averaging is the anti-alias filter that keeps the
+      // driven-tanh harmonics from folding back (the old code PICKED the last sub-sample for
+      // LP4, which aliased once the filter was driven).
       let lp4Sample = 0; // LP4: stage 4 output (24 dB/oct ladder)
       let lp2Sample = 0; // LP2: 2-pole tap (12 dB/oct)
       let bpSample = 0; //  BP:  2-pole band-pass (LP2 − LP4)
       let hpSample = 0; //  HP4: (1−L)^4 pole-mix
-      for (let os = 0; os < 2; os++) {
-        const x = os === 0 ? 0.5 * (prevIn + raw) : raw;
+      const invOS = 1 / OVERSAMPLE;
+      for (let os = 0; os < OVERSAMPLE; os++) {
+        // linearly interpolate the input across the oversample steps (prevIn → raw)
+        const x = prevIn + (raw - prevIn) * ((os + 1) * invOS);
         const u = x - resQuad * delay[5]!; // ladder chain input (incl. feedback)
         let inp = u;
         stage[0] = delay[0]! + tune * (Math.tanh(inp * THERMAL) - stageTanh[0]!);
@@ -186,10 +200,10 @@ export class LadderCore {
         //   BP  = LP2 − LP4 (band centered near cutoff); HP = (1−L)^4 = u − 4s0 + 6s1 − 4s2 + s3.
         // The resonant LP core keeps running underneath every tap, so raising resonance in
         // HP/BP mode re-adds low-end — the authentic source-hardware behavior.
-        lp4Sample = delay[5]!; // last-pass value (unchanged from the original LP4 path)
-        lp2Sample += 0.5 * stage[1]!;
-        bpSample += 0.5 * (stage[1]! - delay[5]!);
-        hpSample += 0.5 * (u - 4 * stage[0]! + 6 * stage[1]! - 4 * stage[2]! + stage[3]!);
+        lp4Sample += invOS * delay[5]!;
+        lp2Sample += invOS * stage[1]!;
+        bpSample += invOS * (stage[1]! - delay[5]!);
+        hpSample += invOS * (u - 4 * stage[0]! + 6 * stage[1]! - 4 * stage[2]! + stage[3]!);
       }
       prevIn = raw;
 

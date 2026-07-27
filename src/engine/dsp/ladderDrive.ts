@@ -20,12 +20,18 @@
  * the fundamental a little, so makeup = 1/drive lands a touch quieter than unity, which is the
  * safe direction for honest A/B comparison.)
  *
- * EARS: these are tunable starting points, not measured constants. Per-voice character partly
- * comes from how hard each source circuit drives its ladder: Anvil is the most overdriven,
- * Cascade already sums many hot sources so it stays cleaner. Tune `drive` per voice against
- * the reference demos for "fat, not fuzzy"; watch for aliasing at the hottest settings (only
- * 2× oversampling) and back off if a sustained low note grits up instead of thickening. Keep
- * makeup ≈ 1/drive unless you deliberately want a level change.
+ * ALIASING CEILING (why these are moderate): the ladder runs at only 2× oversampling, so a
+ * hard drive generates tanh harmonics past Nyquist that fold back as audible grit/crackle —
+ * worst on harmonic-rich square waves and slow-beating low notes. The real hardware saturates
+ * in ANALOG (alias-free), so we CANNOT match its drive depth digitally without more oversampling.
+ * Hence Anvil (square VCOs) is kept the most conservative even though its source hardware is the
+ * most overdriven — counterintuitive but correct for this model. (Initial 2026-06-26 values of 3–4
+ * crackled; halved after reproducing the aliasing. A future >2× oversampled ladder could go hotter.)
+ *
+ * EARS: tunable starting points, not measured constants. Tune `drive` per voice against the
+ * reference demos for "fat, not fuzzy"; if a sustained low note or a held chord grits/crackles,
+ * the drive is too hot for the oversampling — back off. Keep makeup ≈ 1/drive unless you
+ * deliberately want a level change.
  */
 export interface LadderDriveProfile {
   /** Pre-tanh input gain into the ladder. 1.0 = the old near-linear behavior. */
@@ -37,12 +43,12 @@ export interface LadderDriveProfile {
 export type VoiceId = 'monarch' | 'anvil' | 'cascade' | 'courier';
 
 export const LADDER_DRIVE: Record<VoiceId, LadderDriveProfile> = {
-  // Monarch: musically hot.
-  monarch: { drive: 3.0, makeup: 1 / 3.0 },
-  // Anvil: the most overdriven source unit — hottest.
-  anvil: { drive: 4.0, makeup: 1 / 4.0 },
-  // Cascade: already hot from the summed 2 VCOs + 4 subs, so a cleaner drive.
-  cascade: { drive: 1.8, makeup: 1 / 1.8 },
-  // Courier: musically hot.
-  courier: { drive: 2.5, makeup: 1 / 2.5 },
+  // Monarch: saw/pulse — moderate warmth.
+  monarch: { drive: 2.2, makeup: 1 / 2.2 },
+  // Anvil: square VCOs alias the worst when driven, so the LIGHTEST drive (see note above).
+  anvil: { drive: 1.8, makeup: 1 / 1.8 },
+  // Cascade: already hot from the summed 2 VCOs + 4 subs, so the cleanest drive.
+  cascade: { drive: 1.5, makeup: 1 / 1.5 },
+  // Courier: morph waveshape — moderate warmth.
+  courier: { drive: 1.9, makeup: 1 / 1.9 },
 };

@@ -26,7 +26,13 @@ function makeCurve(samples: number, fn: (x: number) => number): Float32Array {
   return curve;
 }
 
-export function shaper(ctx: BaseAudioContext, fn: (x: number) => number, samples = 2048): WaveShaperNode {
+// ODD sample count on purpose: makeCurve maps index → x = (i/(samples-1))*2 - 1, so an odd count
+// puts a sample at EXACTLY x = 0 (the center index). With an even count there is no x=0 sample and
+// WaveShaper interpolates across it — for a one-sided curve like the VCA soft-knee (0 for x≤0,
+// rising for x>0) that leaves gain ≈ +5e-4 at input 0, i.e. the VCA never fully closes and the
+// always-running oscillator bleeds through at idle (a faint power-on drone, worse once the filter
+// is driven). An exact x=0 sample makes fn(0) land verbatim, so a closed gate is truly silent.
+export function shaper(ctx: BaseAudioContext, fn: (x: number) => number, samples = 2049): WaveShaperNode {
   const s = ctx.createWaveShaper();
   s.curve = makeCurve(samples, fn) as Float32Array<ArrayBuffer>;
   return s;
